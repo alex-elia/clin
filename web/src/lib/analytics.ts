@@ -14,6 +14,7 @@ export function getCapturesPerDaySeries(days: number): {
   day: string;
   count: number;
 }[] {
+  getDb(); // apply migrations before raw SQL (avoid racing Promise.all on overview)
   const sqlite = getSqlite();
   const stmt = sqlite.prepare(
     `SELECT COUNT(*) AS n FROM capture_sessions WHERE captured_at >= ? AND captured_at < ?`,
@@ -34,6 +35,7 @@ export function getCapturesPerDaySeries(days: number): {
 export type ScoreBucket = { bucket: string; count: number };
 
 export function getRelationshipScoreBuckets(): ScoreBucket[] {
+  getDb();
   const sqlite = getSqlite();
   const rows = sqlite
     .prepare(

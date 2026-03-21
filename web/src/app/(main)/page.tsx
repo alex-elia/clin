@@ -7,11 +7,13 @@ import {
   getRelationshipScoreBuckets,
   getTopOpportunities,
 } from "@/lib/analytics";
+import { getDb } from "@/db";
 import { getOverviewStats } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
 export default async function OverviewPage() {
+  getDb(); // run migrations before parallel work (raw sqlite in analytics can race otherwise)
   const [stats, capturesSeries, scoreBuckets, topOpps, averages] =
     await Promise.all([
       getOverviewStats(),
