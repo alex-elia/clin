@@ -10,13 +10,20 @@
         font-size: 13px;
       }
       body {
-        width: 280px;
+        width: 340px;
         margin: 0;
         padding: 12px;
+        box-sizing: border-box;
       }
-      h1 {
+      h1,
+      h2 {
         font-size: 14px;
         margin: 0 0 8px;
+      }
+      h2 {
+        margin-top: 16px;
+        padding-top: 12px;
+        border-top: 1px solid #ddd;
       }
       label {
         display: block;
@@ -30,11 +37,15 @@
         padding: 6px 8px;
       }
       button {
-        margin-top: 10px;
+        margin-top: 8px;
         width: 100%;
         padding: 8px;
         font-weight: 600;
         cursor: pointer;
+      }
+      button.secondary {
+        font-weight: 500;
+        margin-top: 6px;
       }
       #status {
         margin-top: 10px;
@@ -56,14 +67,47 @@
       a {
         color: #06c;
       }
+      .outreach-card {
+        margin-top: 10px;
+        padding: 8px;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        background: #fafafa;
+      }
+      .outreach-card h3 {
+        font-size: 13px;
+        margin: 0 0 6px;
+      }
+      .outreach-card textarea {
+        width: 100%;
+        box-sizing: border-box;
+        min-height: 72px;
+        font-size: 11px;
+        margin-top: 4px;
+        resize: vertical;
+      }
+      .row {
+        display: flex;
+        gap: 6px;
+        margin-top: 6px;
+      }
+      .row button {
+        flex: 1;
+        margin-top: 0;
+        padding: 6px;
+        font-size: 11px;
+      }
+      #outreach {
+        max-height: 320px;
+        overflow-y: auto;
+      }
     </style>
   </head>
   <body>
     <h1>Clin capture</h1>
     <p class="muted">
       Open a LinkedIn profile, then capture visible fields. Captures are
-      throttled (small batches / spacing) to match your Clin pacing settings.
-      You still send messages yourself — no LinkedIn automation.
+      throttled to your Clin pacing settings. You send messages yourself.
     </p>
     <label>
       Clin API base
@@ -73,8 +117,19 @@
     <button id="ping" type="button">Check API health</button>
     <button id="cap" type="button">Capture this page</button>
     <div id="status"></div>
+
+    <h2>Ready outreach</h2>
     <p class="muted">
-      <a href="http://127.0.0.1:3000/" target="_blank" rel="noreferrer"
+      Items you approved in the dashboard (<code>/decisions</code>). Paste on
+      LinkedIn yourself, then mark sent.
+    </p>
+    <button id="refresh-outreach" type="button" class="secondary">
+      Refresh ready list
+    </button>
+    <div id="outreach"></div>
+
+    <p class="muted">
+      <a id="dash-link" href="http://127.0.0.1:3000/" target="_blank" rel="noreferrer"
         >Open dashboard</a
       >
     </p>

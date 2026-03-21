@@ -18,12 +18,14 @@ Before each capture, the background script calls `GET /api/settings` and enforce
 
 Tune limits under **Pacing** in the Clin dashboard (`/settings`).
 
-## Approved outreach (after dashboard decisions)
+## Ready outreach in the popup
 
-When you **approve** drafts on `/decisions`, those rows are listed at
-`GET /api/outreach/ready` (JSON: `linkedinUrl`, `draftOutreach`, etc.). You can
-extend the extension to show “next to paste” — Clin still does not send messages
-for you.
+When you **approve** drafts in the dashboard (`/decisions` → Ready), the extension
+popup loads **`GET /api/outreach/ready`** automatically (and on **Refresh ready
+list**). For each item you can **Copy draft**, **Open profile** (new tab), and
+**Mark sent (manual)** after you paste/send on LinkedIn yourself.
+
+Clin still does not send messages for you.
 
 ## Out of scope (by design)
 
