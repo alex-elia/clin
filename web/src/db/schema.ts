@@ -142,6 +142,15 @@ export const actionQueue = sqliteTable(
   ],
 );
 
+/** Tunable pacing for low-risk, human-in-the-loop workflows (local + API limits only). */
+export const appSettings = sqliteTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const contactsRelations = relations(contacts, ({ many }) => ({
   captures: many(captureSessions),
   snapshots: many(contactSnapshots),

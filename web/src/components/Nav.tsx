@@ -5,6 +5,7 @@ const links = [
   { href: "/contacts", label: "Contacts" },
   { href: "/queue", label: "Queue" },
   { href: "/captures", label: "Captures" },
+  { href: "/settings", label: "Pacing" },
 ] as const;
 
 export function Nav() {

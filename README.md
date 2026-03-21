@@ -41,12 +41,14 @@ See [`extension/README.md`](./extension/README.md). Load **unpacked** from `exte
 | `GET` | `/api/queue?shuffle=1` | Review queue (optional **local** shuffle) |
 | `PATCH` | `/api/queue/[id]` | `reviewed` / `deferred` / `dismissed` |
 | `GET` | `/api/captures` | Capture log |
+| `GET` / `PATCH` | `/api/settings` | Pacing (batch size, gaps, hourly capture cap) |
 | `POST` | `/api/scores/recompute` | Recompute all scores |
 
 ## Principles (non-negotiable)
 
 - Capture only after **your** explicit action on a page you opened.
 - Server owns persistence; the extension never opens the DB file.
-- **Local randomness only** (e.g. shuffled review order in the app). Clin does **not** implement randomized delays, stealth clicks, or other “anti-detection” automation on LinkedIn — that remains unsafe and out of scope.
+- **Paced human workflow** — small queue batches, minimum spacing between opening profile tabs (you still click), rolling hourly capture limits (server + extension). This reduces bursty personal use; it is **not** permission to automate LinkedIn.
+- **Local randomness** (e.g. shuffled review order) stays inside Clin only. No “anti-detection” scripting on LinkedIn.
 
 Full detail: [`docs/DESIGN.md`](./docs/DESIGN.md).

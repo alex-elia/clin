@@ -1,18 +1,74 @@
 /**
  * Clin extension — manual capture only. Posts JSON to your local Clin API.
- * No timers, no auto-navigation, no anti-detection / “humanized” automation.
+ * Client-side pacing: reads limits from GET /api/settings and enforces
+ * spacing + hourly caps before calling ingest (mirrors server rules).
  */
 
 const DEFAULT_BASE = "http://127.0.0.1:3000";
+const CAPTURE_TIMES_KEY = "clin_capture_timestamps_ms";
+const LAST_ERROR_KEY = "clin_last_pace_message";
 
 async function getApiBase() {
   const { clinApiBase } = await chrome.storage.sync.get(["clinApiBase"]);
   return (typeof clinApiBase === "string" && clinApiBase.trim()) || DEFAULT_BASE;
 }
 
+async function fetchPace(base) {
+  try {
+    const res = await fetch(`${base.replace(/\/$/, "")}/api/settings`);
+    if (!res.ok) return null;
+    const j = await res.json();
+    return j?.pace ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function pruneHour(timestamps, now) {
+  const cutoff = now - 60 * 60 * 1000;
+  return timestamps.filter((t) => t > cutoff);
+}
+
+async function assertPaceAllowsCapture(base) {
+  const pace = await fetchPace(base);
+  const maxPerHour = pace?.captureMaxPerHour ?? 10;
+  const minGapSec = pace?.minSecondsBetweenCaptures ?? 45;
+
+  const { [CAPTURE_TIMES_KEY]: raw } = await chrome.storage.local.get(
+    CAPTURE_TIMES_KEY,
+  );
+  const now = Date.now();
+  const list = Array.isArray(raw)
+    ? raw.map(Number).filter((n) => Number.isFinite(n))
+    : [];
+  const pruned = pruneHour(list, now);
+
+  if (pruned.length >= maxPerHour) {
+    throw new Error(
+      `Client pace: ${maxPerHour} captures max per rolling hour (matches server). Take a break and try again later.`,
+    );
+  }
+
+  const last = pruned.length ? Math.max(...pruned) : 0;
+  const minGapMs = minGapSec * 1000;
+  if (last && now - last < minGapMs) {
+    const wait = Math.ceil((minGapMs - (now - last)) / 1000);
+    throw new Error(
+      `Client pace: wait ${wait}s between captures (${minGapSec}s minimum).`,
+    );
+  }
+
+  return pruned;
+}
+
+async function recordCaptureSuccess(pruned) {
+  const now = Date.now();
+  const next = pruneHour([...pruned, now], now);
+  await chrome.storage.local.set({ [CAPTURE_TIMES_KEY]: next });
+}
+
 /**
  * Runs in the page world via scripting API — must not close over extension scope.
- * Best-effort DOM scrape; LinkedIn markup changes often.
  */
 function scrapeVisibleProfile() {
   const sourceUrl = window.location.href;
@@ -88,6 +144,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
       }
 
+      const base = await getApiBase();
+      let pruned;
+      try {
+        pruned = await assertPaceAllowsCapture(base);
+      } catch (e) {
+        const err = e instanceof Error ? e.message : String(e);
+        await chrome.storage.local.set({ [LAST_ERROR_KEY]: err });
+        sendResponse({ ok: false, error: err });
+        return;
+      }
+
       const [{ result }] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         func: scrapeVisibleProfile,
@@ -98,7 +165,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
       }
 
-      const base = await getApiBase();
       const url = `${base.replace(/\/$/, "")}/api/ingest/capture`;
       const res = await fetch(url, {
         method: "POST",
@@ -122,6 +188,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
       }
 
+      await recordCaptureSuccess(pruned);
+      await chrome.storage.local.remove(LAST_ERROR_KEY);
       sendResponse({ ok: true, data: json });
     } catch (e) {
       sendResponse({

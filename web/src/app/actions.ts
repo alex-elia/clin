@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
+import { updatePaceSettings } from "@/lib/pace";
 import { SCORE_RULE_VERSION, scoreContact } from "@/lib/scoring";
 
 export async function recomputeAllScores() {
@@ -28,5 +29,22 @@ export async function recomputeAllScores() {
   }
   revalidatePath("/");
   revalidatePath("/contacts");
+  revalidatePath("/queue");
+}
+
+export async function savePaceForm(formData: FormData) {
+  const readInt = (key: string) => {
+    const raw = formData.get(key);
+    if (typeof raw !== "string" || raw.trim() === "") return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  await updatePaceSettings({
+    queueBatchSize: readInt("queueBatchSize"),
+    minSecondsBetweenProfileOpens: readInt("minSecondsBetweenProfileOpens"),
+    minSecondsBetweenCaptures: readInt("minSecondsBetweenCaptures"),
+    captureMaxPerHour: readInt("captureMaxPerHour"),
+  });
+  revalidatePath("/settings");
   revalidatePath("/queue");
 }

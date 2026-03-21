@@ -12,9 +12,15 @@ Manual capture only: reads **visible** fields on the active LinkedIn tab when yo
 
 - **Clin API base** — defaults to `http://127.0.0.1:3000`. Save after editing.
 
+## Pacing
+
+Before each capture, the background script calls `GET /api/settings` and enforces the same **rolling hourly cap** and **minimum seconds between captures** as the server (with a local pre-check so you see a fast error if you are going too fast).
+
+Tune limits under **Pacing** in the Clin dashboard (`/settings`).
+
 ## Out of scope (by design)
 
-- No auto-scroll, scheduled capture, or scripted clicks on LinkedIn.
-- No randomized delays or other “anti-detection” behavior — that would still be risky and is not part of Clin.
+- No auto-scroll, scheduled capture, or scripted clicks / typing on LinkedIn.
+- Pacing is for **low-risk human habits**, not “stealth” or evasion.
 
 If LinkedIn changes the DOM, extraction may return partial fields; check **Captures** in the dashboard and adjust selectors in `background.js` as needed.

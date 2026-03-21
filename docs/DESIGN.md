@@ -14,8 +14,18 @@ Canonical design for implementation lives in this file. The Chrome MV3 extension
 | HTTP `POST` from extension → **local API** → DB | Extension opens SQLite/Postgres directly |
 | Drafts, queues, deep links, clipboard copy — **you** send on LinkedIn | Auto-click, mass connect/message, “humanized” bot timing |
 | Randomness **inside Clin** (shuffle review queue, jitter local reminders) | Random delays / anti-detection patterns **on** LinkedIn |
+| **Paced human “actions”** — small queue batches, minimum spacing between opening profile tabs (you still click), rolling hourly capture caps (server + extension) | Any automation that performs clicks, typing, sends, or scrolls **on** LinkedIn |
 
-**LinkedIn detection posture:** reduce risk by matching **normal personal use** (gesture-driven capture, human pace, least-privilege extension). **Not** by evasion tricks — those stay out of scope.
+**LinkedIn detection posture:** reduce risk by matching **normal personal use** (gesture-driven capture, human pace, least-privilege extension, **slow small batches**). **Not** by evasion tricks — those stay out of scope.
+
+### 1.1 Pacing defaults (tunable in `/settings`)
+
+- **Queue batch size** — show a limited number of pending reviews; “load next batch” reveals more.
+- **Seconds between profile opens** — enforced in the dashboard with `sessionStorage` (local only); prevents rapid tab opens from the queue.
+- **Seconds between captures** — server returns `429` if ingest is too soon after the previous capture; extension pre-checks the same using `GET /api/settings`.
+- **Max captures per rolling hour** — server counts rows in `capture_sessions`; extension keeps a parallel timestamp list in `chrome.storage.local`.
+
+These rules intentionally **do not** make scripted LinkedIn automation “safe”; they only reduce **accidentally bursty** personal use.
 
 ---
 
@@ -96,12 +106,13 @@ flowchart LR
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/api/health` | Liveness for extension |
-| `POST` | `/api/ingest/capture` | Extension / import ingest |
+| `GET` / `PATCH` | `/api/settings` | Read/update pacing (`pace.*` in `app_settings`) |
+| `POST` | `/api/ingest/capture` | Extension / import ingest (429 when pacing exceeded) |
 | `GET` | `/api/contacts` | Filters, keyset cursor, sort |
 | `PATCH` | `/api/contacts/:id` | Tags, notes, queue state |
 | `POST` | `/api/scores/recompute` | Versioned scoring job |
 
-**Hardening:** prefer `127.0.0.1` binding for local-only; optional static bearer token; light rate limit on ingest.
+**Hardening:** prefer `127.0.0.1` binding for local-only; optional static bearer token; ingest throttling via pacing (not a substitute for LinkedIn ToS compliance).
 
 ---
 
@@ -114,6 +125,7 @@ flowchart LR
 - `interactions` (optional early)
 - `scores` / audit — **rule version** + explainable reasons
 - `recommendations`, `action_queue`, `notes`
+- `app_settings` — key/value for pacing (`pace.queue_batch_size`, etc.)
 
 **Identity:** normalize LinkedIn URLs (strip tracking params, stable host/path).
 

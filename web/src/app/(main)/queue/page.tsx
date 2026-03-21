@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { listQueuePending } from "@/lib/queries";
+import { getPaceSettings } from "@/lib/pace";
 import { QueueActions } from "./QueueActions";
 
 export const dynamic = "force-dynamic";
@@ -11,15 +12,21 @@ export default async function QueuePage({
 }) {
   const sp = await searchParams;
   const shuffle = sp.shuffle === "1";
-  const items = await listQueuePending(shuffle);
+  const [items, pace] = await Promise.all([
+    listQueuePending(shuffle),
+    getPaceSettings(),
+  ]);
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Review queue</h1>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-          Human-approved workflow only. Open LinkedIn yourself; Clin does not
-          automate the site.
+          Human actions only, in{" "}
+          <Link href="/settings" className="underline">
+            small slow batches
+          </Link>
+          . Clin does not click or type on LinkedIn for you.
         </p>
       </div>
 
@@ -34,19 +41,22 @@ export default async function QueuePage({
           href="/queue?shuffle=1"
           className={`rounded-md px-3 py-1.5 ${shuffle ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "border border-zinc-300 dark:border-zinc-600"}`}
         >
-          Shuffle order (local randomness)
+          Shuffle order (local only)
         </Link>
       </div>
 
       {shuffle ? (
-        <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-          Shuffled order uses Fisher–Yates inside Clin only. It does not change
-          LinkedIn behavior or help you &quot;avoid detection&quot; — that is
-          intentionally out of scope.
+        <p className="rounded-md bg-zinc-100 px-3 py-2 text-xs text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+          Shuffle only changes list order inside Clin. It is unrelated to LinkedIn
+          risk.
         </p>
       ) : null}
 
-      <QueueActions items={items} />
+      <QueueActions
+        items={items}
+        batchSize={pace.queueBatchSize}
+        minSecondsBetweenProfileOpens={pace.minSecondsBetweenProfileOpens}
+      />
     </div>
   );
 }
