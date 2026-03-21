@@ -1,4 +1,4 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { actionQueue, contacts } from "@/db/schema";
@@ -20,7 +20,12 @@ export async function GET(req: Request) {
     .select()
     .from(actionQueue)
     .innerJoin(contacts, eq(actionQueue.contactId, contacts.id))
-    .where(eq(actionQueue.status, "pending"))
+    .where(
+      and(
+        eq(actionQueue.status, "pending"),
+        ne(actionQueue.outreachDecision, "approved"),
+      ),
+    )
     .orderBy(desc(actionQueue.priority), desc(actionQueue.createdAt));
 
   const items = pending.map((r) => ({

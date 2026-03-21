@@ -1,11 +1,25 @@
 import Link from "next/link";
 import { recomputeAllScores } from "@/app/actions";
+import { OverviewCharts } from "@/components/charts/OverviewCharts";
+import {
+  getAvgScores,
+  getCapturesPerDaySeries,
+  getRelationshipScoreBuckets,
+  getTopOpportunities,
+} from "@/lib/analytics";
 import { getOverviewStats } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
 export default async function OverviewPage() {
-  const stats = await getOverviewStats();
+  const [stats, capturesSeries, scoreBuckets, topOpps, averages] =
+    await Promise.all([
+      getOverviewStats(),
+      Promise.resolve(getCapturesPerDaySeries(14)),
+      Promise.resolve(getRelationshipScoreBuckets()),
+      getTopOpportunities(8),
+      getAvgScores(),
+    ]);
 
   return (
     <div className="space-y-10">
@@ -18,7 +32,11 @@ export default async function OverviewPage() {
           <Link href="/settings" className="underline">
             Pacing
           </Link>{" "}
-          keeps reviews and captures in slow, small batches.
+          keeps captures slow;{" "}
+          <Link href="/decisions" className="underline">
+            Decisions
+          </Link>{" "}
+          is where you approve drafts before manual sends.
         </p>
       </div>
 
@@ -28,9 +46,25 @@ export default async function OverviewPage() {
         <Stat label="Queue (pending)" value={stats.queuePending} />
       </dl>
 
+      <OverviewCharts
+        segments={stats.bySegment}
+        capturesSeries={capturesSeries}
+        scoreBuckets={scoreBuckets}
+        topOpportunities={topOpps.map((o) => ({
+          fullName: o.fullName,
+          company: o.company,
+          businessScore: o.businessScore,
+        }))}
+        averages={{
+          avgRelationship: Number(averages.avgRelationship) || 0,
+          avgBusiness: Number(averages.avgBusiness) || 0,
+          avgCleanup: Number(averages.avgCleanup) || 0,
+        }}
+      />
+
       <section className="space-y-3">
         <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-          Segments
+          Segments (summary)
         </h2>
         <ul className="flex flex-wrap gap-2 text-sm">
           {stats.bySegment.length === 0 ? (

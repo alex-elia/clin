@@ -1,0 +1,58 @@
+import Link from "next/link";
+import {
+  listQueueDecideItems,
+  listQueueReadyOutreach,
+  type QueueWithContact,
+} from "@/lib/queries";
+import { DecisionsBoard, type DecisionItem } from "./DecisionsBoard";
+
+export const dynamic = "force-dynamic";
+
+function toDecisionItem(r: QueueWithContact): DecisionItem {
+  return {
+    queueId: r.queue.id,
+    contactId: r.contact.id,
+    fullName: r.contact.fullName,
+    headline: r.contact.headline,
+    company: r.contact.company,
+    linkedinUrl: r.contact.linkedinUrlCanonical,
+    suggestedAction: r.queue.suggestedAction,
+    draftOutreach: r.queue.draftOutreach,
+  };
+}
+
+export default async function DecisionsPage() {
+  const [decideRows, readyRows] = await Promise.all([
+    listQueueDecideItems(),
+    listQueueReadyOutreach(),
+  ]);
+
+  const decideItems = decideRows.map(toDecisionItem);
+  const readyItems = readyRows.map(toDecisionItem);
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Decisions</h1>
+        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+          Prepare outreach <strong className="font-medium">before</strong> you
+          use the browser or extension on LinkedIn. Approve drafts here; then
+          copy from the Ready tab or fetch{" "}
+          <code className="rounded bg-zinc-100 px-1 font-mono text-xs dark:bg-zinc-900">
+            GET /api/outreach/ready
+          </code>{" "}
+          for a side panel later.
+        </p>
+        <p className="mt-2 text-xs text-zinc-500">
+          <Link href="/queue" className="underline">
+            Review queue
+          </Link>{" "}
+          for non-outreach triage. Approved outreach leaves the queue list until
+          sent.
+        </p>
+      </div>
+
+      <DecisionsBoard decideItems={decideItems} readyItems={readyItems} />
+    </div>
+  );
+}

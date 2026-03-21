@@ -130,6 +130,13 @@ export const actionQueue = sqliteTable(
     status: text("status").notNull().default("pending"),
     priority: integer("priority").notNull().default(0),
     suggestedAction: text("suggested_action"),
+    /** User-edited message draft before any manual send on LinkedIn. */
+    draftOutreach: text("draft_outreach"),
+    /**
+     * Decision state for outreach prep (dashboard → you paste/send yourself).
+     * Extension can read approved rows via /api/outreach/ready.
+     */
+    outreachDecision: text("outreach_decision").notNull().default("pending"),
     kind: text("kind").notNull().default("review"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
@@ -139,6 +146,7 @@ export const actionQueue = sqliteTable(
   (t) => [
     index("queue_status_idx").on(t.status),
     index("queue_contact_idx").on(t.contactId),
+    index("queue_outreach_decision_idx").on(t.outreachDecision),
   ],
 );
 

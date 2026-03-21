@@ -18,6 +18,13 @@ Before each capture, the background script calls `GET /api/settings` and enforce
 
 Tune limits under **Pacing** in the Clin dashboard (`/settings`).
 
+## Approved outreach (after dashboard decisions)
+
+When you **approve** drafts on `/decisions`, those rows are listed at
+`GET /api/outreach/ready` (JSON: `linkedinUrl`, `draftOutreach`, etc.). You can
+extend the extension to show “next to paste” — Clin still does not send messages
+for you.
+
 ## Out of scope (by design)
 
 - No auto-scroll, scheduled capture, or scripted clicks / typing on LinkedIn.

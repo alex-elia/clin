@@ -1,7 +1,12 @@
-import { and, count, desc, eq, like, or } from "drizzle-orm";
+import { and, count, desc, eq, like, ne, or } from "drizzle-orm";
 import { getDb } from "@/db";
 import { actionQueue, captureSessions, contacts } from "@/db/schema";
 import { shuffledCopy } from "@/lib/shuffle";
+
+export type QueueWithContact = {
+  queue: typeof actionQueue.$inferSelect;
+  contact: typeof contacts.$inferSelect;
+};
 
 export async function getOverviewStats() {
   const db = getDb();
@@ -83,7 +88,12 @@ export async function listQueuePending(shuffle: boolean) {
     .select()
     .from(actionQueue)
     .innerJoin(contacts, eq(actionQueue.contactId, contacts.id))
-    .where(eq(actionQueue.status, "pending"))
+    .where(
+      and(
+        eq(actionQueue.status, "pending"),
+        ne(actionQueue.outreachDecision, "approved"),
+      ),
+    )
     .orderBy(desc(actionQueue.priority), desc(actionQueue.createdAt));
 
   const items = pending.map((r) => ({
@@ -92,4 +102,46 @@ export async function listQueuePending(shuffle: boolean) {
   }));
 
   return shuffle ? shuffledCopy(items) : items;
+}
+
+/** Decide tab: still in queue, no outreach approval yet. */
+export async function listQueueDecideItems(): Promise<QueueWithContact[]> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(actionQueue)
+    .innerJoin(contacts, eq(actionQueue.contactId, contacts.id))
+    .where(
+      and(
+        eq(actionQueue.status, "pending"),
+        eq(actionQueue.outreachDecision, "pending"),
+      ),
+    )
+    .orderBy(desc(actionQueue.priority), desc(actionQueue.createdAt));
+
+  return rows.map((r) => ({
+    queue: r.action_queue,
+    contact: r.contacts,
+  }));
+}
+
+/** Ready tab: approved in app; you paste/send on LinkedIn yourself, then mark sent. */
+export async function listQueueReadyOutreach(): Promise<QueueWithContact[]> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(actionQueue)
+    .innerJoin(contacts, eq(actionQueue.contactId, contacts.id))
+    .where(
+      and(
+        eq(actionQueue.status, "pending"),
+        eq(actionQueue.outreachDecision, "approved"),
+      ),
+    )
+    .orderBy(desc(actionQueue.priority), desc(actionQueue.createdAt));
+
+  return rows.map((r) => ({
+    queue: r.action_queue,
+    contact: r.contacts,
+  }));
 }

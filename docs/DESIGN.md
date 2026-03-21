@@ -107,6 +107,7 @@ flowchart LR
 |--------|------|---------|
 | `GET` | `/api/health` | Liveness for extension |
 | `GET` / `PATCH` | `/api/settings` | Read/update pacing (`pace.*` in `app_settings`) |
+| `GET` | `/api/outreach/ready` | Rows with `outreach_decision = approved` (draft + URL) for handoff to extension or copy/paste |
 | `POST` | `/api/ingest/capture` | Extension / import ingest (429 when pacing exceeded) |
 | `GET` | `/api/contacts` | Filters, keyset cursor, sort |
 | `PATCH` | `/api/contacts/:id` | Tags, notes, queue state |
@@ -126,6 +127,9 @@ flowchart LR
 - `scores` / audit — **rule version** + explainable reasons
 - `recommendations`, `action_queue`, `notes`
 - `app_settings` — key/value for pacing (`pace.queue_batch_size`, etc.)
+- `action_queue.draft_outreach`, `action_queue.outreach_decision` — draft text and state (`pending` → `approved` → `sent`, or `skipped`)
+
+**Dashboard:** overview charts (segments, capture trend, score bands, top business scores); **Decisions** screen for editing drafts and approving before any manual send on LinkedIn.
 
 **Identity:** normalize LinkedIn URLs (strip tracking params, stable host/path).
 

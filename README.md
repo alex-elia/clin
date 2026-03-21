@@ -7,7 +7,7 @@ Local-first **LinkedIn network intelligence**: capture, score, and review your g
 | Path | Description |
 |------|-------------|
 | [`docs/`](./docs/) | Product and technical design ([DESIGN.md](./docs/DESIGN.md)) |
-| [`web/`](./web/) | Next.js dashboard, SQLite (Drizzle), REST API |
+| [`web/`](./web/) | Next.js dashboard (charts + **Decisions** workflow), SQLite, REST API |
 | [`extension/`](./extension/) | Chrome MV3 — manual “Capture this page” → `POST /api/ingest/capture` |
 
 ## Quick start — web app
@@ -41,6 +41,7 @@ See [`extension/README.md`](./extension/README.md). Load **unpacked** from `exte
 | `GET` | `/api/queue?shuffle=1` | Review queue (optional **local** shuffle) |
 | `PATCH` | `/api/queue/[id]` | `reviewed` / `deferred` / `dismissed` |
 | `GET` | `/api/captures` | Capture log |
+| `GET` | `/api/outreach/ready` | Approved outreach rows (draft + URL) for extension/UI handoff |
 | `GET` / `PATCH` | `/api/settings` | Pacing (batch size, gaps, hourly capture cap) |
 | `POST` | `/api/scores/recompute` | Recompute all scores |
 

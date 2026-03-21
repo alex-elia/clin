@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { actionQueue } from "@/db/schema";
+import { queuePatchSchema } from "@/lib/queuePatch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,28 +19,56 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  if (!body || typeof body !== "object") {
-    return NextResponse.json({ error: "Invalid body" }, { status: 400 });
+  const parsed = queuePatchSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Validation failed", details: parsed.error.flatten() },
+      { status: 400 },
+    );
   }
 
-  const status = (body as { status?: string }).status;
-  const allowed = new Set(["pending", "reviewed", "dismissed", "deferred"]);
-  if (!status || !allowed.has(status)) {
-    return NextResponse.json({ error: "Invalid status" }, { status: 400 });
-  }
-
+  const patch = parsed.data;
   const db = getDb();
   const row = await db.query.actionQueue.findFirst({
     where: eq(actionQueue.id, id),
   });
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  let status = row.status;
+  let reviewedAt = row.reviewedAt ?? null;
+  let outreachDecision = row.outreachDecision;
+  const draftOutreach =
+    patch.draftOutreach !== undefined ? patch.draftOutreach : row.draftOutreach;
+
+  if (patch.outreachDecision !== undefined) {
+    outreachDecision = patch.outreachDecision;
+    if (patch.outreachDecision === "sent") {
+      status = "reviewed";
+      reviewedAt = new Date();
+    } else if (patch.outreachDecision === "skipped") {
+      status = "dismissed";
+      reviewedAt = new Date();
+    }
+  }
+
+  if (patch.status !== undefined) {
+    status = patch.status;
+    if (status === "reviewed" || status === "dismissed") {
+      reviewedAt = new Date();
+    } else if (status === "deferred") {
+      reviewedAt = null;
+    } else if (status === "pending") {
+      reviewedAt = null;
+    }
+  }
+
   await db
     .update(actionQueue)
     .set({
       status,
-      reviewedAt:
-        status === "reviewed" || status === "dismissed" ? new Date() : null,
+      reviewedAt,
+      outreachDecision,
+      draftOutreach,
     })
     .where(eq(actionQueue.id, id));
 
