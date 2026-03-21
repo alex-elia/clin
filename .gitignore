@@ -1,0 +1,27 @@
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Dependencies & build
+web/node_modules
+web/.next
+web/out
+web/*.tsbuildinfo
+
+# SQLite (local dev)
+*.db
+*.db-journal
+web/data/
+
+# IDE
+.idea
+.vscode/*
+!.vscode/extensions.json
+
+# Logs
+npm-debug.log*
+*.log
