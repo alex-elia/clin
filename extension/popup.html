@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Clin</title>
+    <style>
+      :root {
+        font-family: system-ui, sans-serif;
+        font-size: 13px;
+      }
+      body {
+        width: 280px;
+        margin: 0;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 14px;
+        margin: 0 0 8px;
+      }
+      label {
+        display: block;
+        margin-top: 8px;
+        color: #444;
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 4px;
+        padding: 6px 8px;
+      }
+      button {
+        margin-top: 10px;
+        width: 100%;
+        padding: 8px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #status {
+        margin-top: 10px;
+        font-size: 12px;
+        line-height: 1.4;
+        white-space: pre-wrap;
+      }
+      .ok {
+        color: #0a0;
+      }
+      .err {
+        color: #b00;
+      }
+      .muted {
+        color: #666;
+        font-size: 11px;
+        margin-top: 8px;
+      }
+      a {
+        color: #06c;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Clin capture</h1>
+    <p class="muted">
+      Open a LinkedIn profile, then capture visible fields. You send messages
+      yourself — Clin does not automate LinkedIn.
+    </p>
+    <label>
+      Clin API base
+      <input id="base" type="url" placeholder="http://127.0.0.1:3000" />
+    </label>
+    <button id="save" type="button">Save base URL</button>
+    <button id="ping" type="button">Check API health</button>
+    <button id="cap" type="button">Capture this page</button>
+    <div id="status"></div>
+    <p class="muted">
+      <a href="http://127.0.0.1:3000/" target="_blank" rel="noreferrer"
+        >Open dashboard</a
+      >
+    </p>
+    <script src="popup.js"></script>
+  </body>
+</html>

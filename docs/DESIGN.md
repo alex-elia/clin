@@ -2,7 +2,7 @@
 
 **Clin** (this repo) implements a personal relationship graph: capture, score, queue, review — **no scripted actions on LinkedIn**.
 
-Canonical design for implementation lives in this file. The Chrome MV3 extension will ship separately under `extension/` when built.
+Canonical design for implementation lives in this file. The Chrome MV3 extension lives in `extension/` (load unpacked for local dev).
 
 ---
 
@@ -35,7 +35,7 @@ Canonical design for implementation lives in this file. The Chrome MV3 extension
 clin/
   docs/           # This specification
   web/            # Next.js app (dashboard + API routes)
-  extension/      # Chrome MV3 (optional scaffold later)
+  extension/      # Chrome MV3 (manual capture → local API)
 ```
 
 **Default stack:** Next.js (App Router) in `web/` + **SQLite** (Drizzle + better-sqlite3) + MV3 extension. Postgres optional later.
