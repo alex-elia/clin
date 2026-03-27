@@ -35,6 +35,10 @@ export const contacts = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
+    /**
+     * Hygiene + LLM columns are optional SQLite ALTERs only — not declared here so
+     * Drizzle never selects missing columns. Use lib/contactSqlExtras.ts and npm run db:repair.
+     */
   },
   (t) => [
     index("contacts_segment_idx").on(t.segment),
@@ -150,6 +154,47 @@ export const actionQueue = sqliteTable(
   ],
 );
 
+/** Audit trail for automated profile visits (local extension runner). */
+export const automationLog = sqliteTable(
+  "automation_log",
+  {
+    id: text("id").primaryKey(),
+    contactId: text("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    outcome: text("outcome"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("automation_log_created_idx").on(t.createdAt),
+    index("automation_log_contact_idx").on(t.contactId),
+  ],
+);
+
+/**
+ * Singleton row (`id` = `default`): your own profile link, goals, and positioning text
+ * used to steer contact analysis (Ollama) and future scoring.
+ */
+export const userContext = sqliteTable("user_context", {
+  id: text("id").primaryKey(),
+  selfContactId: text("self_contact_id").references(() => contacts.id, {
+    onDelete: "set null",
+  }),
+  goalsText: text("goals_text"),
+  positioningSummary: text("positioning_summary"),
+  /** Extension polls and opens this URL to run a profile capture (Save profile link). */
+  pendingSelfCaptureUrl: text("pending_self_capture_url"),
+  pendingSelfCaptureAt: integer("pending_self_capture_at", {
+    mode: "timestamp_ms",
+  }),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 /** Tunable pacing for low-risk, human-in-the-loop workflows (local + API limits only). */
 export const appSettings = sqliteTable("app_settings", {
   key: text("key").primaryKey(),
@@ -159,12 +204,31 @@ export const appSettings = sqliteTable("app_settings", {
     .$defaultFn(() => new Date()),
 });
 
-export const contactsRelations = relations(contacts, ({ many }) => ({
+export const userContextRelations = relations(userContext, ({ one }) => ({
+  selfContact: one(contacts, {
+    fields: [userContext.selfContactId],
+    references: [contacts.id],
+  }),
+}));
+
+export const contactsRelations = relations(contacts, ({ many, one }) => ({
   captures: many(captureSessions),
   snapshots: many(contactSnapshots),
   contactTags: many(contactTags),
   notes: many(notes),
   queueItems: many(actionQueue),
+  automationLogs: many(automationLog),
+  linkedAsSelfOwner: one(userContext, {
+    fields: [contacts.id],
+    references: [userContext.selfContactId],
+  }),
+}));
+
+export const automationLogRelations = relations(automationLog, ({ one }) => ({
+  contact: one(contacts, {
+    fields: [automationLog.contactId],
+    references: [contacts.id],
+  }),
 }));
 
 export const captureSessionsRelations = relations(captureSessions, ({ one }) => ({

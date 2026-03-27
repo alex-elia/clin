@@ -22,6 +22,34 @@
       "when": 1774128384487,
       "tag": "0002_outreach_decisions",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1774129000000,
+      "tag": "0003_hygiene_automation",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1774130000000,
+      "tag": "0004_contact_llm_analysis",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1774200000000,
+      "tag": "0005_user_context",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1774210000000,
+      "tag": "0006_user_context_pending_capture",
+      "breakpoints": true
     }
   ]
 }

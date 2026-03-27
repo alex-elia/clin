@@ -2,10 +2,26 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
+import {
+  selectContactLlmExtension,
+  tryUpdateLlmMessageContext,
+} from "@/lib/contactSqlExtras";
 import { SCORE_RULE_VERSION, scoreContact } from "@/lib/scoring";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+export async function GET(
+  _req: Request,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  const { id } = await ctx.params;
+  const db = getDb();
+  const row = await db.query.contacts.findFirst({ where: eq(contacts.id, id) });
+  if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const llm = selectContactLlmExtension(id);
+  return NextResponse.json({ ...row, ...(llm ?? {}) });
+}
 
 export async function PATCH(
   req: Request,
@@ -30,6 +46,7 @@ export async function PATCH(
     company: string;
     location: string;
     segment: string;
+    llmMessageContext: string | null;
   }> = {};
 
   if (typeof b.fullName === "string") patch.fullName = b.fullName;
@@ -37,6 +54,12 @@ export async function PATCH(
   if (typeof b.company === "string") patch.company = b.company;
   if (typeof b.location === "string") patch.location = b.location;
   if (typeof b.segment === "string") patch.segment = b.segment;
+  if (typeof b.llm_message_context === "string") {
+    patch.llmMessageContext = b.llm_message_context;
+  }
+  if (b.llm_message_context === null) {
+    patch.llmMessageContext = null;
+  }
 
   const db = getDb();
   const row = await db.query.contacts.findFirst({ where: eq(contacts.id, id) });
@@ -45,10 +68,15 @@ export async function PATCH(
   const next = { ...row, ...patch, lastUpdatedAt: new Date() };
   const scores = scoreContact(next);
 
+  const { llmMessageContext, ...restPatch } = patch;
+  if (llmMessageContext !== undefined) {
+    tryUpdateLlmMessageContext(id, llmMessageContext);
+  }
+
   await db
     .update(contacts)
     .set({
-      ...patch,
+      ...restPatch,
       segment: scores.segment,
       relationshipScore: scores.relationshipScore,
       businessScore: scores.businessScore,
@@ -64,6 +92,9 @@ export async function PATCH(
   const updated = await db.query.contacts.findFirst({
     where: eq(contacts.id, id),
   });
+  const llm = selectContactLlmExtension(id);
 
-  return NextResponse.json(updated);
+  return NextResponse.json(
+    updated ? { ...updated, ...(llm ?? {}) } : updated,
+  );
 }

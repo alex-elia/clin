@@ -1,7 +1,11 @@
 import Link from "next/link";
+import { ScoreLegend } from "@/components/ScoreLegend";
+import { scoresTooltipLines } from "@/lib/scoreExplain";
 import { listContacts } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
+/** Ensure RSC runs in Node (better-sqlite3); avoids any experimental edge bundling. */
+export const runtime = "nodejs";
 
 const segments = [
   "active",
@@ -69,6 +73,8 @@ export default async function ContactsPage({
         </button>
       </form>
 
+      <ScoreLegend />
+
       <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
         <table className="min-w-full text-left text-sm">
           <thead className="bg-zinc-50 text-xs uppercase text-zinc-500 dark:bg-zinc-900">
@@ -76,7 +82,12 @@ export default async function ContactsPage({
               <th className="px-3 py-2">Name</th>
               <th className="px-3 py-2">Company</th>
               <th className="px-3 py-2">Segment</th>
-              <th className="px-3 py-2">Scores</th>
+              <th className="px-3 py-2">
+                Scores{" "}
+                <span className="font-normal normal-case text-zinc-400">
+                  (hover a row)
+                </span>
+              </th>
               <th className="px-3 py-2">Updated</th>
             </tr>
           </thead>
@@ -95,7 +106,12 @@ export default async function ContactsPage({
                 <tr key={c.id} className="bg-white dark:bg-zinc-950">
                   <td className="px-3 py-2">
                     <div className="font-medium text-zinc-900 dark:text-zinc-100">
-                      {c.fullName ?? "—"}
+                      <Link
+                        href={`/contacts/${c.id}`}
+                        className="hover:underline"
+                      >
+                        {c.fullName ?? "—"}
+                      </Link>
                     </div>
                     <div className="text-xs text-zinc-500 line-clamp-1">
                       {c.headline ?? ""}
@@ -109,8 +125,13 @@ export default async function ContactsPage({
                       {c.segment}
                     </span>
                   </td>
-                  <td className="px-3 py-2 font-mono text-xs text-zinc-600 dark:text-zinc-400">
-                    R{c.relationshipScore} B{c.businessScore} C{c.cleanupScore}
+                  <td
+                    className="px-3 py-2 font-mono text-xs text-zinc-600 dark:text-zinc-400"
+                    title={scoresTooltipLines(c)}
+                  >
+                    <span className="cursor-help underline decoration-dotted decoration-zinc-400 underline-offset-2">
+                      R{c.relationshipScore} B{c.businessScore} C{c.cleanupScore}
+                    </span>
                   </td>
                   <td className="px-3 py-2 text-xs text-zinc-500">
                     {c.lastUpdatedAt

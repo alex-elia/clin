@@ -17,14 +17,26 @@ type QueueRow = {
   };
 };
 
-const OPEN_KEY = "clin_last_profile_open_ms";
+const OPEN_LAST_KEY = "clin_last_profile_open_ms";
+const OPEN_GAP_KEY = "clin_profile_open_required_gap_ms";
+
+function nextClientGapMs(minMs: number, jitterPercent: number): number {
+  const jitter = Math.max(0, Math.min(100, Math.floor(jitterPercent)));
+  if (jitter === 0) return Math.round(minMs);
+  const extraMax = Math.floor((minMs * jitter) / 100);
+  const extra =
+    extraMax <= 0 ? 0 : Math.floor(Math.random() * (extraMax + 1));
+  return Math.round(minMs + extra);
+}
 
 function ProfileOpenControl({
   url,
   minSeconds,
+  jitterPercent,
 }: {
   url: string;
   minSeconds: number;
+  jitterPercent: number;
 }) {
   const [waitSec, setWaitSec] = useState(0);
 
@@ -38,14 +50,23 @@ function ProfileOpenControl({
   }, [waitSec]);
 
   function openProfile() {
-    const last = Number(sessionStorage.getItem(OPEN_KEY) || "0");
+    const last = Number(sessionStorage.getItem(OPEN_LAST_KEY) || "0");
     const minMs = minSeconds * 1000;
+    const storedGap = Number(sessionStorage.getItem(OPEN_GAP_KEY) || "0");
+    const requiredMs = Math.max(
+      Number.isFinite(storedGap) && storedGap > 0 ? storedGap : minMs,
+      minMs,
+    );
     const delta = Date.now() - last;
-    if (last > 0 && delta < minMs) {
-      setWaitSec(Math.max(1, Math.ceil((minMs - delta) / 1000)));
+    if (last > 0 && delta < requiredMs) {
+      setWaitSec(Math.max(1, Math.ceil((requiredMs - delta) / 1000)));
       return;
     }
-    sessionStorage.setItem(OPEN_KEY, String(Date.now()));
+    sessionStorage.setItem(OPEN_LAST_KEY, String(Date.now()));
+    sessionStorage.setItem(
+      OPEN_GAP_KEY,
+      String(nextClientGapMs(minMs, jitterPercent)),
+    );
     window.open(url, "_blank", "noopener,noreferrer");
   }
 
@@ -60,7 +81,7 @@ function ProfileOpenControl({
       </button>
       {waitSec > 0 ? (
         <p className="text-xs text-amber-700 dark:text-amber-300">
-          Paced: wait {waitSec}s between profile opens (local rule).
+          Paced: wait {waitSec}s between profile opens (local rule, jittered).
         </p>
       ) : null}
     </div>
@@ -71,10 +92,12 @@ export function QueueActions({
   items,
   batchSize,
   minSecondsBetweenProfileOpens,
+  paceJitterPercent,
 }: {
   items: QueueRow[];
   batchSize: number;
   minSecondsBetweenProfileOpens: number;
+  paceJitterPercent: number;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
@@ -132,6 +155,7 @@ export function QueueActions({
                 <ProfileOpenControl
                   url={contact.linkedinUrlCanonical}
                   minSeconds={minSecondsBetweenProfileOpens}
+                  jitterPercent={paceJitterPercent}
                 />
               </div>
               <div className="flex flex-wrap gap-2">

@@ -56,6 +56,7 @@ export default async function QueuePage({
         items={items}
         batchSize={pace.queueBatchSize}
         minSecondsBetweenProfileOpens={pace.minSecondsBetweenProfileOpens}
+        paceJitterPercent={pace.paceJitterPercent}
       />
     </div>
   );

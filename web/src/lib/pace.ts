@@ -1,3 +1,4 @@
+import { randomInt } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { appSettings } from "@/db/schema";
@@ -7,6 +8,9 @@ export const PACE_KEYS = {
   minSecondsBetweenProfileOpens: "pace.min_seconds_between_profile_opens",
   minSecondsBetweenCaptures: "pace.min_seconds_between_captures",
   captureMaxPerHour: "pace.capture_max_per_hour",
+  paceJitterPercent: "pace.jitter_percent",
+  /** Milliseconds the client must wait after the last successful capture (min + random extra). */
+  afterCaptureGapMs: "pace.after_capture_gap_ms",
 } as const;
 
 export type PaceSettings = {
@@ -14,6 +18,8 @@ export type PaceSettings = {
   minSecondsBetweenProfileOpens: number;
   minSecondsBetweenCaptures: number;
   captureMaxPerHour: number;
+  /** 0 = fixed minimums only; otherwise each interval adds 0–N% random extra on top of the minimum. */
+  paceJitterPercent: number;
 };
 
 export const PACE_DEFAULTS: PaceSettings = {
@@ -23,8 +29,9 @@ export const PACE_DEFAULTS: PaceSettings = {
   minSecondsBetweenProfileOpens: 60,
   /** Minimum spacing between successful extension captures (client + optional server advisory). */
   minSecondsBetweenCaptures: 45,
-  /** Rolling 1h cap on capture ingests (server); extension mirrors via the same API. */
-  captureMaxPerHour: 10,
+  /** Rolling 1h cap on capture rows (server); list import counts one row per person. */
+  captureMaxPerHour: 40,
+  paceJitterPercent: 40,
 };
 
 const BOUNDS: Record<keyof PaceSettings, { min: number; max: number }> = {
@@ -32,6 +39,7 @@ const BOUNDS: Record<keyof PaceSettings, { min: number; max: number }> = {
   minSecondsBetweenProfileOpens: { min: 15, max: 600 },
   minSecondsBetweenCaptures: { min: 20, max: 600 },
   captureMaxPerHour: { min: 1, max: 40 },
+  paceJitterPercent: { min: 0, max: 100 },
 };
 
 function clampKey<K extends keyof PaceSettings>(
@@ -82,6 +90,13 @@ export async function getPaceSettings(): Promise<PaceSettings> {
         PACE_DEFAULTS.captureMaxPerHour,
       ),
     ),
+    paceJitterPercent: clampKey(
+      "paceJitterPercent",
+      parseStored(
+        map.get(PACE_KEYS.paceJitterPercent),
+        PACE_DEFAULTS.paceJitterPercent,
+      ),
+    ),
   };
 }
 
@@ -97,6 +112,7 @@ export async function updatePaceSettings(patch: Partial<PaceSettings>): Promise<
     minSecondsBetweenProfileOpens: merged.minSecondsBetweenProfileOpens!,
     minSecondsBetweenCaptures: merged.minSecondsBetweenCaptures!,
     captureMaxPerHour: merged.captureMaxPerHour!,
+    paceJitterPercent: merged.paceJitterPercent!,
   };
   next.queueBatchSize = clampKey("queueBatchSize", next.queueBatchSize);
   next.minSecondsBetweenProfileOpens = clampKey(
@@ -110,6 +126,10 @@ export async function updatePaceSettings(patch: Partial<PaceSettings>): Promise<
   next.minSecondsBetweenCaptures = clampKey(
     "minSecondsBetweenCaptures",
     next.minSecondsBetweenCaptures,
+  );
+  next.paceJitterPercent = clampKey(
+    "paceJitterPercent",
+    next.paceJitterPercent,
   );
 
   const db = getDb();
@@ -125,6 +145,7 @@ export async function updatePaceSettings(patch: Partial<PaceSettings>): Promise<
       String(next.minSecondsBetweenCaptures),
     ],
     [PACE_KEYS.captureMaxPerHour, String(next.captureMaxPerHour)],
+    [PACE_KEYS.paceJitterPercent, String(next.paceJitterPercent)],
   ];
 
   for (const [key, value] of entries) {
@@ -142,4 +163,64 @@ export async function updatePaceSettings(patch: Partial<PaceSettings>): Promise<
   }
 
   return next;
+}
+
+/**
+ * Milliseconds to wait after the previous action before the next (minimum + optional random extra).
+ */
+export function nextRandomizedGapMs(minMs: number, jitterPercent: number): number {
+  const jitter = Math.max(0, Math.min(100, Math.floor(jitterPercent)));
+  if (jitter === 0) return Math.round(minMs);
+  const extraMax = Math.floor((minMs * jitter) / 100);
+  const extra = extraMax <= 0 ? 0 : randomInt(0, extraMax + 1);
+  return Math.round(minMs + extra);
+}
+
+async function upsertAppSetting(key: string, value: string) {
+  const db = getDb();
+  const now = new Date();
+  const existing = await db.query.appSettings.findFirst({
+    where: eq(appSettings.key, key),
+  });
+  if (existing) {
+    await db
+      .update(appSettings)
+      .set({ value, updatedAt: now })
+      .where(eq(appSettings.key, key));
+  } else {
+    await db.insert(appSettings).values({ key, value, updatedAt: now });
+  }
+}
+
+/**
+ * Gap enforced before the next capture may ingest. Uses the value rolled after the last success,
+ * clamped to the current minimum so raising the minimum in settings still applies.
+ */
+export async function captureRequiredGapMs(pace: PaceSettings): Promise<number> {
+  const minMs = pace.minSecondsBetweenCaptures * 1000;
+  const db = getDb();
+  const row = await db.query.appSettings.findFirst({
+    where: eq(appSettings.key, PACE_KEYS.afterCaptureGapMs),
+  });
+  const stored = row?.value !== undefined ? Number(row.value) : NaN;
+  const rolled =
+    Number.isFinite(stored) && stored > 0 ? stored : minMs;
+  return Math.max(rolled, minMs);
+}
+
+export async function rollCaptureGapAfterSuccess(pace: PaceSettings): Promise<void> {
+  const minMs = pace.minSecondsBetweenCaptures * 1000;
+  const gap = nextRandomizedGapMs(minMs, pace.paceJitterPercent);
+  await upsertAppSetting(
+    PACE_KEYS.afterCaptureGapMs,
+    String(Math.max(gap, minMs)),
+  );
+}
+
+export async function getPaceForApi(): Promise<
+  PaceSettings & { captureGapMsRequired: number }
+> {
+  const pace = await getPaceSettings();
+  const captureGapMsRequired = await captureRequiredGapMs(pace);
+  return { ...pace, captureGapMsRequired };
 }

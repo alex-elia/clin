@@ -1,13 +1,23 @@
 {
   "manifest_version": 3,
   "name": "Clin Capture",
-  "version": "0.1.1",
-  "description": "Manual capture of visible LinkedIn data into your local Clin app. No automated LinkedIn actions.",
+  "version": "0.2.4",
+  "description": "Capture visible LinkedIn data into your local Clin app. Optional slow hygiene runner (Settings) can open queued profiles for refresh only — no messaging or bulk actions.",
   "action": {
-    "default_title": "Clin",
-    "default_popup": "popup.html"
+    "default_title": "Clin"
   },
-  "permissions": ["storage", "scripting", "activeTab"],
+  "side_panel": {
+    "default_path": "popup.html"
+  },
+  "permissions": [
+    "alarms",
+    "sidePanel",
+    "storage",
+    "scripting",
+    "activeTab",
+    "tabs",
+    "windows"
+  ],
   "host_permissions": [
     "https://www.linkedin.com/*",
     "https://linkedin.com/*",

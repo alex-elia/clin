@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { getPaceSettings, updatePaceSettings } from "@/lib/pace";
+import { getPaceForApi, updatePaceSettings } from "@/lib/pace";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,14 +11,15 @@ const patchSchema = z
     minSecondsBetweenProfileOpens: z.number().int().optional(),
     minSecondsBetweenCaptures: z.number().int().optional(),
     captureMaxPerHour: z.number().int().optional(),
+    paceJitterPercent: z.number().int().optional(),
   })
   .strict();
 
 export async function GET() {
-  const pace = await getPaceSettings();
+  const pace = await getPaceForApi();
   return NextResponse.json({
     pace,
-    note: "Pacing reduces bursty behavior. It does not automate LinkedIn; you still perform every action manually.",
+    note: "Pacing reduces bursty behavior. Manual capture stays human-in-the-loop; optional hygiene automation (Settings) can open profiles from your local queue with the same capture limits.",
   });
 }
 
@@ -36,6 +37,7 @@ export async function PATCH(req: Request) {
       { status: 400 },
     );
   }
-  const pace = await updatePaceSettings(parsed.data);
+  await updatePaceSettings(parsed.data);
+  const pace = await getPaceForApi();
   return NextResponse.json({ pace });
 }

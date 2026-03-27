@@ -2,13 +2,16 @@ import { count, desc, gte } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { captureSessions } from "@/db/schema";
-import { ingestCapture } from "@/lib/ingest";
+import {
+  dedupeConnectionRows,
+  ingestConnectionsPage,
+} from "@/lib/ingest";
 import {
   captureRequiredGapMs,
   getPaceSettings,
   rollCaptureGapAfterSuccess,
 } from "@/lib/pace";
-import { capturePayloadSchema } from "@/lib/schemas";
+import { connectionsPagePayloadSchema } from "@/lib/schemas";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,7 +24,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const parsed = capturePayloadSchema.safeParse(body);
+  const parsed = connectionsPagePayloadSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Validation failed", details: parsed.error.flatten() },
@@ -32,16 +35,29 @@ export async function POST(req: Request) {
   const db = getDb();
   const pace = await getPaceSettings();
 
+  const uniqueRows = dedupeConnectionRows(parsed.data.rows);
+  if (uniqueRows.length === 0) {
+    return NextResponse.json(
+      {
+        error:
+          "No valid /in/ profile links in payload (check URLs and duplicates).",
+      },
+      { status: 400 },
+    );
+  }
+
   const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
   const [hourly] = await db
     .select({ n: count() })
     .from(captureSessions)
     .where(gte(captureSessions.capturedAt, hourAgo));
 
-  if ((hourly?.n ?? 0) >= pace.captureMaxPerHour) {
+  const used = hourly?.n ?? 0;
+  const slotsLeft = Math.max(0, pace.captureMaxPerHour - used);
+  if (slotsLeft <= 0) {
     return NextResponse.json(
       {
-        error: `Rolling hourly capture limit reached (${pace.captureMaxPerHour}). This is intentional — work in smaller batches.`,
+        error: `Rolling hourly capture limit reached (${pace.captureMaxPerHour} capture rows). Raise the limit in /settings or wait.`,
       },
       {
         status: 429,
@@ -63,7 +79,7 @@ export async function POST(req: Request) {
       const retry = Math.max(1, Math.ceil((requiredMs - elapsed) / 1000));
       return NextResponse.json(
         {
-          error: `Paced: wait ${retry}s before the next capture (humanized interval).`,
+          error: `Paced: wait ${retry}s before the next import (humanized interval).`,
         },
         {
           status: 429,
@@ -74,7 +90,11 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await ingestCapture(db, parsed.data);
+    const result = await ingestConnectionsPage(
+      db,
+      { ...parsed.data, rows: uniqueRows },
+      { limit: slotsLeft, maxRows: 200 },
+    );
     await rollCaptureGapAfterSuccess(pace);
     return NextResponse.json(result);
   } catch (e) {

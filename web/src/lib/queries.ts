@@ -1,5 +1,5 @@
 import { and, count, desc, eq, like, ne, or } from "drizzle-orm";
-import { getDb } from "@/db";
+import { getDb, getSqlite, repairClinSqliteSchema } from "@/db";
 import { actionQueue, captureSessions, contacts } from "@/db/schema";
 import { shuffledCopy } from "@/lib/shuffle";
 
@@ -33,12 +33,21 @@ export async function getOverviewStats() {
   };
 }
 
+export async function getContactById(id: string) {
+  repairClinSqliteSchema(getSqlite());
+  const db = getDb();
+  return db.query.contacts.findFirst({
+    where: eq(contacts.id, id),
+  });
+}
+
 export async function listContacts(opts: {
   q?: string;
   segment?: string;
   limit?: number;
   offset?: number;
 }) {
+  repairClinSqliteSchema(getSqlite());
   const db = getDb();
   const q = opts.q?.trim() ?? "";
   const limit = Math.min(opts.limit ?? 50, 100);

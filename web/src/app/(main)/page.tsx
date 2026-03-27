@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { recomputeAllScores } from "@/app/actions";
 import { OverviewCharts } from "@/components/charts/OverviewCharts";
+import { ScoreLegend } from "@/components/ScoreLegend";
 import {
   getAvgScores,
   getCapturesPerDaySeries,
@@ -47,6 +48,8 @@ export default async function OverviewPage() {
         <Stat label="Capture events" value={stats.captures} />
         <Stat label="Queue (pending)" value={stats.queuePending} />
       </dl>
+
+      <ScoreLegend />
 
       <OverviewCharts
         segments={stats.bySegment}
