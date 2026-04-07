@@ -30,6 +30,9 @@ export type IngestInput = {
     company?: string;
     location?: string;
     connectionDegree?: string;
+    about?: string;
+    experienceBullets?: string[];
+    educationBullets?: string[];
   };
   fieldPresence?: Record<string, boolean>;
 };
@@ -464,6 +467,18 @@ export async function ingestConnectionsPage(
     }
   });
 
+  const canonicals = toProcess
+    .map((row) => canonicalizeLinkedInUrl(row.profileUrl))
+    .filter((c): c is string => Boolean(c && isProfileCanonicalUrl(c)));
+
+  const touchedContactIds: string[] = [];
+  for (const c of canonicals) {
+    const row = await db.query.contacts.findFirst({
+      where: eq(contacts.linkedinUrlCanonical, c),
+    });
+    if (row) touchedContactIds.push(row.id);
+  }
+
   return {
     imported: created + updated,
     created,
@@ -472,6 +487,7 @@ export async function ingestConnectionsPage(
     dedupedProfileCount: uniqueRows.length,
     skippedDueToHourlyCap: uniqueRows.length - toProcess.length,
     listSourceUrl: input.listSourceUrl,
+    touchedContactIds,
   };
 }
 

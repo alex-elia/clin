@@ -21,10 +21,16 @@ function toDecisionItem(r: QueueWithContact): DecisionItem {
   };
 }
 
-export default async function DecisionsPage() {
+export default async function DecisionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ order?: string }>;
+}) {
+  const sp = await searchParams;
+  const sort = sp.order === "cleanup" ? ("cleanup" as const) : ("priority" as const);
   const [decideRows, readyRows] = await Promise.all([
-    listQueueDecideItems(),
-    listQueueReadyOutreach(),
+    listQueueDecideItems(sort),
+    listQueueReadyOutreach(sort),
   ]);
 
   const decideItems = decideRows.map(toDecisionItem);
@@ -41,14 +47,28 @@ export default async function DecisionsPage() {
           <code className="rounded bg-zinc-100 px-1 font-mono text-xs dark:bg-zinc-900">
             GET /api/outreach/ready
           </code>{" "}
-          for a side panel later.
+          (also includes your active{" "}
+          <Link href="/campaigns" className="underline">
+            Campaign
+          </Link>{" "}
+          ready rows).
         </p>
         <p className="mt-2 text-xs text-zinc-500">
           <Link href="/queue" className="underline">
             Review queue
           </Link>{" "}
           for non-outreach triage. Approved outreach leaves the queue list until
-          sent.
+          sent.{" "}
+          {sort === "cleanup" ? (
+            <Link href="/decisions" className="underline">
+              Default order
+            </Link>
+          ) : (
+            <Link href="/decisions?order=cleanup" className="underline">
+              Sort by cleanup first
+            </Link>
+          )}
+          .
         </p>
       </div>
 

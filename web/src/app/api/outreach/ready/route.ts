@@ -2,13 +2,18 @@ import { and, desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { actionQueue, contacts } from "@/db/schema";
+import {
+  getActiveOutreachCampaignId,
+  getOutreachCampaign,
+  listCampaignMembersForExtension,
+} from "@/lib/outreachCampaigns";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Payload for a future extension side-panel: items you already approved in the dashboard.
- * You still send manually; this is just structured handoff.
+ * Extension handoff: (1) approved queue rows from /decisions, (2) active outreach campaign
+ * members marked **ready** with a non-empty draft. You paste on LinkedIn yourself.
  */
 export async function GET() {
   const db = getDb();
@@ -25,7 +30,8 @@ export async function GET() {
     .orderBy(desc(actionQueue.priority), desc(actionQueue.createdAt))
     .limit(50);
 
-  const items = rows.map((r) => ({
+  const queueItems = rows.map((r) => ({
+    source: "decision_queue" as const,
     queueId: r.action_queue.id,
     contactId: r.contacts.id,
     fullName: r.contacts.fullName,
@@ -34,9 +40,30 @@ export async function GET() {
     suggestedAction: r.action_queue.suggestedAction,
   }));
 
+  const activeId = await getActiveOutreachCampaignId();
+  const campaignMeta = activeId ? await getOutreachCampaign(activeId) : null;
+  const campaignRows =
+    activeId && campaignMeta
+      ? await listCampaignMembersForExtension(activeId, 50, { onlyReady: true })
+      : [];
+
+  const campaignItems = campaignRows.map((r) => ({
+    source: "campaign" as const,
+    memberId: r.memberId,
+    contactId: r.contactId,
+    fullName: r.fullName,
+    linkedinUrl: r.linkedinUrl,
+    draftOutreach: r.draftOutreach,
+    campaignName: campaignMeta?.name,
+  }));
+
+  const items = [...campaignItems, ...queueItems];
+
   return NextResponse.json({
     count: items.length,
     items,
-    hint: "Approve drafts in /decisions first. Paste into LinkedIn yourself; Clin does not auto-send.",
+    activeCampaignId: activeId,
+    activeCampaignName: campaignMeta?.name ?? null,
+    hint: "Campaign: set **Active for extension** on /campaigns/[id], approve each draft as **ready**, then refresh here. Queue: approve in /decisions. Paste into LinkedIn yourself; Clin does not auto-send.",
   });
 }

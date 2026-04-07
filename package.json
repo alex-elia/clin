@@ -1,0 +1,14 @@
+{
+  "name": "clin",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix web run dev",
+    "build": "npm --prefix web run build",
+    "start": "npm --prefix web run start",
+    "lint": "npm --prefix web run lint",
+    "db:repair": "npm --prefix web run db:repair",
+    "db:generate": "npm --prefix web run db:generate",
+    "db:push": "npm --prefix web run db:push",
+    "db:studio": "npm --prefix web run db:studio"
+  }
+}

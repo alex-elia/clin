@@ -6,6 +6,7 @@ import {
   dedupeConnectionRows,
   ingestConnectionsPage,
 } from "@/lib/ingest";
+import { attachImportedContactsToCampaign } from "@/lib/outreachCampaigns";
 import {
   captureRequiredGapMs,
   getPaceSettings,
@@ -89,14 +90,20 @@ export async function POST(req: Request) {
     }
   }
 
+  const { outreachCampaignId, ...pagePayload } = parsed.data;
+
   try {
     const result = await ingestConnectionsPage(
       db,
-      { ...parsed.data, rows: uniqueRows },
+      { ...pagePayload, rows: uniqueRows },
       { limit: slotsLeft, maxRows: 200 },
     );
     await rollCaptureGapAfterSuccess(pace);
-    return NextResponse.json(result);
+    const campaignAttach = await attachImportedContactsToCampaign(
+      outreachCampaignId,
+      result.touchedContactIds,
+    );
+    return NextResponse.json({ ...result, campaignAttach });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Ingest failed";
     return NextResponse.json({ error: message }, { status: 400 });

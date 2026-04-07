@@ -12,8 +12,13 @@ export const capturePayloadSchema = z.object({
     company: z.string().optional(),
     location: z.string().optional(),
     connectionDegree: z.string().optional(),
+    about: z.string().max(20_000).optional(),
+    experienceBullets: z.array(z.string().max(600)).max(25).optional(),
+    educationBullets: z.array(z.string().max(500)).max(20).optional(),
   }),
   fieldPresence: z.record(z.string(), z.boolean()).optional(),
+  /** When set (by the extension), server adds this contact to the campaign after ingest. */
+  outreachCampaignId: z.string().min(1).optional(),
 });
 
 export const connectionRowSchema = z.object({
@@ -32,6 +37,7 @@ export const connectionsPagePayloadSchema = z.object({
   listSourceUrl: z.string().url(),
   capturedAt: z.string().optional(),
   rows: z.array(connectionRowSchema).min(1).max(220),
+  outreachCampaignId: z.string().min(1).optional(),
 });
 
 export const automationAckSchema = z.object({
@@ -42,6 +48,7 @@ export const automationAckSchema = z.object({
 export const automationSettingsPatchSchema = z
   .object({
     enabled: z.boolean().optional(),
+    connectionsSprintEnabled: z.boolean().optional(),
     maxPerDay: z.number().int().optional(),
     minGapSeconds: z.number().int().optional(),
     maxGapSeconds: z.number().int().optional(),

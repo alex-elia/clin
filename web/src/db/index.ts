@@ -78,6 +78,7 @@ export function getDb(): DrizzleInstance {
     const instance = drizzle(client, { schema });
     if (!g.__CLIN_MIGRATED__) {
       migrate(instance, { migrationsFolder: migrationsFolder() });
+      repairClinSqliteSchema(client);
       g.__CLIN_MIGRATED__ = true;
     }
     g.__CLIN_DRIZZLE__ = instance;

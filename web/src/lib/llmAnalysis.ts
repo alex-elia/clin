@@ -29,6 +29,13 @@ export const llmAnalysisOutputSchema = z.object({
   suggested_actions: z.array(z.string()).optional(),
   data_gaps: z.array(z.string()).optional(),
   message_read: z.string().optional(),
+  /** Populated when the user pasted a message thread — advice on pruning the connection. */
+  connection_stewardship: z
+    .object({
+      recommendation: z.enum(["keep", "consider_removing", "unclear"]),
+      rationale: z.string(),
+    })
+    .optional(),
 });
 
 export type LlmAnalysisOutput = z.infer<typeof llmAnalysisOutputSchema>;
@@ -95,7 +102,9 @@ export async function inferAnalysisTier(
 
 function buildSystemPrompt(includeOwnerContext: boolean): string {
   const base = `You are a local networking assistant for a user's LinkedIn contacts database (Clin).
-You only see fields the user captured locally — not live LinkedIn data.
+You primarily see fields the user captured locally — not live LinkedIn data.
+
+If your runtime exposes web search or URL fetch tools, you may use a brief search to clarify the contact's current company or industry when Company or Headline names an organization (e.g. one query: "<company> what they do"). Use results only to tighten business relevance (b) and rationale—never invent private facts. If no tools are available or search is empty, rely only on the JSON payload below.
 
 Respond with a single JSON object (no markdown) matching this shape:
 {
@@ -103,13 +112,21 @@ Respond with a single JSON object (no markdown) matching this shape:
   "rationale": { "relationship": "string", "business": "string", "cleanup": "string" },
   "suggested_actions": ["write" | "visit_profile" | "stay_connected" | "consider_removing" | "none"],
   "data_gaps": ["optional short strings: what is missing for confidence"],
-  "message_read": "optional: brief read on tone/recency if messages were provided"
+  "message_read": "optional: brief read on tone/recency if messages were provided",
+  "connection_stewardship": { "recommendation": "keep" | "consider_removing" | "unclear", "rationale": "string" }
 }
 
 Definitions (align with user's app):
 - r (relationship): recency/strength of tie from available evidence (captures, message snippets if any).
 - b (business): rough professional relevance from role/company/headline text.
 - c (cleanup): whether the connection looks worth pruning or needs a fresh profile visit.
+
+When the user message includes a non-empty "message_context" (pasted LinkedIn DM thread):
+- You MUST include "connection_stewardship". Be kind and practical: one-sided outreach, long gaps with no reply after reasonable follow-ups, or clear disinterest support "consider_removing"; ongoing mutual dialogue or obvious value supports "keep"; thin or ambiguous threads use "unclear" and explain.
+- Align suggested_actions with stewardship (e.g. consider_removing → include "consider_removing" when appropriate).
+- This is guidance for the user's own CRM only — they still remove connections manually on LinkedIn if they choose.
+
+When "message_context" is null or empty, omit "connection_stewardship" or set recommendation to "unclear" with rationale "no thread pasted".
 
 If data is thin (list-only capture, missing headline), give **provisional** scores and say so in data_gaps.
 If richer profile + optional messages exist, be more confident (refined). Never claim certainty you lack.
@@ -168,6 +185,31 @@ function buildUserPayload(input: {
   return JSON.stringify(body, null, 2);
 }
 
+/** User-facing message when /api/chat fails (missing model, wrong URL, etc.). */
+export function formatOllamaChatError(
+  status: number,
+  bodyText: string,
+  model: string,
+): string {
+  const trimmed = bodyText.trim();
+  let detail = trimmed.slice(0, 500) || `HTTP ${status}`;
+  try {
+    const j = JSON.parse(trimmed) as { error?: string };
+    if (typeof j.error === "string" && j.error) detail = j.error;
+  } catch {
+    /* keep raw snippet */
+  }
+  let out = `Ollama HTTP ${status}: ${detail}`;
+  const looksMissingModel =
+    status === 404 ||
+    /not found|unknown model|model.*not found|does not exist/i.test(detail);
+  if (looksMissingModel) {
+    out += `\n\nFix: open a terminal and run: ollama pull ${model}`;
+    out += `\nOr in Clin → Settings, set “Model name” to an installed tag (run ollama list — names must match exactly, e.g. qwen2.5:7b vs qwen2.5:8b).`;
+  }
+  return out;
+}
+
 export async function callOllamaJson(opts: {
   settings: OllamaSettings;
   system: string;
@@ -196,7 +238,11 @@ export async function callOllamaJson(opts: {
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
       throw new Error(
-        `Ollama HTTP ${res.status}: ${errText.slice(0, 500) || res.statusText}`,
+        formatOllamaChatError(
+          res.status,
+          errText,
+          opts.settings.model,
+        ),
       );
     }
     const data = (await res.json()) as { message?: { content?: string } };

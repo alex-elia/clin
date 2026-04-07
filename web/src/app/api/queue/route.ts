@@ -14,8 +14,17 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const shuffle = searchParams.get("shuffle") === "1";
+  const cleanupFirst = searchParams.get("order") === "cleanup";
 
   const db = getDb();
+  const orderBy = cleanupFirst
+    ? [
+        desc(contacts.cleanupScore),
+        desc(actionQueue.priority),
+        desc(actionQueue.createdAt),
+      ]
+    : [desc(actionQueue.priority), desc(actionQueue.createdAt)];
+
   const pending = await db
     .select()
     .from(actionQueue)
@@ -26,7 +35,7 @@ export async function GET(req: Request) {
         ne(actionQueue.outreachDecision, "approved"),
       ),
     )
-    .orderBy(desc(actionQueue.priority), desc(actionQueue.createdAt));
+    .orderBy(...orderBy);
 
   const items = pending.map((r) => ({
     queue: r.action_queue,
@@ -38,8 +47,11 @@ export async function GET(req: Request) {
   return NextResponse.json({
     items: ordered,
     shuffle,
+    order: cleanupFirst && !shuffle ? "cleanup" : "priority",
     note: shuffle
       ? "Order randomized locally for variety; does not interact with LinkedIn."
-      : undefined,
+      : cleanupFirst
+        ? "Sorted by contact cleanup score (highest first), then queue priority."
+        : undefined,
   });
 }

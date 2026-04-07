@@ -23,7 +23,7 @@ Tune limits under **Pacing** in the Clin dashboard (`/settings`).
 When you **approve** drafts in the dashboard (`/decisions` → Ready), the extension
 popup loads **`GET /api/outreach/ready`** automatically (and on **Refresh ready
 list**). For each item you can **Copy draft**, **Open profile** (new tab), and
-**Mark sent (manual)** after you paste/send on LinkedIn yourself.
+**Mark sent (manual)** after you paste/send on LinkedIn yourself (same outcome as **Mark sent (manual)** on the campaign member row in the Clin web app).
 
 Clin still does not send messages for you.
 

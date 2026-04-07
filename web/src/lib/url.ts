@@ -10,10 +10,12 @@ export function canonicalizeLinkedInUrl(raw: string): string | null {
       u.pathname.replace(/\/+$/, "") || u.pathname;
     const parts = path.split("/").filter(Boolean);
     if (parts[0] === "in" && parts[1]) {
-      return `https://www.linkedin.com/in/${decodeURIComponent(parts[1])}`;
+      const slug = decodeURIComponent(parts[1]).normalize("NFC");
+      return `https://www.linkedin.com/in/${slug}`;
     }
     if (parts[0] === "sales" && parts[1] === "lead" && parts[2]) {
-      return `https://www.linkedin.com/in/${decodeURIComponent(parts[2])}`;
+      const slug = decodeURIComponent(parts[2]).normalize("NFC");
+      return `https://www.linkedin.com/in/${slug}`;
     }
     return `https://www.linkedin.com${path}`;
   } catch {

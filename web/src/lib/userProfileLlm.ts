@@ -7,6 +7,7 @@ import {
   extractJsonObjectFromModelText,
 } from "@/lib/llmAnalysis";
 import type { OllamaSettings } from "@/lib/ollamaSettings";
+import { backfillContactFieldsFromLatestProfileCapture } from "@/lib/contactProfileBackfill";
 import { getOrCreateUserContext } from "@/lib/userContext";
 
 const selfProfileOutSchema = z.object({
@@ -30,6 +31,8 @@ export async function getSelfProfileReadyForOllama(
   db: Db,
   contactId: string,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
+  await backfillContactFieldsFromLatestProfileCapture(db, contactId);
+
   const profileCap = await db.query.captureSessions.findFirst({
     where: and(
       eq(captureSessions.contactId, contactId),
@@ -61,7 +64,7 @@ export async function getSelfProfileReadyForOllama(
     return {
       ok: false,
       message:
-        "A profile capture exists but no name, headline, company, or location was saved. Open your profile again and run Capture.",
+        "A profile capture exists but no name, headline, company, or location was found (not even in the raw capture payload). Open your full LinkedIn profile while logged in, scroll so your name and headline are visible, then run Capture again. If it keeps failing, LinkedIn may have changed the page layout — check Captures in Clin for that session.",
     };
   }
   return { ok: true };

@@ -2,7 +2,9 @@ import { count, desc, gte } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { captureSessions } from "@/db/schema";
+import { maybeAutopilotAnalyzeAfterProfileCapture } from "@/lib/autopilot";
 import { ingestCapture } from "@/lib/ingest";
+import { attachImportedContactsToCampaign } from "@/lib/outreachCampaigns";
 import {
   captureRequiredGapMs,
   getPaceSettings,
@@ -73,10 +75,20 @@ export async function POST(req: Request) {
     }
   }
 
+  const { outreachCampaignId, ...capturePayload } = parsed.data;
+
   try {
-    const result = await ingestCapture(db, parsed.data);
+    const result = await ingestCapture(db, capturePayload);
     await rollCaptureGapAfterSuccess(pace);
-    return NextResponse.json(result);
+    maybeAutopilotAnalyzeAfterProfileCapture(
+      result.contactId,
+      capturePayload.pageType,
+    );
+    const campaignAttach = await attachImportedContactsToCampaign(
+      outreachCampaignId,
+      [result.contactId],
+    );
+    return NextResponse.json({ ...result, campaignAttach });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Ingest failed";
     return NextResponse.json({ error: message }, { status: 400 });

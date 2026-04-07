@@ -18,12 +18,14 @@ const segments = [
 export default async function ContactsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; segment?: string }>;
+  searchParams: Promise<{ q?: string; segment?: string; sort?: string }>;
 }) {
   const sp = await searchParams;
+  const sort = sp.sort === "cleanup" ? ("cleanup" as const) : ("updated" as const);
   const rows = await listContacts({
     q: sp.q,
     segment: sp.segment,
+    sort,
     limit: 80,
     offset: 0,
   });
@@ -63,6 +65,17 @@ export default async function ContactsPage({
                 {s}
               </option>
             ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-sm sm:w-52">
+          <span className="text-zinc-600 dark:text-zinc-400">Sort</span>
+          <select
+            name="sort"
+            defaultValue={sort === "cleanup" ? "cleanup" : "updated"}
+            className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+          >
+            <option value="updated">Recently updated</option>
+            <option value="cleanup">Cleanup score (high first)</option>
           </select>
         </label>
         <button

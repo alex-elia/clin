@@ -1,10 +1,12 @@
 import {
   saveAutomationForm,
+  saveAutopilotForm,
   saveOllamaForm,
   savePaceForm,
 } from "@/app/actions";
+import { getAutopilotSettings } from "@/lib/autopilot";
 import { getAutomationSettings } from "@/lib/automation";
-import { getOllamaSettings } from "@/lib/ollamaSettings";
+import { getOllamaSettings, listOllamaModels } from "@/lib/ollamaSettings";
 import { getPaceSettings } from "@/lib/pace";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +14,9 @@ export const dynamic = "force-dynamic";
 export default async function SettingsPage() {
   const pace = await getPaceSettings();
   const automation = await getAutomationSettings();
+  const autopilot = await getAutopilotSettings();
   const ollama = await getOllamaSettings();
+  const ollamaInstalled = await listOllamaModels(ollama.baseUrl);
 
   return (
     <div className="mx-auto max-w-lg space-y-8">
@@ -118,6 +122,26 @@ export default async function SettingsPage() {
             </span>
           </span>
         </label>
+        <label className="flex cursor-pointer items-start gap-3 text-sm">
+          <input
+            type="checkbox"
+            name="automationConnectionsSprintEnabled"
+            value="on"
+            defaultChecked={automation.connectionsSprintEnabled}
+            className="mt-1"
+          />
+          <span>
+            <span className="font-medium text-zinc-900 dark:text-zinc-100">
+              Allow connections list sprint
+            </span>
+            <span className="mt-1 block text-xs text-zinc-500">
+              When off, the extension refuses the side panel{" "}
+              <strong className="font-medium">List sprint</strong> (auto-scroll +
+              import). Capture pacing and hourly caps still apply from{" "}
+              <strong className="font-medium">Pacing</strong> above.
+            </span>
+          </span>
+        </label>
         <Field
           name="automationMaxPerDay"
           label="Max successful visits per local day"
@@ -185,10 +209,101 @@ export default async function SettingsPage() {
         </p>
       </div>
 
+      <div>
+        <h2 className="text-xl font-semibold tracking-tight">
+          Local autopilot (LLM)
+        </h2>
+        <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+          Clin still does not scrape LinkedIn on a timer or scroll lists for you.
+          These options only automate{" "}
+          <strong className="font-medium text-zinc-800 dark:text-zinc-200">
+            Ollama analysis on your machine
+          </strong>{" "}
+          after you capture data. Use{" "}
+          <a
+            href="/autopilot"
+            className="font-medium text-blue-600 underline dark:text-blue-400"
+          >
+            Autopilot
+          </a>{" "}
+          to run analysis in batches.
+        </p>
+      </div>
+
+      <form
+        action={saveAutopilotForm}
+        className="space-y-4 rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950"
+      >
+        <label className="flex cursor-pointer items-start gap-3 text-sm">
+          <input
+            type="checkbox"
+            name="autopilotAnalyzeAfterProfile"
+            defaultChecked={autopilot.analyzeAfterProfileCapture}
+            className="mt-1"
+          />
+          <span>
+            <span className="font-medium text-zinc-900 dark:text-zinc-100">
+              Analyze after each profile capture
+            </span>
+            <span className="mt-1 block text-xs text-zinc-500">
+              When on, a successful extension capture on an{" "}
+              <code className="text-xs">/in/…</code> profile (not connections
+              list imports) triggers Ollama in the background. Capture still
+              returns immediately; analysis may finish seconds later. Requires
+              Ollama running and{" "}
+              <code className="text-xs">npm run db:repair</code> if LLM columns
+              are missing.
+            </span>
+          </span>
+        </label>
+        <Field
+          name="autopilotBatchDefaultLimit"
+          label="Default batch size (Autopilot page & API)"
+          description="How many contacts to analyze per batch run (1–30)."
+          defaultValue={autopilot.batchDefaultLimit}
+          min={1}
+          max={30}
+        />
+        <button
+          type="submit"
+          className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+        >
+          Save autopilot
+        </button>
+      </form>
+
       <form
         action={saveOllamaForm}
         className="space-y-4 rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950"
       >
+        <div>
+          <h2 className="text-xl font-semibold tracking-tight">Ollama (local AI)</h2>
+          {ollamaInstalled.ok ? (
+            ollamaInstalled.models.length > 0 ? (
+              <p className="mt-2 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+                <span className="font-medium text-zinc-800 dark:text-zinc-200">
+                  Installed on {ollama.baseUrl}:
+                </span>{" "}
+                <code className="break-all rounded bg-zinc-100 px-1 text-[11px] dark:bg-zinc-900">
+                  {ollamaInstalled.models.join(", ")}
+                </code>
+              </p>
+            ) : (
+              <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">
+                Ollama is reachable but reports no models. Run e.g.{" "}
+                <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-900">
+                  ollama pull qwen2.5:8b
+                </code>{" "}
+                then refresh this page.
+              </p>
+            )
+          ) : (
+            <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">
+              Could not list models at {ollama.baseUrl}: {ollamaInstalled.error}.
+              Start Ollama or fix the base URL below.
+            </p>
+          )}
+        </div>
         <OllamaField
           name="ollamaBaseUrl"
           label="Ollama base URL"
@@ -198,7 +313,7 @@ export default async function SettingsPage() {
         <OllamaField
           name="ollamaModel"
           label="Model name"
-          description="Must match `ollama list` (e.g. qwen2.5:8b, deepseek-r1:8b)."
+          description="Must match an entry from the installed list above or `ollama list` exactly (tag matters: qwen2.5:7b ≠ qwen2.5:8b)."
           defaultValue={ollama.model}
         />
         <button

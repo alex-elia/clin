@@ -6,6 +6,7 @@ import {
   real,
   sqliteTable,
   text,
+  uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
 export const contacts = sqliteTable(
@@ -174,6 +175,52 @@ export const automationLog = sqliteTable(
   ],
 );
 
+/** Named outreach campaign: your context + list of contacts with per-person drafts. */
+export const outreachCampaigns = sqliteTable("outreach_campaigns", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  contextText: text("context_text").notNull(),
+  /** Extra instructions merged into the user prompt (tone, must-mention, avoid, CTA). */
+  writerInstructions: text("writer_instructions"),
+  /** When set, replaces the default JSON system prompt for this campaign only. */
+  systemPromptOverride: text("system_prompt_override"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+/**
+ * Member of a campaign. status: draft → ready (for extension handoff) → sent | skipped.
+ */
+export const outreachCampaignMembers = sqliteTable(
+  "outreach_campaign_members",
+  {
+    id: text("id").primaryKey(),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => outreachCampaigns.id, { onDelete: "cascade" }),
+    contactId: text("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    draftOutreach: text("draft_outreach"),
+    status: text("status").notNull().default("draft"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex("ocm_campaign_contact_unique").on(t.campaignId, t.contactId),
+    index("ocm_campaign_status_idx").on(t.campaignId, t.status),
+    index("ocm_campaign_idx").on(t.campaignId),
+  ],
+);
+
 /**
  * Singleton row (`id` = `default`): your own profile link, goals, and positioning text
  * used to steer contact analysis (Ollama) and future scoring.
@@ -218,11 +265,33 @@ export const contactsRelations = relations(contacts, ({ many, one }) => ({
   notes: many(notes),
   queueItems: many(actionQueue),
   automationLogs: many(automationLog),
+  outreachCampaignMembers: many(outreachCampaignMembers),
   linkedAsSelfOwner: one(userContext, {
     fields: [contacts.id],
     references: [userContext.selfContactId],
   }),
 }));
+
+export const outreachCampaignsRelations = relations(
+  outreachCampaigns,
+  ({ many }) => ({
+    members: many(outreachCampaignMembers),
+  }),
+);
+
+export const outreachCampaignMembersRelations = relations(
+  outreachCampaignMembers,
+  ({ one }) => ({
+    campaign: one(outreachCampaigns, {
+      fields: [outreachCampaignMembers.campaignId],
+      references: [outreachCampaigns.id],
+    }),
+    contact: one(contacts, {
+      fields: [outreachCampaignMembers.contactId],
+      references: [contacts.id],
+    }),
+  }),
+);
 
 export const automationLogRelations = relations(automationLog, ({ one }) => ({
   contact: one(contacts, {

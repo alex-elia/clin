@@ -75,4 +75,16 @@ export function repairClinSqliteSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS automation_log_created_idx ON automation_log (created_at);
     CREATE INDEX IF NOT EXISTS automation_log_contact_idx ON automation_log (contact_id);
   `);
+
+  if (tableExists(db, "outreach_campaigns")) {
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaigns ADD COLUMN writer_instructions text",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaigns ADD COLUMN system_prompt_override text",
+    );
+  }
+
 }

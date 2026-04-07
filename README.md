@@ -6,7 +6,7 @@ Local-first **LinkedIn network intelligence**: capture, score, and review your g
 
 | Path | Description |
 |------|-------------|
-| [`docs/`](./docs/) | Product and technical design ([DESIGN.md](./docs/DESIGN.md)) |
+| [`docs/`](./docs/) | [DESIGN.md](./docs/DESIGN.md), [SPEC-0001](./docs/specifications/SPEC-0001-clin-system-specification.md), [ADRs](./docs/adr/README.md) |
 | [`web/`](./web/) | Next.js dashboard (charts + **Decisions** workflow), SQLite, REST API |
 | [`extension/`](./extension/) | Chrome MV3 — manual “Capture this page” → `POST /api/ingest/capture` |
 

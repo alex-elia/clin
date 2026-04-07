@@ -3,6 +3,9 @@ import { getDb, getSqlite, repairClinSqliteSchema } from "@/db";
 import { actionQueue, captureSessions, contacts } from "@/db/schema";
 import { shuffledCopy } from "@/lib/shuffle";
 
+/** Review queue ordering: manual priority column vs. highest cleanup score first. */
+export type QueueSortMode = "priority" | "cleanup";
+
 export type QueueWithContact = {
   queue: typeof actionQueue.$inferSelect;
   contact: typeof contacts.$inferSelect;
@@ -44,6 +47,8 @@ export async function getContactById(id: string) {
 export async function listContacts(opts: {
   q?: string;
   segment?: string;
+  /** Default: recently updated. `cleanup` = highest cleanup score first (LinkedIn cleanup focus). */
+  sort?: "updated" | "cleanup";
   limit?: number;
   offset?: number;
 }) {
@@ -73,9 +78,14 @@ export async function listContacts(opts: {
         ? filters[0]
         : and(...filters);
 
+  const orderBy =
+    opts.sort === "cleanup"
+      ? [desc(contacts.cleanupScore), desc(contacts.lastUpdatedAt), desc(contacts.id)]
+      : [desc(contacts.lastUpdatedAt), desc(contacts.id)];
+
   return db.query.contacts.findMany({
     where,
-    orderBy: [desc(contacts.lastUpdatedAt), desc(contacts.id)],
+    orderBy,
     limit,
     offset,
   });
@@ -91,7 +101,21 @@ export async function listCaptures(limit = 40) {
     .limit(Math.min(limit, 100));
 }
 
-export async function listQueuePending(shuffle: boolean) {
+function queueOrderBy(sort: QueueSortMode) {
+  if (sort === "cleanup") {
+    return [
+      desc(contacts.cleanupScore),
+      desc(actionQueue.priority),
+      desc(actionQueue.createdAt),
+    ];
+  }
+  return [desc(actionQueue.priority), desc(actionQueue.createdAt)];
+}
+
+export async function listQueuePending(
+  shuffle: boolean,
+  sort: QueueSortMode = "priority",
+) {
   const db = getDb();
   const pending = await db
     .select()
@@ -103,7 +127,7 @@ export async function listQueuePending(shuffle: boolean) {
         ne(actionQueue.outreachDecision, "approved"),
       ),
     )
-    .orderBy(desc(actionQueue.priority), desc(actionQueue.createdAt));
+    .orderBy(...queueOrderBy(sort));
 
   const items = pending.map((r) => ({
     queue: r.action_queue,
@@ -114,7 +138,9 @@ export async function listQueuePending(shuffle: boolean) {
 }
 
 /** Decide tab: still in queue, no outreach approval yet. */
-export async function listQueueDecideItems(): Promise<QueueWithContact[]> {
+export async function listQueueDecideItems(
+  sort: QueueSortMode = "priority",
+): Promise<QueueWithContact[]> {
   const db = getDb();
   const rows = await db
     .select()
@@ -126,7 +152,7 @@ export async function listQueueDecideItems(): Promise<QueueWithContact[]> {
         eq(actionQueue.outreachDecision, "pending"),
       ),
     )
-    .orderBy(desc(actionQueue.priority), desc(actionQueue.createdAt));
+    .orderBy(...queueOrderBy(sort));
 
   return rows.map((r) => ({
     queue: r.action_queue,
@@ -135,7 +161,9 @@ export async function listQueueDecideItems(): Promise<QueueWithContact[]> {
 }
 
 /** Ready tab: approved in app; you paste/send on LinkedIn yourself, then mark sent. */
-export async function listQueueReadyOutreach(): Promise<QueueWithContact[]> {
+export async function listQueueReadyOutreach(
+  sort: QueueSortMode = "priority",
+): Promise<QueueWithContact[]> {
   const db = getDb();
   const rows = await db
     .select()
@@ -147,7 +175,7 @@ export async function listQueueReadyOutreach(): Promise<QueueWithContact[]> {
         eq(actionQueue.outreachDecision, "approved"),
       ),
     )
-    .orderBy(desc(actionQueue.priority), desc(actionQueue.createdAt));
+    .orderBy(...queueOrderBy(sort));
 
   return rows.map((r) => ({
     queue: r.action_queue,

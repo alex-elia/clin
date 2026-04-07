@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Clin Capture",
-  "version": "0.2.4",
+  "version": "0.2.13",
   "description": "Capture visible LinkedIn data into your local Clin app. Optional slow hygiene runner (Settings) can open queued profiles for refresh only — no messaging or bulk actions.",
   "action": {
     "default_title": "Clin"

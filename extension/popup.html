@@ -398,6 +398,9 @@
         <button type="button" class="is-active" data-panel="capture" role="tab" aria-selected="true">
           Capture
         </button>
+        <button type="button" data-panel="sprint" role="tab" aria-selected="false">
+          List sprint
+        </button>
         <button type="button" data-panel="hygiene" role="tab" aria-selected="false">
           Hygiene
         </button>
@@ -417,8 +420,48 @@
             <strong>List:</strong> Connections or people search — capture imports visible
             rows (scroll / next page, capture again). Server pacing applies.
           </p>
+          <p id="campaign-capture-hint" class="hint" aria-live="polite"></p>
+          <p id="campaign-queue-hint" class="hint" aria-live="polite"></p>
+          <button
+            id="open-next-profile-capture"
+            type="button"
+            class="btn btn-secondary"
+            hidden
+          >
+            Open next profile (capture queue)
+          </button>
           <button id="cap" type="button" class="btn btn-primary">
             Capture this page
+          </button>
+          <button id="campaign-gen-draft" type="button" class="btn btn-secondary">
+            Generate campaign draft (this profile)
+          </button>
+          <p class="text-muted">
+            Uses Ollama on Clin for the <strong>active tab</strong> profile if they’re already in your capture-target
+            campaign. You paste and send on LinkedIn yourself.
+          </p>
+        </section>
+
+        <section id="panel-sprint" class="panel" role="tabpanel" hidden>
+          <p class="section-title">Connections list sprint</p>
+          <p class="hint">
+            Stay on <strong>Connections</strong> or <strong>people search</strong>.
+            Each round: scroll the list (after round 1), wait, then import visible
+            rows. <strong>Clin pacing</strong> (gap + hourly cap) applies between
+            imports — same as manual Capture. Enable under Settings →
+            <em>Allow connections list sprint</em>. Keep this panel open for the
+            run.
+          </p>
+          <label class="field">
+            <span>Rounds (2–20)</span>
+            <input id="sprint-rounds" type="number" min="2" max="20" value="6" />
+          </label>
+          <label class="field">
+            <span>Pause after scroll (ms)</span>
+            <input id="sprint-pause" type="number" min="800" max="12000" value="2800" />
+          </label>
+          <button id="sprint-run" type="button" class="btn btn-primary">
+            Run list sprint
           </button>
         </section>
 
@@ -443,7 +486,8 @@
         <section id="panel-outreach" class="panel" role="tabpanel">
           <p class="section-title">Ready to send</p>
           <p class="hint">
-            Approved in Clin → Decisions. You paste on LinkedIn yourself, then mark sent here.
+            Loads <strong>ready</strong> items from your active <strong>Campaign</strong> (Clin → Campaigns) and
+            approved rows from <strong>Decisions</strong>. You paste on LinkedIn yourself; mark sent or skip here.
           </p>
           <button id="refresh-outreach" type="button" class="btn btn-secondary">
             Refresh list

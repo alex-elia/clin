@@ -22,6 +22,34 @@ export type OllamaSettings = {
   model: string;
 };
 
+/** Names from Ollama GET /api/tags (empty if unreachable). */
+export async function listOllamaModels(
+  baseUrl: string,
+): Promise<
+  { ok: true; models: string[] } | { ok: false; error: string }
+> {
+  const root = baseUrl.replace(/\/$/, "");
+  try {
+    const res = await fetch(`${root}/api/tags`, { cache: "no-store" });
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: `GET /api/tags → HTTP ${res.status}`,
+      };
+    }
+    const data = (await res.json()) as { models?: { name?: string }[] };
+    const models = (data.models ?? [])
+      .map((m) => m.name?.trim())
+      .filter((n): n is string => Boolean(n));
+    return { ok: true, models };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
 export async function getOllamaSettings(): Promise<OllamaSettings> {
   const db = getDb();
   const keys = Object.values(OLLAMA_KEYS);

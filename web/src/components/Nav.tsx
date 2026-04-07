@@ -5,8 +5,10 @@ const links = [
   { href: "/me", label: "You & goals" },
   { href: "/contacts", label: "Contacts" },
   { href: "/decisions", label: "Decisions" },
+  { href: "/campaigns", label: "Campaigns" },
   { href: "/queue", label: "Queue" },
   { href: "/captures", label: "Captures" },
+  { href: "/autopilot", label: "Autopilot" },
   { href: "/settings", label: "Pacing" },
 ] as const;
 

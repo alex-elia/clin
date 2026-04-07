@@ -1,0 +1,81 @@
+import { eq } from "drizzle-orm";
+import type { z } from "zod";
+import { getDb } from "@/db";
+import { contacts } from "@/db/schema";
+import {
+  persistLlmAnalysis,
+  selectContactLlmExtension,
+  tryUpdateLlmMessageContext,
+} from "@/lib/contactSqlExtras";
+import {
+  inferAnalysisTier,
+  runContactLlmAnalysis,
+} from "@/lib/llmAnalysis";
+import type { OllamaSettings } from "@/lib/ollamaSettings";
+import { contactAnalyzeBodySchema } from "@/lib/schemas";
+
+type Db = ReturnType<typeof getDb>;
+export type ContactAnalyzeInput = z.infer<typeof contactAnalyzeBodySchema>;
+
+export type ExecuteContactAnalysisResult = {
+  tier: "provisional" | "refined";
+  envelope: Record<string, unknown>;
+  contact: Record<string, unknown> | null;
+};
+
+/**
+ * Shared path for POST /api/contacts/[id]/analyze and autopilot batch runs.
+ */
+export async function executeContactAnalysis(
+  db: Db,
+  contactId: string,
+  body: ContactAnalyzeInput,
+  ollama: OllamaSettings,
+): Promise<ExecuteContactAnalysisResult> {
+  const row = await db.query.contacts.findFirst({
+    where: eq(contacts.id, contactId),
+  });
+  if (!row) throw new Error("Contact not found");
+
+  const storedMsg =
+    selectContactLlmExtension(contactId)?.llmMessageContext ?? null;
+  const msgCtx =
+    body.messageContext !== undefined ? body.messageContext : storedMsg;
+
+  if (body.persistMessageContext && body.messageContext !== undefined) {
+    tryUpdateLlmMessageContext(contactId, body.messageContext);
+  }
+
+  const tierIn =
+    body.tier === "auto"
+      ? await inferAnalysisTier(db, contactId, msgCtx)
+      : body.tier;
+
+  const result = await runContactLlmAnalysis(db, {
+    contactId,
+    tier: tierIn,
+    messageContext: msgCtx,
+    settings: ollama,
+  });
+
+  const jsonStr = JSON.stringify(result.envelope);
+  persistLlmAnalysis(contactId, result.tier, jsonStr, ollama.model);
+
+  const updated = await db.query.contacts.findFirst({
+    where: eq(contacts.id, contactId),
+  });
+  const llm = selectContactLlmExtension(contactId);
+
+  return {
+    tier: result.tier,
+    envelope: result.envelope,
+    contact: updated ? { ...updated, ...(llm ?? {}) } : null,
+  };
+}
+
+export function defaultAutopilotAnalyzeBody(): ContactAnalyzeInput {
+  return {
+    tier: "auto",
+    persistMessageContext: false,
+  };
+}

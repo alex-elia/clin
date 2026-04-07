@@ -5,24 +5,34 @@ import {
   saveUserContextForm,
 } from "@/app/actions";
 import { ClaimProfileUrlForm } from "@/components/ClaimProfileUrlForm";
+import { contactPickerLabel } from "@/lib/contactDisplay";
 import { getSelfProfileReadyForOllama } from "@/lib/userProfileLlm";
 import { getOrCreateUserContext } from "@/lib/userContext";
-import { listContacts } from "@/lib/queries";
+import { getContactById, listContacts } from "@/lib/queries";
 import { getDb } from "@/db";
 
 export const dynamic = "force-dynamic";
 
 export default async function MePage() {
   const ctx = await getOrCreateUserContext();
-  const contacts = await listContacts({ limit: 100 });
+  const db = getDb();
 
   const ollamaReady = ctx.selfContactId
-    ? await getSelfProfileReadyForOllama(getDb(), ctx.selfContactId)
+    ? await getSelfProfileReadyForOllama(db, ctx.selfContactId)
     : ({
         ok: false as const,
         message:
           "Choose your profile contact below and click Save profile link first.",
       } as const);
+
+  let contacts = await listContacts({ limit: 100 });
+  if (ctx.selfContactId) {
+    const selfRow = await getContactById(ctx.selfContactId);
+    if (selfRow) {
+      const rest = contacts.filter((c) => c.id !== selfRow.id);
+      contacts = [selfRow, ...rest];
+    }
+  }
 
   return (
     <div className="mx-auto max-w-2xl space-y-10">
@@ -97,8 +107,7 @@ export default async function MePage() {
             <option value="">— Not linked —</option>
             {contacts.map((c) => (
               <option key={c.id} value={c.id}>
-                {(c.fullName || c.headline || c.id).slice(0, 80)}
-                {c.company ? ` · ${c.company.slice(0, 40)}` : ""}
+                {contactPickerLabel(c)}
               </option>
             ))}
           </select>

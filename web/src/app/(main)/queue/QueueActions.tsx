@@ -14,6 +14,7 @@ type QueueRow = {
     fullName: string | null;
     linkedinUrlCanonical: string;
     segment: string;
+    cleanupScore: number;
   };
 };
 
@@ -93,11 +94,13 @@ export function QueueActions({
   batchSize,
   minSecondsBetweenProfileOpens,
   paceJitterPercent,
+  sortMode,
 }: {
   items: QueueRow[];
   batchSize: number;
   minSecondsBetweenProfileOpens: number;
   paceJitterPercent: number;
+  sortMode: "priority" | "cleanup";
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
@@ -148,7 +151,15 @@ export function QueueActions({
                 <p className="font-medium text-zinc-900 dark:text-zinc-100">
                   {contact.fullName ?? "Unknown"}
                 </p>
-                <p className="text-xs text-zinc-500">{contact.segment}</p>
+                <p className="text-xs text-zinc-500">
+                  {contact.segment}
+                  <span
+                    className={`ms-2 font-mono tabular-nums ${sortMode === "cleanup" ? "text-amber-800 dark:text-amber-200" : "text-zinc-400"}`}
+                    title="Cleanup score — higher means stronger signal to review for removal or archive."
+                  >
+                    · C{contact.cleanupScore}
+                  </span>
+                </p>
                 <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
                   {queue.suggestedAction ?? "Review this contact."}
                 </p>

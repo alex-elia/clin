@@ -1,5 +1,5 @@
 import { randomInt, randomUUID } from "node:crypto";
-import { and, asc, count, eq, gte, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { appSettings, automationLog, contacts } from "@/db/schema";
 import { tryUpdateHygieneVisitAt } from "@/lib/contactSqlExtras";
@@ -7,6 +7,8 @@ import { nextRandomizedGapMs } from "@/lib/pace";
 
 export const AUTOMATION_KEYS = {
   enabled: "automation.enabled",
+  /** When false, extension refuses connections-list sprint (hygiene is separate). */
+  connectionsSprintEnabled: "automation.connections_sprint_enabled",
   maxPerDay: "automation.max_per_day",
   minGapSeconds: "automation.min_gap_seconds",
   maxGapSeconds: "automation.max_gap_seconds",
@@ -15,6 +17,7 @@ export const AUTOMATION_KEYS = {
 
 export type AutomationSettings = {
   enabled: boolean;
+  connectionsSprintEnabled: boolean;
   maxPerDay: number;
   minGapSeconds: number;
   maxGapSeconds: number;
@@ -23,6 +26,7 @@ export type AutomationSettings = {
 
 const DEFAULTS: AutomationSettings = {
   enabled: false,
+  connectionsSprintEnabled: true,
   maxPerDay: 12,
   minGapSeconds: 90,
   maxGapSeconds: 240,
@@ -107,7 +111,7 @@ export async function pickNextHygieneContact(): Promise<typeof contacts.$inferSe
     .select()
     .from(contacts)
     .where(inArray(contacts.segment, [...PRIORITY_SEGMENTS]))
-    .orderBy(asc(contacts.lastSeenAt))
+    .orderBy(desc(contacts.cleanupScore), asc(contacts.lastSeenAt))
     .limit(1);
 
   if (fromPriority) return fromPriority;
@@ -115,7 +119,7 @@ export async function pickNextHygieneContact(): Promise<typeof contacts.$inferSe
   const [any] = await db
     .select()
     .from(contacts)
-    .orderBy(asc(contacts.lastSeenAt))
+    .orderBy(desc(contacts.cleanupScore), asc(contacts.lastSeenAt))
     .limit(1);
 
   return any ?? null;
@@ -148,6 +152,10 @@ export async function getAutomationSettings(): Promise<AutomationSettings> {
 
   return {
     enabled: parseBool(map.get(AUTOMATION_KEYS.enabled), DEFAULTS.enabled),
+    connectionsSprintEnabled: parseBool(
+      map.get(AUTOMATION_KEYS.connectionsSprintEnabled),
+      DEFAULTS.connectionsSprintEnabled,
+    ),
     maxPerDay,
     minGapSeconds: minGap,
     maxGapSeconds: maxGap,
@@ -161,6 +169,7 @@ export async function getAutomationSettings(): Promise<AutomationSettings> {
 
 export type AutomationSettingsPatch = Partial<{
   enabled: boolean;
+  connectionsSprintEnabled: boolean;
   maxPerDay: number;
   minGapSeconds: number;
   maxGapSeconds: number;
@@ -173,6 +182,9 @@ export async function updateAutomationSettings(
   const current = await getAutomationSettings();
   const next: AutomationSettings = { ...current };
   if (typeof patch.enabled === "boolean") next.enabled = patch.enabled;
+  if (typeof patch.connectionsSprintEnabled === "boolean") {
+    next.connectionsSprintEnabled = patch.connectionsSprintEnabled;
+  }
   if (typeof patch.maxPerDay === "number" && Number.isFinite(patch.maxPerDay)) {
     next.maxPerDay = clamp(patch.maxPerDay, BOUNDS.maxPerDay.min, BOUNDS.maxPerDay.max);
   }
@@ -211,6 +223,10 @@ export async function updateAutomationSettings(
   await upsertAppSetting(
     AUTOMATION_KEYS.enabled,
     next.enabled ? "1" : "0",
+  );
+  await upsertAppSetting(
+    AUTOMATION_KEYS.connectionsSprintEnabled,
+    next.connectionsSprintEnabled ? "1" : "0",
   );
   await upsertAppSetting(AUTOMATION_KEYS.maxPerDay, String(next.maxPerDay));
   await upsertAppSetting(

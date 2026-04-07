@@ -2,15 +2,7 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
-import {
-  persistLlmAnalysis,
-  selectContactLlmExtension,
-  tryUpdateLlmMessageContext,
-} from "@/lib/contactSqlExtras";
-import {
-  inferAnalysisTier,
-  runContactLlmAnalysis,
-} from "@/lib/llmAnalysis";
+import { executeContactAnalysis } from "@/lib/contactAnalyzeRunner";
 import { getOllamaSettings } from "@/lib/ollamaSettings";
 import { contactAnalyzeBodySchema } from "@/lib/schemas";
 
@@ -55,30 +47,9 @@ export async function POST(
     );
   }
 
-  const storedMsg =
-    selectContactLlmExtension(id)?.llmMessageContext ?? null;
-  const msgCtx =
-    parsed.data.messageContext !== undefined
-      ? parsed.data.messageContext
-      : storedMsg;
-
-  if (parsed.data.persistMessageContext && parsed.data.messageContext !== undefined) {
-    tryUpdateLlmMessageContext(id, parsed.data.messageContext);
-  }
-
-  const tierIn =
-    parsed.data.tier === "auto"
-      ? await inferAnalysisTier(db, id, msgCtx)
-      : parsed.data.tier;
-
-  let result;
+  let out;
   try {
-    result = await runContactLlmAnalysis(db, {
-      contactId: id,
-      tier: tierIn,
-      messageContext: msgCtx,
-      settings: ollama,
-    });
+    out = await executeContactAnalysis(db, id, parsed.data, ollama);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json(
@@ -87,21 +58,11 @@ export async function POST(
     );
   }
 
-  const jsonStr = JSON.stringify(result.envelope);
-  persistLlmAnalysis(id, result.tier, jsonStr, ollama.model);
-
-  const updated = await db.query.contacts.findFirst({
-    where: eq(contacts.id, id),
-  });
-  const llm = selectContactLlmExtension(id);
-
   return NextResponse.json({
     ok: true,
-    tier: result.tier,
-    envelope: result.envelope,
-    contact: updated
-      ? { ...updated, ...(llm ?? {}) }
-      : updated,
+    tier: out.tier,
+    envelope: out.envelope,
+    contact: out.contact,
     ollama: { baseUrl: ollama.baseUrl, model: ollama.model },
   });
 }
