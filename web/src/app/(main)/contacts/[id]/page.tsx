@@ -25,21 +25,21 @@ export default async function ContactDetailPage({
       <div>
         <Link
           href="/contacts"
-          className="text-sm text-zinc-600 underline dark:text-zinc-400"
+          className="clin-link text-sm"
         >
           ← Contacts
         </Link>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+        <h1 className="mt-2 clin-page-title">
           {contact.fullName ?? "Unknown"}
         </h1>
-        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="mt-1 text-sm text-clin-muted">
           {contact.headline ?? "—"}
         </p>
-        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="mt-1 text-sm text-clin-muted">
           {contact.company ?? "—"} · {contact.location ?? "—"}
         </p>
-        <p className="mt-2 text-xs text-zinc-500">
-          <span className="rounded bg-zinc-100 px-2 py-0.5 dark:bg-zinc-900">
+        <p className="mt-2 text-xs text-clin-muted">
+          <span className="clin-pill">
             {contact.segment}
           </span>{" "}
           <span className="ml-2 font-mono">
@@ -47,18 +47,24 @@ export default async function ContactDetailPage({
             {contact.cleanupScore}
           </span>
         </p>
-        {contact.linkedinUrlCanonical ? (
-          <p className="mt-2 text-sm">
+        <p className="mt-2 flex flex-wrap gap-3 text-sm">
+          {contact.linkedinUrlCanonical ? (
             <a
               href={contact.linkedinUrlCanonical}
               target="_blank"
               rel="noreferrer"
-              className="text-blue-600 underline dark:text-blue-400"
+              className="clin-link"
             >
               Open LinkedIn profile
             </a>
-          </p>
-        ) : null}
+          ) : null}
+          <Link
+            href={`/inbox?contact=${encodeURIComponent(contact.id)}`}
+            className="clin-link"
+          >
+            Inbox threads
+          </Link>
+        </p>
       </div>
 
       <ContactLlmPanel

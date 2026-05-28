@@ -58,7 +58,7 @@ function stewardshipPanelClass(s: Stewardship): string {
   if (s.recommendation === "keep") {
     return "border-emerald-300 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/35";
   }
-  return "border-zinc-300 bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-900/60";
+  return "border-clin-border bg-clin-surface-muted";
 }
 
 export function ContactLlmPanel({
@@ -121,25 +121,25 @@ export function ContactLlmPanel({
   }
 
   return (
-    <section className="space-y-6 rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+    <section className="space-y-6 clin-card p-5">
       <div>
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+        <h2 className="text-sm font-semibold text-clin-text">
           Message history → should I drop this contact?
         </h2>
-        <p className="mt-2 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+        <p className="mt-2 text-xs leading-relaxed text-clin-muted">
           Clin cannot read LinkedIn for you. Paste a recent thread below, then run analysis. The local
-          model returns a <strong className="font-medium text-zinc-800 dark:text-zinc-200">lean</strong>{" "}
+          model returns a <strong className="clin-strong">lean</strong>{" "}
           (not a verdict): keep, consider removing, or unclear. You still remove connections on LinkedIn
           yourself if you want.
         </p>
-        <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-xs text-zinc-600 dark:text-zinc-400">
+        <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-xs text-clin-muted">
           <li>
             Open{" "}
             <a
               href="https://www.linkedin.com/messaging/"
               target="_blank"
               rel="noreferrer"
-              className="font-medium text-sky-700 underline dark:text-sky-400"
+              className="clin-link font-medium"
             >
               LinkedIn Messaging
             </a>{" "}
@@ -158,7 +158,7 @@ export function ContactLlmPanel({
       </div>
 
       <label className="block space-y-1 text-sm">
-        <span className="font-medium text-zinc-800 dark:text-zinc-200">
+        <span className="clin-strong">
           Pasted message thread (local only, optional but needed for removal advice)
         </span>
         <textarea
@@ -166,11 +166,11 @@ export function ContactLlmPanel({
           onChange={(e) => setMessage(e.target.value)}
           rows={12}
           placeholder={`Example:\nYou: Hi — loved your post on …\nThem: Thanks!\nYou: …follow-up…\n(no reply since 3 months)`}
-          className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 font-mono text-xs leading-relaxed text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+          className="w-full clin-input font-mono text-xs leading-relaxed"
         />
       </label>
 
-      <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+      <label className="flex cursor-pointer items-center gap-2 text-sm text-clin-muted">
         <input
           type="checkbox"
           checked={persist}
@@ -184,10 +184,10 @@ export function ContactLlmPanel({
           className={`rounded-lg border p-4 ${stewardshipPanelClass(stewardship)}`}
           role="status"
         >
-          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+          <h3 className="text-sm font-semibold text-clin-text">
             {stewardshipTitle(stewardship)}
           </h3>
-          <p className="mt-2 text-sm leading-relaxed text-zinc-800 dark:text-zinc-200">
+          <p className="mt-2 text-sm leading-relaxed text-clin-text">
             {stewardship.rationale}
           </p>
           <div className="mt-4 flex flex-wrap gap-2">
@@ -206,13 +206,13 @@ export function ContactLlmPanel({
               <input type="hidden" name="segment" value="warm" />
               <button
                 type="submit"
-                className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-800 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200"
+                className="clin-btn-secondary text-xs px-3 py-1.5"
               >
                 Tag in Clin: warm
               </button>
             </form>
           </div>
-          <p className="mt-3 text-[11px] text-zinc-600 dark:text-zinc-400">
+          <p className="mt-3 text-[11px] text-clin-muted">
             Tags only change Clin&apos;s segment — they do not unfollow or remove anyone on LinkedIn.
           </p>
         </div>
@@ -222,40 +222,40 @@ export function ContactLlmPanel({
         </p>
       ) : null}
 
-      <div className="border-t border-zinc-200 pt-5 dark:border-zinc-800">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+      <div className="border-t border-clin-border pt-5">
+        <h2 className="text-sm font-semibold text-clin-text">
           Full LLM analysis (Ollama)
         </h2>
-        <p className="mt-1 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
+        <p className="mt-1 text-xs leading-relaxed text-clin-muted">
           Rule-based R/B/C above stay the source of truth for default segments until you override. The model adds
           scores, rationale, and suggested actions.
         </p>
-        <p className="mt-2 text-xs text-zinc-500">
+        <p className="mt-2 text-xs text-clin-muted">
           Endpoint:{" "}
-          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-900">{ollamaBase}</code> · Model:{" "}
-          <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-900">{ollamaModel}</code> ·{" "}
-          <a href="/settings" className="underline">
+          <code className="clin-code">{ollamaBase}</code> · Model:{" "}
+          <code className="clin-code">{ollamaModel}</code> ·{" "}
+          <a href="/settings" className="clin-link">
             Settings
           </a>
         </p>
 
-        <div className="mt-3 rounded-md bg-zinc-50 px-3 py-2 text-xs dark:bg-zinc-900/80">
-          <span className="font-medium text-zinc-700 dark:text-zinc-300">
+        <div className="mt-3 rounded-md bg-clin-surface-muted px-3 py-2 text-xs">
+          <span className="font-medium text-clin-muted">
             Rule scores (deterministic):{" "}
           </span>
-          <span className="font-mono text-zinc-600 dark:text-zinc-400">
+          <span className="font-mono text-clin-muted">
             R{ruleScores.r} B{ruleScores.b} C{ruleScores.c}
           </span>
         </div>
 
         <label className="mt-4 block space-y-1 text-sm">
-          <span className="text-zinc-700 dark:text-zinc-300">Analysis tier</span>
+          <span className="text-clin-muted">Analysis tier</span>
           <select
             value={tier}
             onChange={(e) =>
               setTier(e.target.value as "auto" | "provisional" | "refined")
             }
-            className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            className="w-full clin-input"
           >
             <option value="auto">Auto (from captures + message length)</option>
             <option value="provisional">Provisional (expect thin data)</option>
@@ -267,7 +267,7 @@ export function ContactLlmPanel({
           type="button"
           disabled={loading}
           onClick={() => void runAnalysis()}
-          className="mt-4 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+          className="mt-4 clin-btn-primary disabled:opacity-50"
         >
           {loading ? "Calling Ollama… (can take 1–2 min)" : "Run Ollama analysis"}
         </button>
@@ -280,27 +280,27 @@ export function ContactLlmPanel({
 
         <div className="mt-6 grid gap-4 lg:grid-cols-2">
           <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-clin-muted">
               Last provisional
             </h3>
             {prettyJson(provisional) ? (
-              <pre className="mt-2 max-h-80 overflow-auto rounded-md bg-zinc-900 p-3 text-[11px] leading-relaxed text-zinc-100">
+              <pre className="mt-2 max-h-80 overflow-auto rounded-md bg-clin-navy p-3 text-[11px] leading-relaxed text-white">
                 {prettyJson(provisional)}
               </pre>
             ) : (
-              <p className="mt-2 text-xs text-zinc-500">None yet.</p>
+              <p className="mt-2 text-xs text-clin-muted">None yet.</p>
             )}
           </div>
           <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-clin-muted">
               Last refined
             </h3>
             {prettyJson(refined) ? (
-              <pre className="mt-2 max-h-80 overflow-auto rounded-md bg-zinc-900 p-3 text-[11px] leading-relaxed text-zinc-100">
+              <pre className="mt-2 max-h-80 overflow-auto rounded-md bg-clin-navy p-3 text-[11px] leading-relaxed text-white">
                 {prettyJson(refined)}
               </pre>
             ) : (
-              <p className="mt-2 text-xs text-zinc-500">None yet.</p>
+              <p className="mt-2 text-xs text-clin-muted">None yet.</p>
             )}
           </div>
         </div>

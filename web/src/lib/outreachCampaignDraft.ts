@@ -7,6 +7,7 @@ import {
   extractJsonObjectFromModelText,
 } from "@/lib/llmAnalysis";
 import { getOllamaSettings } from "@/lib/ollamaSettings";
+import { getGlobalWriterInstructions } from "@/lib/brand";
 import { getLatestProfileContextForOutreach } from "@/lib/profileCaptureContext";
 import { updateMemberDraft } from "@/lib/outreachCampaigns";
 
@@ -55,6 +56,10 @@ export async function generateOutreachDraftForMember(
     override && override.length > 0 ? override : DEFAULT_OUTREACH_SYSTEM;
 
   let user = `Campaign context (from the Clin user):\n${campaign.contextText}\n\n`;
+  const globalWriter = await getGlobalWriterInstructions();
+  if (globalWriter) {
+    user += `Your global positioning and voice (from Clin → You & goals):\n${globalWriter}\n\n`;
+  }
   const writerNotes = campaign.writerInstructions?.trim();
   if (writerNotes) {
     user += `Additional instructions from the user (follow closely):\n${writerNotes}\n\n`;

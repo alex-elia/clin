@@ -2,11 +2,15 @@ import {
   saveAutomationForm,
   saveAutopilotForm,
   saveOllamaForm,
+  saveOutreachSendForm,
   savePaceForm,
 } from "@/app/actions";
+import { DataSettingsSection } from "@/components/DataSettingsSection";
 import { getAutopilotSettings } from "@/lib/autopilot";
 import { getAutomationSettings } from "@/lib/automation";
+import { getDataPathInfo, getLastBackupMeta } from "@/lib/dataPaths";
 import { getOllamaSettings, listOllamaModels } from "@/lib/ollamaSettings";
+import { getOutreachSendSettings } from "@/lib/outreachSend";
 import { getPaceSettings } from "@/lib/pace";
 
 export const dynamic = "force-dynamic";
@@ -17,26 +21,93 @@ export default async function SettingsPage() {
   const autopilot = await getAutopilotSettings();
   const ollama = await getOllamaSettings();
   const ollamaInstalled = await listOllamaModels(ollama.baseUrl);
+  const dataPaths = await getDataPathInfo();
+  const lastBackup = await getLastBackupMeta();
+  const outreachSend = await getOutreachSendSettings();
 
   return (
     <div className="mx-auto max-w-lg space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Pacing</h1>
-        <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-          These settings encourage a{" "}
-          <strong className="font-medium text-zinc-800 dark:text-zinc-200">
-            low-risk, human-paced
-          </strong>{" "}
-          workflow: small batches, gaps between profile opens, and throttled
-          captures. They do{" "}
-          <strong className="font-medium text-zinc-800 dark:text-zinc-200">
-            not
-          </strong>{" "}
-          automate LinkedIn (no auto-clicks, no scripted messages).
+        <h1 className="clin-page-title">Settings</h1>
+        <p className="clin-page-lead">
+          Pacing, data safety, and optional LinkedIn automation. Outreach send
+          stays off until you enable it below.
         </p>
       </div>
 
-      <form action={savePaceForm} className="space-y-4 rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
+      <DataSettingsSection
+        dbPath={dataPaths.dbPath}
+        dataDirectory={dataPaths.dataDirectory}
+        restartNote={dataPaths.restartRequiredNote}
+        lastBackupAt={lastBackup.at}
+        lastBackupPath={lastBackup.path}
+      />
+
+      <form
+        action={saveOutreachSendForm}
+        className="clin-card space-y-4 p-5"
+      >
+        <div>
+          <h2 className="text-lg font-medium text-[var(--clin-text)]">
+            LinkedIn outreach (opt-in)
+          </h2>
+          <p className="mt-1 text-sm text-[var(--clin-muted)]">
+            Extension can pace through ready campaign messages. Account risk is
+            on you — start with manual confirm.
+          </p>
+        </div>
+        <label className="flex cursor-pointer items-start gap-3 text-sm">
+          <input
+            type="checkbox"
+            name="outreachEnabled"
+            defaultChecked={outreachSend.enabled}
+            className="mt-1"
+          />
+          <span className="font-medium text-[var(--clin-text)]">
+            Enable LinkedIn outreach runner
+          </span>
+        </label>
+        <label className="block text-sm">
+          <span className="font-medium text-[var(--clin-text)]">Send mode</span>
+          <select
+            name="outreachSendMode"
+            defaultValue={outreachSend.sendMode}
+            className="mt-1 w-full rounded-md border border-[var(--clin-border)] px-3 py-2"
+          >
+            <option value="manual_confirm">Manual confirm (paste, you click Send)</option>
+            <option value="auto">Auto send (high risk)</option>
+          </select>
+        </label>
+        <Field
+          name="minSecondsBetweenSends"
+          label="Seconds between sends"
+          description="Minimum gap between outreach steps."
+          defaultValue={outreachSend.minSecondsBetweenSends}
+          min={60}
+          max={900}
+        />
+        <Field
+          name="sendMaxPerDay"
+          label="Max sends per day"
+          description="Rolling cap counted from outreach send log."
+          defaultValue={outreachSend.sendMaxPerDay}
+          min={1}
+          max={40}
+        />
+        <Field
+          name="sendJitterPercent"
+          label="Send jitter (%)"
+          description="Random extra delay on top of minimum send gap."
+          defaultValue={outreachSend.sendJitterPercent}
+          min={0}
+          max={100}
+        />
+        <button type="submit" className="clin-btn-primary">
+          Save outreach automation
+        </button>
+      </form>
+
+      <form action={savePaceForm} className="clin-card space-y-4 p-5">
         <Field
           name="queueBatchSize"
           label="Queue batch size"
@@ -79,22 +150,22 @@ export default async function SettingsPage() {
         />
         <button
           type="submit"
-          className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+          className="clin-btn-primary"
         >
           Save pacing
         </button>
       </form>
 
       <div>
-        <h2 className="text-xl font-semibold tracking-tight">
+        <h2 className="clin-section-title">
           Hygiene automation
         </h2>
-        <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+        <p className="mt-2 text-sm leading-relaxed text-clin-muted">
           Optional extension workflow: pick the next contact from your local DB,
           open their profile in your active LinkedIn tab, capture visible fields,
           and log the visit. Caps and random gaps apply on top of normal capture
           pacing. This still does{" "}
-          <strong className="font-medium text-zinc-800 dark:text-zinc-200">
+          <strong className="clin-strong">
             not
           </strong>{" "}
           send messages or click remove. Use at your own risk — LinkedIn may
@@ -104,7 +175,7 @@ export default async function SettingsPage() {
 
       <form
         action={saveAutomationForm}
-        className="space-y-4 rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950"
+        className="clin-card space-y-4 p-5"
       >
         <label className="flex cursor-pointer items-start gap-3 text-sm">
           <input
@@ -114,10 +185,10 @@ export default async function SettingsPage() {
             className="mt-1"
           />
           <span>
-            <span className="font-medium text-zinc-900 dark:text-zinc-100">
+            <span className="font-medium text-clin-text">
               Allow hygiene runner
             </span>
-            <span className="mt-1 block text-xs text-zinc-500">
+            <span className="mt-1 block text-xs text-clin-muted">
               When off, the extension cannot fetch /api/automation/next.
             </span>
           </span>
@@ -131,10 +202,10 @@ export default async function SettingsPage() {
             className="mt-1"
           />
           <span>
-            <span className="font-medium text-zinc-900 dark:text-zinc-100">
+            <span className="font-medium text-clin-text">
               Allow connections list sprint
             </span>
-            <span className="mt-1 block text-xs text-zinc-500">
+            <span className="mt-1 block text-xs text-clin-muted">
               When off, the extension refuses the side panel{" "}
               <strong className="font-medium">List sprint</strong> (auto-scroll +
               import). Capture pacing and hourly caps still apply from{" "}
@@ -176,33 +247,33 @@ export default async function SettingsPage() {
         />
         <button
           type="submit"
-          className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+          className="clin-btn-primary"
         >
           Save hygiene automation
         </button>
       </form>
 
       <div>
-        <h2 className="text-xl font-semibold tracking-tight">Ollama (local LLM)</h2>
-        <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+        <h2 className="clin-section-title">Ollama (local LLM)</h2>
+        <p className="mt-2 text-sm leading-relaxed text-clin-muted">
           Contact analysis on each person&apos;s page calls{" "}
-          <code className="rounded bg-zinc-100 px-1 text-xs dark:bg-zinc-900">
+          <code className="clin-code">
             POST /api/chat
           </code>{" "}
           on your machine. Pull a model first, e.g.{" "}
-          <code className="rounded bg-zinc-100 px-1 text-xs dark:bg-zinc-900">
+          <code className="clin-code">
             ollama pull qwen2.5:8b
           </code>{" "}
           or{" "}
-          <code className="rounded bg-zinc-100 px-1 text-xs dark:bg-zinc-900">
+          <code className="clin-code">
             ollama pull deepseek-r1:8b
           </code>
           . Override with env{" "}
-          <code className="rounded bg-zinc-100 px-1 text-xs dark:bg-zinc-900">
+          <code className="clin-code">
             OLLAMA_BASE_URL
           </code>{" "}
           and{" "}
-          <code className="rounded bg-zinc-100 px-1 text-xs dark:bg-zinc-900">
+          <code className="clin-code">
             OLLAMA_MODEL
           </code>{" "}
           if you prefer.
@@ -210,19 +281,19 @@ export default async function SettingsPage() {
       </div>
 
       <div>
-        <h2 className="text-xl font-semibold tracking-tight">
+        <h2 className="clin-section-title">
           Local autopilot (LLM)
         </h2>
-        <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+        <p className="mt-2 text-sm leading-relaxed text-clin-muted">
           Clin still does not scrape LinkedIn on a timer or scroll lists for you.
           These options only automate{" "}
-          <strong className="font-medium text-zinc-800 dark:text-zinc-200">
+          <strong className="clin-strong">
             Ollama analysis on your machine
           </strong>{" "}
           after you capture data. Use{" "}
           <a
             href="/autopilot"
-            className="font-medium text-blue-600 underline dark:text-blue-400"
+            className="clin-link font-medium"
           >
             Autopilot
           </a>{" "}
@@ -232,7 +303,7 @@ export default async function SettingsPage() {
 
       <form
         action={saveAutopilotForm}
-        className="space-y-4 rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950"
+        className="clin-card space-y-4 p-5"
       >
         <label className="flex cursor-pointer items-start gap-3 text-sm">
           <input
@@ -242,10 +313,10 @@ export default async function SettingsPage() {
             className="mt-1"
           />
           <span>
-            <span className="font-medium text-zinc-900 dark:text-zinc-100">
+            <span className="font-medium text-clin-text">
               Analyze after each profile capture
             </span>
-            <span className="mt-1 block text-xs text-zinc-500">
+            <span className="mt-1 block text-xs text-clin-muted">
               When on, a successful extension capture on an{" "}
               <code className="text-xs">/in/…</code> profile (not connections
               list imports) triggers Ollama in the background. Capture still
@@ -266,7 +337,7 @@ export default async function SettingsPage() {
         />
         <button
           type="submit"
-          className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+          className="clin-btn-primary"
         >
           Save autopilot
         </button>
@@ -274,24 +345,24 @@ export default async function SettingsPage() {
 
       <form
         action={saveOllamaForm}
-        className="space-y-4 rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950"
+        className="clin-card space-y-4 p-5"
       >
         <div>
-          <h2 className="text-xl font-semibold tracking-tight">Ollama (local AI)</h2>
+          <h2 className="clin-section-title">Ollama (local AI)</h2>
           {ollamaInstalled.ok ? (
             ollamaInstalled.models.length > 0 ? (
-              <p className="mt-2 text-xs leading-relaxed text-zinc-600 dark:text-zinc-400">
-                <span className="font-medium text-zinc-800 dark:text-zinc-200">
+              <p className="mt-2 text-xs leading-relaxed text-clin-muted">
+                <span className="clin-strong">
                   Installed on {ollama.baseUrl}:
                 </span>{" "}
-                <code className="break-all rounded bg-zinc-100 px-1 text-[11px] dark:bg-zinc-900">
+                <code className="clin-code break-all text-[11px]">
                   {ollamaInstalled.models.join(", ")}
                 </code>
               </p>
             ) : (
               <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">
                 Ollama is reachable but reports no models. Run e.g.{" "}
-                <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-900">
+                <code className="clin-code">
                   ollama pull qwen2.5:8b
                 </code>{" "}
                 then refresh this page.
@@ -318,7 +389,7 @@ export default async function SettingsPage() {
         />
         <button
           type="submit"
-          className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+          className="clin-btn-primary"
         >
           Save Ollama settings
         </button>
@@ -340,7 +411,7 @@ function OllamaField({
 }) {
   return (
     <label className="block space-y-1 text-sm">
-      <span className="font-medium text-zinc-900 dark:text-zinc-100">
+      <span className="font-medium text-clin-text">
         {label}
       </span>
       <input
@@ -348,9 +419,9 @@ function OllamaField({
         type="text"
         required
         defaultValue={defaultValue}
-        className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+        className="mt-1 clin-input"
       />
-      <span className="block text-xs text-zinc-500">{description}</span>
+      <span className="block text-xs text-clin-muted">{description}</span>
     </label>
   );
 }
@@ -372,7 +443,7 @@ function Field({
 }) {
   return (
     <label className="block space-y-1 text-sm">
-      <span className="font-medium text-zinc-900 dark:text-zinc-100">
+      <span className="font-medium text-clin-text">
         {label}
       </span>
       <input
@@ -382,9 +453,9 @@ function Field({
         min={min}
         max={max}
         defaultValue={defaultValue}
-        className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+        className="mt-1 clin-input"
       />
-      <span className="block text-xs text-zinc-500">{description}</span>
+      <span className="block text-xs text-clin-muted">{description}</span>
     </label>
   );
 }

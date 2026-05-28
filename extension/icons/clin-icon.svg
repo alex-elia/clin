@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Clin">
+  <rect width="64" height="64" rx="14" fill="#2563eb"/>
+  <path
+    d="M22 20h14c8.5 0 14.5 5.2 14.5 12.5S44.5 45 36 45H28v9H22V20zm6 6v13h8c4.8 0 8-2.8 8-6.5S40.8 26 36 26h-8z"
+    fill="#ffffff"
+  />
+</svg>

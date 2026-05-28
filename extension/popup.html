@@ -6,15 +6,15 @@
     <title>Clin</title>
     <style>
       :root {
-        --bg: #f0eeeb;
+        --bg: #f4fafa;
         --surface: #ffffff;
-        --surface-2: #f7f6f4;
-        --text: #121110;
-        --muted: #6b6560;
-        --border: #e0ddd8;
-        --accent: #0d6d64;
-        --accent-dim: #0a5750;
-        --accent-soft: rgba(13, 109, 100, 0.1);
+        --surface-2: #e6f9f6;
+        --text: #2d3e50;
+        --muted: #5a7280;
+        --border: #dce8ea;
+        --accent: #4fc3a1;
+        --accent-dim: #3db892;
+        --accent-soft: rgba(79, 195, 161, 0.14);
         --ok: #166534;
         --ok-bg: #ecfdf3;
         --err: #b42318;
@@ -63,9 +63,22 @@
 
       .brand-row {
         display: flex;
-        align-items: baseline;
+        align-items: center;
         justify-content: space-between;
         gap: 8px;
+      }
+
+      .brand-mark {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .brand-mark img {
+        height: 28px;
+        width: auto;
+        max-width: 120px;
+        object-fit: contain;
       }
 
       .brand {
@@ -389,7 +402,9 @@
     <div class="shell">
       <header class="top">
         <div class="brand-row">
-          <span class="brand">Clin</span>
+          <div class="brand-mark">
+            <img src="icons/Clin_Logo_Small.png" alt="Clin" width="106" height="70" />
+          </div>
           <span class="tagline">Local CRM</span>
         </div>
       </header>
@@ -398,14 +413,8 @@
         <button type="button" class="is-active" data-panel="capture" role="tab" aria-selected="true">
           Capture
         </button>
-        <button type="button" data-panel="sprint" role="tab" aria-selected="false">
-          List sprint
-        </button>
-        <button type="button" data-panel="hygiene" role="tab" aria-selected="false">
-          Hygiene
-        </button>
         <button type="button" data-panel="outreach" role="tab" aria-selected="false">
-          Outreach
+          Campaign
         </button>
         <button type="button" data-panel="connect" role="tab" aria-selected="false">
           Connect
@@ -416,10 +425,15 @@
         <section id="panel-capture" class="panel is-active" role="tabpanel">
           <p class="section-title">Import from this tab</p>
           <p class="hint">
-            <strong>Profile:</strong> open a <code>/in/…</code> page, then capture.
-            <strong>List:</strong> Connections or people search — capture imports visible
-            rows (scroll / next page, capture again). Server pacing applies.
+            <strong>Profile</strong> <code>/in/…</code> · <strong>List</strong> connections/search ·
+            <strong>Thread</strong> open a 1:1 chat and scroll messages first. Pacing applies.
           </p>
+          <label class="field">
+            <span>Import into campaign</span>
+            <select id="import-campaign-picker">
+              <option value="__none__">— none —</option>
+            </select>
+          </label>
           <p id="campaign-capture-hint" class="hint" aria-live="polite"></p>
           <p id="campaign-queue-hint" class="hint" aria-live="polite"></p>
           <button
@@ -431,7 +445,13 @@
             Open next profile (capture queue)
           </button>
           <button id="cap" type="button" class="btn btn-primary">
-            Capture this page
+            Capture LinkedIn tab
+          </button>
+          <button id="snapshot-messaging" type="button" class="btn btn-secondary">
+            Snapshot messaging list
+          </button>
+          <button id="snapshot-analytics" type="button" class="btn btn-secondary">
+            Snapshot post analytics
           </button>
           <button id="campaign-gen-draft" type="button" class="btn btn-secondary">
             Generate campaign draft (this profile)
@@ -492,6 +512,15 @@
           <button id="refresh-outreach" type="button" class="btn btn-secondary">
             Refresh list
           </button>
+          <div class="stack-tight" style="margin-top: 10px">
+            <button id="outreach-run-start" type="button" class="btn btn-primary">
+              Start outreach run
+            </button>
+            <button id="outreach-run-stop" type="button" class="btn btn-secondary">
+              Stop run
+            </button>
+          </div>
+          <p id="outreach-run-status" class="hint" aria-live="polite"></p>
           <div id="outreach"></div>
         </section>
 

@@ -33,8 +33,8 @@ export default async function ContactsPage({
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Contacts</h1>
-        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+        <h1 className="clin-page-title">Contacts</h1>
+        <p className="mt-1 text-sm text-clin-muted">
           Search and filter captured profiles.
         </p>
       </div>
@@ -44,20 +44,20 @@ export default async function ContactsPage({
         method="get"
       >
         <label className="flex flex-1 flex-col gap-1 text-sm">
-          <span className="text-zinc-600 dark:text-zinc-400">Search</span>
+          <span className="text-clin-muted">Search</span>
           <input
             name="q"
             defaultValue={sp.q ?? ""}
             placeholder="Name, company, headline"
-            className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            className="clin-input"
           />
         </label>
         <label className="flex flex-col gap-1 text-sm sm:w-48">
-          <span className="text-zinc-600 dark:text-zinc-400">Segment</span>
+          <span className="text-clin-muted">Segment</span>
           <select
             name="segment"
             defaultValue={sp.segment ?? ""}
-            className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            className="clin-input"
           >
             <option value="">All</option>
             {segments.map((s) => (
@@ -68,11 +68,11 @@ export default async function ContactsPage({
           </select>
         </label>
         <label className="flex flex-col gap-1 text-sm sm:w-52">
-          <span className="text-zinc-600 dark:text-zinc-400">Sort</span>
+          <span className="text-clin-muted">Sort</span>
           <select
             name="sort"
             defaultValue={sort === "cleanup" ? "cleanup" : "updated"}
-            className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+            className="clin-input"
           >
             <option value="updated">Recently updated</option>
             <option value="cleanup">Cleanup score (high first)</option>
@@ -80,7 +80,7 @@ export default async function ContactsPage({
         </label>
         <button
           type="submit"
-          className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+          className="clin-btn-primary"
         >
           Apply
         </button>
@@ -88,65 +88,65 @@ export default async function ContactsPage({
 
       <ScoreLegend />
 
-      <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-        <table className="min-w-full text-left text-sm">
-          <thead className="bg-zinc-50 text-xs uppercase text-zinc-500 dark:bg-zinc-900">
+      <div className="clin-table-wrap">
+        <table className="clin-table">
+          <thead className="text-xs uppercase text-clin-muted">
             <tr>
               <th className="px-3 py-2">Name</th>
               <th className="px-3 py-2">Company</th>
               <th className="px-3 py-2">Segment</th>
               <th className="px-3 py-2">
                 Scores{" "}
-                <span className="font-normal normal-case text-zinc-400">
+                <span className="font-normal normal-case text-clin-muted">
                   (hover a row)
                 </span>
               </th>
               <th className="px-3 py-2">Updated</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-zinc-200 dark:divide-zinc-800">
+          <tbody className="">
             {rows.length === 0 ? (
               <tr>
                 <td
                   colSpan={5}
-                  className="px-3 py-6 text-center text-zinc-500"
+                  className="px-3 py-6 text-center text-clin-muted"
                 >
                   No contacts. Use the Chrome extension to capture a profile.
                 </td>
               </tr>
             ) : (
               rows.map((c) => (
-                <tr key={c.id} className="bg-white dark:bg-zinc-950">
+                <tr key={c.id} >
                   <td className="px-3 py-2">
-                    <div className="font-medium text-zinc-900 dark:text-zinc-100">
+                    <div className="font-medium text-clin-text">
                       <Link
                         href={`/contacts/${c.id}`}
-                        className="hover:underline"
+                        className="clin-link"
                       >
                         {c.fullName ?? "—"}
                       </Link>
                     </div>
-                    <div className="text-xs text-zinc-500 line-clamp-1">
+                    <div className="text-xs text-clin-muted line-clamp-1">
                       {c.headline ?? ""}
                     </div>
                   </td>
-                  <td className="px-3 py-2 text-zinc-700 dark:text-zinc-300">
+                  <td className="px-3 py-2 text-clin-muted">
                     {c.company ?? "—"}
                   </td>
                   <td className="px-3 py-2">
-                    <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs dark:bg-zinc-900">
+                    <span className="clin-pill">
                       {c.segment}
                     </span>
                   </td>
                   <td
-                    className="px-3 py-2 font-mono text-xs text-zinc-600 dark:text-zinc-400"
+                    className="px-3 py-2 font-mono text-xs text-clin-muted"
                     title={scoresTooltipLines(c)}
                   >
-                    <span className="cursor-help underline decoration-dotted decoration-zinc-400 underline-offset-2">
+                    <span className="cursor-help underline decoration-dotted decoration-clin-muted underline-offset-2">
                       R{c.relationshipScore} B{c.businessScore} C{c.cleanupScore}
                     </span>
                   </td>
-                  <td className="px-3 py-2 text-xs text-zinc-500">
+                  <td className="px-3 py-2 text-xs text-clin-muted">
                     {c.lastUpdatedAt
                       ? c.lastUpdatedAt.toLocaleString()
                       : "—"}
@@ -158,10 +158,10 @@ export default async function ContactsPage({
         </table>
       </div>
 
-      <p className="text-xs text-zinc-500">
+      <p className="text-xs text-clin-muted">
         Profile links: open LinkedIn manually from your browser — Clin does not
         automate navigation.{" "}
-        <Link href="/queue" className="underline">
+        <Link href="/queue" className="clin-link">
           Review queue
         </Link>
       </p>

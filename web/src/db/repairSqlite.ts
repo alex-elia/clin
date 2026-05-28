@@ -87,4 +87,65 @@ export function repairClinSqliteSchema(db: Database.Database): void {
     );
   }
 
+  if (tableExists(db, "outreach_campaign_members")) {
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaign_members ADD COLUMN message_sent_at integer",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaign_members ADD COLUMN message_reply_outcome text NOT NULL DEFAULT 'unknown'",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaign_members ADD COLUMN message_outcome_note text",
+    );
+  }
+
+  if (!tableExists(db, "inbox_thread_state")) {
+    db.exec(`
+      CREATE TABLE inbox_thread_state (
+        id text PRIMARY KEY NOT NULL,
+        contact_id text NOT NULL,
+        thread_key text NOT NULL,
+        status text NOT NULL DEFAULT 'open',
+        snoozed_until integer,
+        note text,
+        updated_at integer NOT NULL,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+      );
+      CREATE UNIQUE INDEX inbox_thread_contact_key ON inbox_thread_state (contact_id, thread_key);
+      CREATE INDEX inbox_thread_status_idx ON inbox_thread_state (status);
+    `);
+  }
+
+  if (!tableExists(db, "extension_snapshots")) {
+    db.exec(`
+      CREATE TABLE extension_snapshots (
+        id text PRIMARY KEY NOT NULL,
+        kind text NOT NULL,
+        source_url text NOT NULL,
+        payload_json text NOT NULL,
+        captured_at integer NOT NULL
+      );
+      CREATE INDEX ext_snap_kind_idx ON extension_snapshots (kind);
+      CREATE INDEX ext_snap_captured_idx ON extension_snapshots (captured_at);
+    `);
+  }
+
+  if (!tableExists(db, "outreach_send_log")) {
+    db.exec(`
+      CREATE TABLE outreach_send_log (
+        id text PRIMARY KEY NOT NULL,
+        campaign_member_id text,
+        contact_id text NOT NULL,
+        action text NOT NULL,
+        outcome text NOT NULL,
+        error text,
+        created_at integer NOT NULL
+      );
+      CREATE INDEX outreach_send_log_created_idx ON outreach_send_log (created_at);
+      CREATE INDEX outreach_send_log_contact_idx ON outreach_send_log (contact_id);
+    `);
+  }
 }

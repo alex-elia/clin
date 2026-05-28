@@ -17,7 +17,13 @@ import {
   setCaptureTargetAndActiveExtensionAction,
   setCaptureTargetCampaignAction,
   updateCampaignAction,
+  updateMemberReplyOutcomeAction,
 } from "@/app/actions";
+import {
+  getCampaignOutreachPanel,
+  loadMemberOutreachExtras,
+  outreachNextReasonLabel,
+} from "@/lib/campaignMemberOutreach";
 import {
   enrichCampaignMembers,
   enrichedMemberMatchesFilter,
@@ -43,8 +49,7 @@ function memberFilterHref(campaignId: string, key: MemberReadinessFilter) {
 
 function filterChipClass(active: boolean) {
   return active
-    ? "rounded-full border border-zinc-900 bg-zinc-900 px-2.5 py-1 text-xs font-medium text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900"
-    : "rounded-full border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-800";
+    ? "clin-pill clin-pill-active" : "clin-pill";
 }
 
 function profileDepthBadgeClass(depth: "missing" | "thin" | "ok") {
@@ -100,7 +105,11 @@ export default async function CampaignDetailPage({
   const isActive = activeId === id;
   const isCaptureTarget = captureTargetId === id;
 
+  const outreachPanel = await getCampaignOutreachPanel(id, isActive);
   const membersEnriched = await enrichCampaignMembers(membersRaw);
+  const outreachExtras = await loadMemberOutreachExtras(
+    membersRaw.map((r) => r.member.id),
+  );
   const memberFilter = parseMemberReadinessFilter(sp.memberFilter);
   const filterCounts = readinessFilterCounts(membersEnriched);
   const members = membersEnriched.filter((m) =>
@@ -113,11 +122,11 @@ export default async function CampaignDetailPage({
       <div>
         <Link
           href="/campaigns"
-          className="text-sm text-zinc-600 underline dark:text-zinc-400"
+          className="clin-link text-sm"
         >
           ← Campaigns
         </Link>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight">{campaign.name}</h1>
+        <h1 className="mt-2 clin-page-title">{campaign.name}</h1>
         {sp.draftErr ? (
           <p className="mt-3 whitespace-pre-wrap rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/50 dark:text-red-100">
             {sp.draftErr}
@@ -129,7 +138,7 @@ export default async function CampaignDetailPage({
           </p>
         ) : null}
         {sp.batchInfo ? (
-          <p className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+          <p className="mt-3 clin-callout text-sm text-clin-text">
             {sp.batchInfo}
           </p>
         ) : null}
@@ -155,9 +164,9 @@ export default async function CampaignDetailPage({
         ) : null}
       </div>
 
-      <section className="rounded-lg border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/40">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Practical flow</h2>
-        <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-zinc-600 dark:text-zinc-400">
+      <section className="clin-callout">
+        <h2 className="text-sm font-semibold text-clin-text">Practical flow</h2>
+        <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-clin-muted">
           <li>
             Refine <strong className="font-medium">name + context</strong> below (what you want local AI to respect for every message).
           </li>
@@ -188,40 +197,40 @@ export default async function CampaignDetailPage({
 
       <section className="space-y-3">
         <h2 className="text-sm font-semibold">Campaign details</h2>
-        <form action={updateCampaignAction} className="space-y-3 rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+        <form action={updateCampaignAction} className="space-y-3 clin-card p-4">
           <input type="hidden" name="campaignId" value={id} />
           <label className="block">
-            <span className="text-xs font-medium uppercase text-zinc-500">Name</span>
+            <span className="text-xs font-medium uppercase text-clin-muted">Name</span>
             <input
               name="name"
               defaultValue={campaign.name}
               required
-              className="mt-1 w-full max-w-md rounded-md border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+              className="mt-1 w-full max-w-md clin-input text-sm"
             />
           </label>
           <label className="block">
-            <span className="text-xs font-medium uppercase text-zinc-500">Context</span>
+            <span className="text-xs font-medium uppercase text-clin-muted">Context</span>
             <textarea
               name="contextText"
               defaultValue={campaign.contextText}
               required
               rows={6}
-              className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+              className="mt-1 w-full clin-input text-sm"
             />
           </label>
           <label className="block">
-            <span className="text-xs font-medium uppercase text-zinc-500">
+            <span className="text-xs font-medium uppercase text-clin-muted">
               Writer instructions (for AI)
             </span>
             <textarea
               name="writerInstructions"
               defaultValue={campaign.writerInstructions ?? ""}
               rows={5}
-              className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+              className="mt-1 w-full clin-input text-sm"
               placeholder="Tone, must-say, avoid, length, CTA… Merged into each draft request."
             />
           </label>
-          <details className="rounded-md border border-zinc-200 p-3 dark:border-zinc-800">
+          <details className="clin-card p-3">
             <summary className="cursor-pointer text-sm font-medium">
               Advanced: custom system prompt
             </summary>
@@ -229,23 +238,23 @@ export default async function CampaignDetailPage({
               name="systemPromptOverride"
               defaultValue={campaign.systemPromptOverride ?? ""}
               rows={6}
-              className="mt-2 w-full rounded-md border border-zinc-300 px-3 py-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-900"
+              className="mt-2 w-full clin-input font-mono text-xs"
               placeholder={
                 'Empty = default. Must still require JSON {"message":"..."} only.'
               }
             />
           </details>
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-clin-muted">
             Ollama:{" "}
-            <Link href="/settings" className="underline">
+            <Link href="/settings" className="clin-link">
               Settings
             </Link>
             . Dev server logs:{" "}
-            <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">[clin:outreach-draft]</code>
+            <code className="clin-code">[clin:outreach-draft]</code>
           </p>
           <button
             type="submit"
-            className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm font-medium dark:border-zinc-600 dark:bg-zinc-900"
+            className="clin-btn-secondary text-sm px-3 py-1.5"
           >
             Save
           </button>
@@ -253,10 +262,10 @@ export default async function CampaignDetailPage({
       </section>
 
       <section className="rounded-lg border border-sky-200 bg-sky-50/60 p-4 dark:border-sky-900 dark:bg-sky-950/30">
-        <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
+        <h2 className="text-sm font-semibold text-clin-text">
           Extension: capture LinkedIn into this campaign
         </h2>
-        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="mt-1 text-sm text-clin-muted">
           While this is set, every profile or list <strong className="font-medium">Capture</strong> from the Clin
           extension tags new/updated people into <strong className="font-medium">this</strong> list (server adds them
           after ingest). Use LinkedIn search, Sales Nav lists, or connections — same capture button as usual.
@@ -276,7 +285,7 @@ export default async function CampaignDetailPage({
             <form action={clearCaptureTargetCampaignAction}>
               <button
                 type="submit"
-                className="rounded-md border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-600"
+                className="clin-btn-secondary text-sm px-3 py-2"
               >
                 Clear capture target
               </button>
@@ -294,13 +303,66 @@ export default async function CampaignDetailPage({
         </div>
       </section>
 
+      <section className="clin-card space-y-3 p-4">
+        <h2 className="clin-section-title">Outreach run</h2>
+        <p className="clin-body">
+          Extension queue uses members marked <strong className="clin-strong">ready</strong> on
+          this campaign when it is <strong className="clin-strong">active for extension</strong>.
+          Enable and pace sends in{" "}
+          <Link href="/settings" className="clin-link">
+            Settings
+          </Link>
+          , then use the extension Campaign tab → <strong className="clin-strong">Start outreach run</strong>.
+        </p>
+        <dl className="grid gap-2 text-sm sm:grid-cols-2">
+          <div>
+            <dt className="text-clin-muted">Runner</dt>
+            <dd className="font-medium text-clin-text">
+              {outreachPanel.enabled ? "On" : "Off"} · {outreachPanel.sendMode}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-clin-muted">Ready / sends today</dt>
+            <dd className="font-medium text-clin-text">
+              {outreachPanel.readyCount} ready · {outreachPanel.sendsToday}/
+              {outreachPanel.sendMaxPerDay} sent
+            </dd>
+          </div>
+          <div className="sm:col-span-2">
+            <dt className="text-clin-muted">Next step</dt>
+            <dd className="text-clin-text">
+              {outreachNextReasonLabel(outreachPanel.nextReason)}
+            </dd>
+          </div>
+        </dl>
+        {outreachPanel.recentSends.length > 0 ? (
+          <div>
+            <p className="text-xs font-medium uppercase text-clin-muted">
+              Recent send log
+            </p>
+            <ul className="mt-1 space-y-1 text-xs text-clin-muted">
+              {outreachPanel.recentSends.map((l, i) => (
+                <li key={`${l.at.getTime()}-${i}`}>
+                  {l.at.toLocaleString(undefined, {
+                    dateStyle: "short",
+                    timeStyle: "short",
+                  })}{" "}
+                  · {l.contactName ?? "Contact"} · {l.outcome}
+                  {l.error ? ` (${l.error})` : ""}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </section>
+
       <section className="flex flex-wrap gap-3">
         <form action={setActiveExtensionCampaignAction}>
           <input type="hidden" name="campaignId" value={id} />
           <button
             type="submit"
             disabled={isActive}
-            className="rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900"
+            className="clin-btn-primary text-sm px-3 py-2 disabled:opacity-40"
           >
             Set active for extension only
           </button>
@@ -309,7 +371,7 @@ export default async function CampaignDetailPage({
           <form action={clearActiveExtensionCampaignAction}>
             <button
               type="submit"
-              className="rounded-md border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-600"
+              className="clin-btn-secondary text-sm px-3 py-2"
             >
               Clear active outreach campaign
             </button>
@@ -318,11 +380,11 @@ export default async function CampaignDetailPage({
       </section>
 
       <section className="grid gap-6 md:grid-cols-2">
-        <details className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+        <details className="clin-card p-4">
           <summary className="cursor-pointer text-sm font-semibold">
             Optional: bulk add by segment
           </summary>
-          <p className="mt-2 text-xs text-zinc-500">
+          <p className="mt-2 text-xs text-clin-muted">
             Pulls up to N recently updated contacts already in Clin (not from LinkedIn live search).
           </p>
           <form action={addSegmentToCampaignAction} className="mt-3 space-y-2">
@@ -330,7 +392,7 @@ export default async function CampaignDetailPage({
             <select
               name="segment"
               required
-              className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+              className="w-full clin-input text-sm"
             >
               {SEGMENTS.map((s) => (
                 <option key={s} value={s}>
@@ -339,28 +401,28 @@ export default async function CampaignDetailPage({
               ))}
             </select>
             <label className="flex items-center gap-2 text-sm">
-              <span className="text-zinc-500">Max</span>
+              <span className="text-clin-muted">Max</span>
               <input
                 type="number"
                 name="limit"
                 min={1}
                 max={100}
                 defaultValue={30}
-                className="w-24 rounded-md border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900"
+                className="w-24 clin-input"
               />
             </label>
             <button
               type="submit"
-              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm dark:border-zinc-600"
+              className="clin-btn-secondary text-sm px-3 py-1.5"
             >
               Add by segment
             </button>
           </form>
         </details>
-        <div className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+        <div className="clin-card p-4">
           <h3 className="text-sm font-semibold">Add by contact IDs</h3>
-          <p className="mt-1 text-xs text-zinc-500">
-            One UUID per line or comma-separated (from <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">/contacts/…</code>).
+          <p className="mt-1 text-xs text-clin-muted">
+            One UUID per line or comma-separated (from <code className="clin-code">/contacts/…</code>).
           </p>
           <form action={addContactIdsToCampaignAction} className="mt-3 space-y-2">
             <input type="hidden" name="campaignId" value={id} />
@@ -368,11 +430,11 @@ export default async function CampaignDetailPage({
               name="contactIds"
               rows={4}
               placeholder="uuid…"
-              className="w-full rounded-md border border-zinc-300 px-3 py-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-900"
+              className="w-full clin-input font-mono text-xs"
             />
             <button
               type="submit"
-              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm dark:border-zinc-600"
+              className="clin-btn-secondary text-sm px-3 py-1.5"
             >
               Add IDs
             </button>
@@ -380,9 +442,9 @@ export default async function CampaignDetailPage({
         </div>
       </section>
 
-      <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+      <section className="clin-card p-4">
         <h3 className="text-sm font-semibold">Batch generate (Ollama)</h3>
-        <p className="mt-1 text-xs text-zinc-500">
+        <p className="mt-1 text-xs text-clin-muted">
           Fills empty drafts for up to N members in <strong className="font-medium">draft</strong> status. By default
           only people with a <strong className="font-medium">detailed profile capture</strong> (About or Experience on
           their last profile Capture) are included.
@@ -391,24 +453,24 @@ export default async function CampaignDetailPage({
           <div className="flex flex-wrap items-end gap-3">
             <input type="hidden" name="campaignId" value={id} />
             <label className="text-sm">
-              <span className="text-zinc-500">Count</span>
+              <span className="text-clin-muted">Count</span>
               <input
                 type="number"
                 name="limit"
                 min={1}
                 max={12}
                 defaultValue={6}
-                className="ml-2 w-20 rounded-md border border-zinc-300 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-900"
+                className="ml-2 w-20 clin-input"
               />
             </label>
             <button
               type="submit"
-              className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm text-white dark:bg-zinc-100 dark:text-zinc-900"
+              className="clin-btn-primary text-sm px-3 py-1.5"
             >
               Generate batch
             </button>
           </div>
-          <label className="flex max-w-xl cursor-pointer items-start gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+          <label className="flex max-w-xl cursor-pointer items-start gap-2 text-xs text-clin-muted">
             <input
               type="checkbox"
               name="allowWeakProfile"
@@ -423,9 +485,9 @@ export default async function CampaignDetailPage({
         </form>
       </section>
 
-      <section className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800">
+      <section className="clin-card p-4">
         <h3 className="text-sm font-semibold">Capture queue & readiness</h3>
-        <p className="mt-1 text-xs text-zinc-500">
+        <p className="mt-1 text-xs text-clin-muted">
           Set this campaign as <strong className="font-medium">capture target</strong> above, then open each LinkedIn
           profile from the links below (or use <strong className="font-medium">Open next</strong> in the extension).
           Scroll About and Experience, then <strong className="font-medium">Capture</strong>. Filter the member list by
@@ -433,26 +495,26 @@ export default async function CampaignDetailPage({
           <strong className="font-medium">skipped</strong>.
         </p>
         {membersEnriched.length > 0 ? (
-          <div className="mt-3 space-y-2 text-xs text-zinc-600 dark:text-zinc-400">
+          <div className="mt-3 space-y-2 text-xs text-clin-muted">
             <p>
               Profiles:{" "}
-              <strong className="text-zinc-900 dark:text-zinc-100">
+              <strong className="text-clin-text">
                 {filterCounts.need_profile} missing
               </strong>
               ,{" "}
-              <strong className="text-zinc-900 dark:text-zinc-100">
+              <strong className="text-clin-text">
                 {filterCounts.thin_profile} thin
               </strong>
               ,{" "}
-              <strong className="text-zinc-900 dark:text-zinc-100">
+              <strong className="text-clin-text">
                 {filterCounts.profile_ok} detailed
               </strong>
               . Drafts:{" "}
-              <strong className="text-zinc-900 dark:text-zinc-100">
+              <strong className="text-clin-text">
                 {filterCounts.need_draft} empty
               </strong>
               ,{" "}
-              <strong className="text-zinc-900 dark:text-zinc-100">
+              <strong className="text-clin-text">
                 {filterCounts.has_draft} with text
               </strong>
               .
@@ -463,12 +525,12 @@ export default async function CampaignDetailPage({
                   href={nextCapture.profileUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="font-medium text-sky-700 underline dark:text-sky-400"
+                  className="clin-link font-medium"
                 >
                   Open next profile to capture
                 </a>
                 {nextCapture.fullName ? (
-                  <span className="text-zinc-500"> — {nextCapture.fullName}</span>
+                  <span className="text-clin-muted"> — {nextCapture.fullName}</span>
                 ) : null}
               </p>
             ) : (
@@ -499,27 +561,28 @@ export default async function CampaignDetailPage({
             ))}
           </div>
         ) : null}
-        <p className="mt-1 text-xs text-zinc-500">
-          <strong className="font-medium text-zinc-600 dark:text-zinc-400">Remove from campaign</strong> deletes only
+        <p className="mt-1 text-xs text-clin-muted">
+          <strong className="font-medium text-clin-muted">Remove from campaign</strong> deletes only
           this list row; the person stays in{" "}
-          <Link href="/contacts" className="underline">
+          <Link href="/contacts" className="clin-link">
             Contacts
           </Link>
           .
         </p>
         <div className="mt-3 space-y-6">
           {membersEnriched.length === 0 ? (
-            <p className="text-sm text-zinc-500">No contacts in this campaign yet.</p>
+            <p className="text-sm text-clin-muted">No contacts in this campaign yet.</p>
           ) : members.length === 0 ? (
-            <p className="text-sm text-zinc-500">No members match this filter.</p>
+            <p className="text-sm text-clin-muted">No members match this filter.</p>
           ) : (
             members.map(({ member, contact, profileDepth, lastProfileCapturedAt }) => {
               const draft = member.draftOutreach ?? "";
               const hasDraft = draft.trim().length > 0;
+              const extras = outreachExtras.get(member.id);
               return (
                 <div
                   key={`${member.id}-${member.updatedAt.getTime()}`}
-                  className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-800"
+                  className="clin-card p-4"
                 >
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-2">
@@ -529,7 +592,7 @@ export default async function CampaignDetailPage({
                       >
                         {contact.fullName || contact.id}
                       </Link>
-                      <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                      <span className="clin-pill text-xs">
                         {member.status}
                       </span>
                       <span
@@ -545,7 +608,7 @@ export default async function CampaignDetailPage({
                       </span>
                     </div>
                     <div className="flex min-w-0 flex-col items-end gap-1 text-right">
-                      <p className="max-w-md truncate text-xs text-zinc-500">
+                      <p className="max-w-md truncate text-xs text-clin-muted">
                         {contact.headline}
                       </p>
                       {contact.linkedinUrlCanonical ? (
@@ -553,13 +616,13 @@ export default async function CampaignDetailPage({
                           href={contact.linkedinUrlCanonical}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-xs font-medium text-sky-700 underline dark:text-sky-400"
+                          className="text-xs clin-link font-medium"
                         >
                           Open LinkedIn
                         </a>
                       ) : null}
                       {lastProfileCapturedAt ? (
-                        <span className="text-[11px] text-zinc-400">
+                        <span className="text-[11px] text-clin-muted">
                           Last profile capture:{" "}
                           {lastProfileCapturedAt.toLocaleString(undefined, {
                             dateStyle: "short",
@@ -576,24 +639,71 @@ export default async function CampaignDetailPage({
                       name="draftOutreach"
                       rows={5}
                       defaultValue={draft}
-                      className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                      className="w-full clin-input text-sm"
                     />
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="submit"
-                        className="rounded-md border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-600"
+                        className="clin-btn-secondary text-xs px-2 py-1"
                       >
                         Save draft
                       </button>
                     </div>
                   </form>
+                  {extras?.messageSentAt ? (
+                    <p className="mt-2 text-xs text-clin-muted">
+                      Sent (recorded):{" "}
+                      {extras.messageSentAt.toLocaleString(undefined, {
+                        dateStyle: "short",
+                        timeStyle: "short",
+                      })}
+                    </p>
+                  ) : null}
+                  {member.status === "sent" || member.status === "skipped" ? (
+                    <form
+                      action={updateMemberReplyOutcomeAction}
+                      className="mt-2 flex flex-wrap items-end gap-2"
+                    >
+                      <input type="hidden" name="campaignId" value={id} />
+                      <input type="hidden" name="memberId" value={member.id} />
+                      <label className="text-xs">
+                        <span className="font-medium text-clin-text">Reply</span>
+                        <select
+                          name="replyOutcome"
+                          defaultValue={extras?.messageReplyOutcome ?? "unknown"}
+                          className="mt-0.5 clin-select text-xs"
+                        >
+                          <option value="unknown">Unknown</option>
+                          <option value="replied">Replied</option>
+                          <option value="no_reply">No reply yet</option>
+                          <option value="not_applicable">N/A</option>
+                        </select>
+                      </label>
+                      <label className="min-w-[12rem] flex-1 text-xs">
+                        <span className="font-medium text-clin-text">Note</span>
+                        <input
+                          name="messageOutcomeNote"
+                          type="text"
+                          defaultValue={extras?.messageOutcomeNote ?? ""}
+                          placeholder="Optional"
+                          className="mt-0.5 clin-input text-xs"
+                        />
+                      </label>
+                      <button
+                        type="submit"
+                        className="clin-btn-secondary text-xs px-2 py-1"
+                      >
+                        Save outcome
+                      </button>
+                    </form>
+                  ) : null}
                   <div className="mt-2 flex flex-wrap gap-2">
                     <form action={generateOneOutreachDraftAction}>
                       <input type="hidden" name="campaignId" value={id} />
                       <input type="hidden" name="memberId" value={member.id} />
                       <button
                         type="submit"
-                        className="rounded-md border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-600"
+                        className="clin-btn-secondary text-xs px-2 py-1"
                       >
                         Regenerate (LLM)
                       </button>
@@ -616,7 +726,7 @@ export default async function CampaignDetailPage({
                         <input type="hidden" name="memberId" value={member.id} />
                         <button
                           type="submit"
-                          className="rounded-md border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-600"
+                          className="clin-btn-secondary text-xs px-2 py-1"
                         >
                           Back to draft
                         </button>
@@ -640,7 +750,7 @@ export default async function CampaignDetailPage({
                           <input type="hidden" name="memberId" value={member.id} />
                           <button
                             type="submit"
-                            className="rounded-md border border-zinc-400 px-2 py-1 text-xs text-zinc-700 dark:border-zinc-500 dark:text-zinc-300"
+                            className="clin-btn-secondary text-xs px-2 py-1"
                           >
                             Skip
                           </button>

@@ -1,25 +1,61 @@
 import { z } from "zod";
 
-export const capturePayloadSchema = z.object({
-  schemaVersion: z.string().min(1),
-  pageType: z.enum(["profile", "connections", "unknown"]),
-  sourceUrl: z.string().url(),
-  capturedAt: z.string().optional(),
-  confidence: z.number().min(0).max(1).optional(),
-  extractedFields: z.object({
-    fullName: z.string().optional(),
-    headline: z.string().optional(),
-    company: z.string().optional(),
-    location: z.string().optional(),
-    connectionDegree: z.string().optional(),
-    about: z.string().max(20_000).optional(),
-    experienceBullets: z.array(z.string().max(600)).max(25).optional(),
-    educationBullets: z.array(z.string().max(500)).max(20).optional(),
-  }),
-  fieldPresence: z.record(z.string(), z.boolean()).optional(),
-  /** When set (by the extension), server adds this contact to the campaign after ingest. */
-  outreachCampaignId: z.string().min(1).optional(),
+const messagingMessageSchema = z.object({
+  from: z.enum(["me", "them", "unknown"]),
+  body: z.string().min(1).max(20_000),
 });
+
+export const capturePayloadSchema = z
+  .object({
+    schemaVersion: z.string().min(1),
+    pageType: z.enum(["profile", "connections", "unknown", "messaging"]),
+    sourceUrl: z.string().url(),
+    capturedAt: z.string().optional(),
+    confidence: z.number().min(0).max(1).optional(),
+    extractedFields: z.object({
+      fullName: z.string().optional(),
+      headline: z.string().optional(),
+      company: z.string().optional(),
+      location: z.string().optional(),
+      connectionDegree: z.string().optional(),
+      about: z.string().max(20_000).optional(),
+      experienceBullets: z.array(z.string().max(600)).max(25).optional(),
+      educationBullets: z.array(z.string().max(500)).max(20).optional(),
+      messagingParticipantProfileUrl: z.string().url().optional(),
+      messagingThreadId: z.string().max(200).optional(),
+      messagingParticipantName: z.string().max(500).optional(),
+      messagingMessages: z.array(messagingMessageSchema).max(500).optional(),
+    }),
+    fieldPresence: z.record(z.string(), z.boolean()).optional(),
+    outreachCampaignId: z.string().min(1).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.pageType !== "messaging") return;
+    const url = data.extractedFields.messagingParticipantProfileUrl?.trim();
+    if (!url) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "Messaging capture requires messagingParticipantProfileUrl (their /in/… link).",
+        path: ["extractedFields", "messagingParticipantProfileUrl"],
+      });
+    }
+    const msgs = data.extractedFields.messagingMessages;
+    if (!msgs?.length) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Messaging capture requires at least one message.",
+        path: ["extractedFields", "messagingMessages"],
+      });
+    }
+    if (!data.sourceUrl.includes("/messaging/")) {
+      ctx.addIssue({
+        code: "custom",
+        message: "sourceUrl should be the messaging thread URL.",
+        path: ["sourceUrl"],
+      });
+    }
+  });
 
 export const connectionRowSchema = z.object({
   profileUrl: z.string().url(),
@@ -30,7 +66,6 @@ export const connectionRowSchema = z.object({
   connectionDegree: z.string().optional(),
 });
 
-/** Visible rows from a connections or people-search list (one POST per page / scroll batch). */
 export const connectionsPagePayloadSchema = z.object({
   schemaVersion: z.string().min(1),
   pageType: z.literal("connections"),
@@ -40,9 +75,22 @@ export const connectionsPagePayloadSchema = z.object({
   outreachCampaignId: z.string().min(1).optional(),
 });
 
+/** Manual extension dump: visible inbox list, creator/post analytics page, etc. */
+export const extensionSnapshotPayloadSchema = z.object({
+  schemaVersion: z.string().min(1),
+  kind: z.enum([
+    "linkedin_messages_inbox_visible",
+    "linkedin_post_analytics_visible",
+  ]),
+  sourceUrl: z.string().url(),
+  capturedAt: z.string().optional(),
+  payload: z.record(z.string(), z.unknown()),
+});
+
 export const automationAckSchema = z.object({
   contactId: z.string().min(1),
   outcome: z.enum(["ok", "skip", "error"]),
+  kind: z.enum(["hygiene", "profile_queue"]).optional(),
 });
 
 export const automationSettingsPatchSchema = z
@@ -64,3 +112,6 @@ export const contactAnalyzeBodySchema = z
   })
   .strict();
 
+export const profileCaptureQueueBodySchema = z.object({
+  contactIds: z.array(z.string().min(1)).min(1).max(40),
+});

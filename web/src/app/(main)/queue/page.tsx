@@ -22,14 +22,14 @@ export default async function QueuePage({
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Review queue</h1>
-        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+        <h1 className="clin-page-title">Review queue</h1>
+        <p className="mt-1 text-sm text-clin-muted">
           Human actions only, in{" "}
-          <Link href="/settings" className="underline">
+          <Link href="/settings" className="clin-link">
             small slow batches
           </Link>
           . Sort by{" "}
-          <strong className="font-medium text-zinc-800 dark:text-zinc-200">
+          <strong className="clin-strong">
             cleanup score
           </strong>{" "}
           to tackle removals and stale connections first. Clin does not click or
@@ -40,26 +40,26 @@ export default async function QueuePage({
       <div className="flex flex-wrap items-center gap-3 text-sm">
         <Link
           href="/queue"
-          className={`rounded-md px-3 py-1.5 ${!shuffle && sort === "priority" ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "border border-zinc-300 dark:border-zinc-600"}`}
+          className={`rounded-md px-3 py-1.5 ${!shuffle && sort === "priority" ? "clin-btn-primary" : "clin-btn-secondary"}`}
         >
           Queue priority
         </Link>
         <Link
           href="/queue?order=cleanup"
-          className={`rounded-md px-3 py-1.5 ${!shuffle && sort === "cleanup" ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "border border-zinc-300 dark:border-zinc-600"}`}
+          className={`rounded-md px-3 py-1.5 ${!shuffle && sort === "cleanup" ? "clin-btn-primary" : "clin-btn-secondary"}`}
         >
           Cleanup first
         </Link>
         <Link
           href="/queue?shuffle=1"
-          className={`rounded-md px-3 py-1.5 ${shuffle ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "border border-zinc-300 dark:border-zinc-600"}`}
+          className={`rounded-md px-3 py-1.5 ${shuffle ? "clin-btn-primary" : "clin-btn-secondary"}`}
         >
           Shuffle (local only)
         </Link>
       </div>
 
       {shuffle ? (
-        <p className="rounded-md bg-zinc-100 px-3 py-2 text-xs text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+        <p className="clin-callout text-xs">
           Shuffle only changes list order inside Clin. It is unrelated to LinkedIn
           risk.
         </p>
