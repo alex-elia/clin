@@ -1,6 +1,6 @@
 # Clin
 
-**Local-first LinkedIn assistant** — open source software you run on your own machine to capture your network, prepare outreach drafts, and run **optional, paced automation** when you choose.
+**Local-first LinkedIn assistant** — open source software you run on your own machine to capture your network, clean you contacts base, prepare outreach drafts, and run **optional, paced automation** when you choose.
 
 Clin is a **community-owned tool**: inspect the code, fork it, and adapt it. Data stays on your disk by default. You control which features are on and how fast they run.
 
