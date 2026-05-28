@@ -1,35 +1,41 @@
 # Clin Chrome extension (MV3)
 
-Manual capture only: reads **visible** fields on the active LinkedIn tab when you click **Capture this page**, then `POST`s JSON to your local Clin app.
+Companion to the local Clin web app: capture visible LinkedIn data, manage campaign context, and run **optional paced automation** (list sprint, hygiene, outreach) when enabled in Clin **Settings**.
 
 ## Load unpacked
 
-1. Run the web app: `cd web && npm run dev` (default `http://127.0.0.1:3000`).
+1. Run the web app from the repo root: `npm install && npm run dev` (default API `http://127.0.0.1:3000`).
 2. Chrome → **Extensions** → enable **Developer mode** → **Load unpacked** → select this `extension/` folder.
-3. Open a LinkedIn profile in a tab, click the Clin icon → **Capture this page**.
+3. Open LinkedIn, open the Clin popup, and connect to your local API.
 
 ## Settings
 
 - **Clin API base** — defaults to `http://127.0.0.1:3000`. Save after editing.
 
+## Capture
+
+Click **Capture this page** on a profile (or use **list sprint** when allowed in Settings) to send visible fields to `POST /api/ingest/capture` or the connections ingest endpoint.
+
 ## Pacing
 
-Before each capture, the background script calls `GET /api/settings` and enforces the same **rolling hourly cap** and **minimum seconds between captures** as the server (with a local pre-check so you see a fast error if you are going too fast).
+The background script calls `GET /api/settings` and applies the same **rolling hourly cap** and **minimum seconds between captures** as the server. Tune limits in the dashboard under **Settings → Pacing**.
 
-Tune limits under **Pacing** in the Clin dashboard (`/settings`).
+## Outreach handoff
 
-## Ready outreach in the popup
+Approve drafts in the dashboard (**Decisions** / campaigns → Ready). The popup loads ready items via `/api/outreach/ready` and campaign APIs. You can **copy drafts**, **open profiles**, **mark sent**, or start a **paced outreach run** when configured.
 
-When you **approve** drafts in the dashboard (`/decisions` → Ready), the extension
-popup loads **`GET /api/outreach/ready`** automatically (and on **Refresh ready
-list**). For each item you can **Copy draft**, **Open profile** (new tab), and
-**Mark sent (manual)** after you paste/send on LinkedIn yourself (same outcome as **Mark sent (manual)** on the campaign member row in the Clin web app).
+## Optional automation (Settings)
 
-Clin still does not send messages for you.
+| Feature | Summary |
+|---------|---------|
+| **List sprint** | Scroll/load a connections list and import visible rows (keep the popup open). |
+| **Hygiene runner** | Open profiles from your local queue on a timer, with a daily cap. |
+| **Outreach run** | Paced campaign outreach steps with confirm/skip. |
 
-## Out of scope (by design)
+Enable each feature in Clin → **Settings**. Start with default caps; increase only if you accept platform and account risk.
 
-- No auto-scroll, scheduled capture, or scripted clicks / typing on LinkedIn.
-- Pacing is for **low-risk human habits**, not “stealth” or evasion.
+## Platform use
 
-If LinkedIn changes the DOM, extraction may return partial fields; check **Captures** in the dashboard and adjust selectors in `background.js` as needed.
+Clin is a user-operated tool. You are responsible for complying with LinkedIn (and any other site’s) terms. See the [root README](../README.md#responsible-use-and-third-party-platforms).
+
+If LinkedIn changes the DOM, extraction may return partial fields — check **Captures** in the dashboard and update selectors in `background.js` as needed.
