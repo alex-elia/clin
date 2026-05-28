@@ -15,7 +15,7 @@ export function ClaimProfileUrlForm() {
   return (
     <form action={formAction} className="space-y-3">
       <label className="block space-y-1 text-sm">
-        <span className="font-medium text-zinc-900 dark:text-zinc-100">
+        <span className="font-medium text-clin-text">
           LinkedIn profile URL
         </span>
         <input
@@ -23,13 +23,13 @@ export function ClaimProfileUrlForm() {
           type="url"
           required
           placeholder="https://www.linkedin.com/in/you"
-          className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-600"
+          className="mt-1 clin-input"
         />
       </label>
       <button
         type="submit"
         disabled={pending}
-        className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 dark:bg-blue-700 dark:hover:bg-blue-600"
+        className="clin-btn-primary disabled:opacity-50"
       >
         {pending ? "Saving…" : "Add profile URL & link as me"}
       </button>

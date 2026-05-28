@@ -13,10 +13,17 @@ export const dynamic = "force-dynamic";
  */
 export async function GET() {
   let dbOk = false;
+  let dbPath: string | null = null;
+  let lastBackupAt: string | null = null;
   try {
     const { getDb } = await import("@/db");
     getDb();
     dbOk = true;
+    const { resolveClinDbPath } = await import("@/lib/dbPathResolve");
+    const { getLastBackupMeta } = await import("@/lib/dataPaths");
+    dbPath = resolveClinDbPath();
+    const backup = await getLastBackupMeta();
+    lastBackupAt = backup.at;
   } catch {
     dbOk = false;
   }
@@ -25,6 +32,8 @@ export async function GET() {
     ok: true,
     service: "clin",
     db: dbOk,
+    dbPath,
+    lastBackupAt,
     time: new Date().toISOString(),
   });
 }

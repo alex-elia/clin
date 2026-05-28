@@ -12,10 +12,14 @@
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "db:repair": "node scripts/repair-clin-db.mjs"
+    "db:repair": "node scripts/repair-clin-db.mjs",
+    "db:export": "node scripts/run-export.mjs",
+    "db:backup": "node scripts/db-backup.mjs",
+    "brand:crop-logo": "node scripts/crop-clin-logo.mjs",
+    "brand:migrate-theme": "node scripts/migrate-clin-theme.mjs"
   },
   "dependencies": {
-    "better-sqlite3": "^12.8.0",
+    "better-sqlite3": "^12.10.0",
     "drizzle-orm": "^0.45.1",
     "next": "15.5.14",
     "react": "^19.0.0",

@@ -1,0 +1,250 @@
+:root {
+  --clin-bg: #ffffff;
+  --clin-surface: #ffffff;
+  --clin-surface-muted: #f4fafa;
+  --clin-border: #dce8ea;
+  /* Navy wordmark from logo */
+  --clin-text: #2d3e50;
+  --clin-muted: #5a7280;
+  /* Teal accent from logo mark */
+  --clin-primary: #4fc3a1;
+  --clin-primary-hover: #3db892;
+  --clin-primary-soft: #e6f9f3;
+  --clin-navy: #2d3e50;
+  --clin-accent: #4fc3a1;
+  --clin-accent-hover: #3db892;
+}
+
+body {
+  color: var(--clin-text);
+  background: var(--clin-bg);
+}
+
+/* —— Layout primitives (prefer these over raw zinc-*) —— */
+
+.clin-page-title {
+  font-size: 1.5rem;
+  line-height: 2rem;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  color: var(--clin-text);
+}
+
+.clin-page-lead {
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.625;
+  color: var(--clin-muted);
+}
+
+.clin-section-title {
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+  font-weight: 600;
+  color: var(--clin-text);
+}
+
+.clin-body {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--clin-muted);
+}
+
+.clin-strong {
+  font-weight: 500;
+  color: var(--clin-text);
+}
+
+.clin-card {
+  border-radius: 0.625rem;
+  border: 1px solid var(--clin-border);
+  background: var(--clin-surface);
+}
+
+.clin-callout {
+  border-radius: 0.625rem;
+  border: 1px solid var(--clin-border);
+  background: var(--clin-surface-muted);
+  padding: 1rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--clin-muted);
+}
+
+.clin-callout strong,
+.clin-callout .clin-strong {
+  color: var(--clin-text);
+}
+
+.clin-input {
+  width: 100%;
+  border-radius: 0.375rem;
+  border: 1px solid var(--clin-border);
+  background: var(--clin-surface);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  color: var(--clin-text);
+}
+
+.clin-input:focus {
+  outline: 2px solid var(--clin-accent);
+  outline-offset: 1px;
+}
+
+.clin-btn-primary {
+  border-radius: 0.5rem;
+  background: var(--clin-primary);
+  color: #fff;
+  font-weight: 500;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+.clin-btn-primary:hover:not(:disabled) {
+  background: var(--clin-primary-hover);
+}
+
+.clin-btn-primary:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.clin-btn-secondary {
+  border-radius: 0.5rem;
+  border: 1px solid var(--clin-border);
+  background: var(--clin-surface);
+  color: var(--clin-text);
+  font-weight: 500;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+.clin-btn-secondary:hover:not(:disabled) {
+  background: var(--clin-primary-soft);
+}
+
+.clin-link {
+  color: var(--clin-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.clin-link:hover {
+  color: var(--clin-accent-hover);
+}
+
+.clin-stat {
+  border-radius: 0.625rem;
+  border: 1px solid var(--clin-border);
+  background: var(--clin-surface-muted);
+  padding: 1rem;
+}
+
+.clin-code {
+  border-radius: 0.25rem;
+  background: var(--clin-primary-soft);
+  padding: 0.125rem 0.375rem;
+  font-size: 0.75rem;
+  color: var(--clin-navy);
+}
+
+.clin-error {
+  border-radius: 0.375rem;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  color: #991b1b;
+}
+
+.clin-field-label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--clin-text);
+}
+
+.clin-field-hint {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--clin-muted);
+}
+
+.clin-select {
+  border-radius: 0.375rem;
+  border: 1px solid var(--clin-border);
+  background: var(--clin-surface);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  color: var(--clin-text);
+}
+
+.clin-table-wrap {
+  overflow-x: auto;
+  border-radius: 0.625rem;
+  border: 1px solid var(--clin-border);
+}
+
+.clin-table {
+  min-width: 100%;
+  text-align: left;
+  font-size: 0.875rem;
+}
+
+.clin-table thead {
+  background: var(--clin-surface-muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: var(--clin-muted);
+}
+
+.clin-table th {
+  padding: 0.5rem 0.75rem;
+}
+
+.clin-table td {
+  padding: 0.5rem 0.75rem;
+}
+
+.clin-table tbody tr {
+  border-top: 1px solid var(--clin-border);
+  background: var(--clin-surface);
+}
+
+.clin-pill {
+  display: inline-block;
+  border-radius: 9999px;
+  background: var(--clin-primary-soft);
+  padding: 0.125rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--clin-navy);
+}
+
+.clin-pill-active {
+  background: var(--clin-primary);
+  color: #fff;
+  border: 1px solid var(--clin-primary);
+}
+
+.clin-tab-active {
+  border-radius: 0.375rem;
+  background: var(--clin-primary);
+  color: #fff;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.875rem;
+}
+
+.clin-tab-inactive {
+  border-radius: 0.375rem;
+  border: 1px solid var(--clin-border);
+  padding: 0.375rem 0.75rem;
+  font-size: 0.875rem;
+  color: var(--clin-muted);
+}
+
+.clin-warning {
+  font-size: 0.75rem;
+  color: #b45309;
+}

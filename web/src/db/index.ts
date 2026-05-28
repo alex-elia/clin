@@ -5,6 +5,7 @@ import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import * as schema from "./schema";
 import { repairClinSqliteSchema } from "./repairSqlite";
+import { resolveClinDbPath } from "@/lib/dbPathResolve";
 
 export * from "./schema";
 export { repairClinSqliteSchema } from "./repairSqlite";
@@ -35,12 +36,7 @@ function migrationsFolder(): string {
  * Single canonical DB path next to the `drizzle/` folder (same app that runs migrations).
  */
 function dbFilePath(): string {
-  const env = process.env.CLIN_DB_PATH?.trim();
-  if (env) {
-    return path.isAbsolute(env) ? env : path.join(process.cwd(), env);
-  }
-  const mig = migrationsFolder();
-  return path.join(path.dirname(mig), "data", "clin.db");
+  return resolveClinDbPath();
 }
 
 /**

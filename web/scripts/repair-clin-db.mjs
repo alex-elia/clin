@@ -1,35 +1,10 @@
 /**
- * Plain Node repair (no Next/webpack). Adds optional hygiene + LLM columns and
- * `automation_log` if missing. Run from `clin/web`: `npm run db:repair`
+ * Plain Node repair (no Next/webpack). Same fixes as web/src/db/repairSqlite.ts.
+ * Run from `clin/web`: `npm run db:repair`
  */
 import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const webRoot = path.join(__dirname, "..");
-
-function migrationsFolder() {
-  const a = path.join(process.cwd(), "drizzle");
-  const b = path.join(process.cwd(), "web", "drizzle");
-  const c = path.join(webRoot, "drizzle");
-  if (fs.existsSync(path.join(a, "meta", "_journal.json"))) return a;
-  if (fs.existsSync(path.join(b, "meta", "_journal.json"))) return b;
-  if (fs.existsSync(path.join(c, "meta", "_journal.json"))) return c;
-  throw new Error(
-    `[clin] Drizzle migrations not found (cwd=${process.cwd()}). cd into clin/web and retry.`,
-  );
-}
-
-function dbFilePath() {
-  const env = process.env.CLIN_DB_PATH?.trim();
-  if (env) {
-    return path.isAbsolute(env) ? env : path.join(process.cwd(), env);
-  }
-  const mig = migrationsFolder();
-  return path.join(path.dirname(mig), "data", "clin.db");
-}
+import { resolveClinDbPath } from "./lib/resolve-db-path.mjs";
 
 function tableExists(db, name) {
   return Boolean(
@@ -52,7 +27,7 @@ function addColumnOrExists(db, sql) {
   }
 }
 
-function repair(db) {
+function repairClinSqliteSchema(db) {
   if (!tableExists(db, "contacts")) {
     console.error("No `contacts` table — open the app once so migrations run.");
     process.exit(1);
@@ -105,13 +80,86 @@ function repair(db) {
     CREATE INDEX IF NOT EXISTS automation_log_created_idx ON automation_log (created_at);
     CREATE INDEX IF NOT EXISTS automation_log_contact_idx ON automation_log (contact_id);
   `);
+
+  if (tableExists(db, "outreach_campaigns")) {
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaigns ADD COLUMN writer_instructions text",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaigns ADD COLUMN system_prompt_override text",
+    );
+  }
+
+  if (tableExists(db, "outreach_campaign_members")) {
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaign_members ADD COLUMN message_sent_at integer",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaign_members ADD COLUMN message_reply_outcome text NOT NULL DEFAULT 'unknown'",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaign_members ADD COLUMN message_outcome_note text",
+    );
+  }
+
+  if (!tableExists(db, "inbox_thread_state")) {
+    db.exec(`
+      CREATE TABLE inbox_thread_state (
+        id text PRIMARY KEY NOT NULL,
+        contact_id text NOT NULL,
+        thread_key text NOT NULL,
+        status text NOT NULL DEFAULT 'open',
+        snoozed_until integer,
+        note text,
+        updated_at integer NOT NULL,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+      );
+      CREATE UNIQUE INDEX inbox_thread_contact_key ON inbox_thread_state (contact_id, thread_key);
+      CREATE INDEX inbox_thread_status_idx ON inbox_thread_state (status);
+    `);
+  }
+
+  if (!tableExists(db, "extension_snapshots")) {
+    db.exec(`
+      CREATE TABLE extension_snapshots (
+        id text PRIMARY KEY NOT NULL,
+        kind text NOT NULL,
+        source_url text NOT NULL,
+        payload_json text NOT NULL,
+        captured_at integer NOT NULL
+      );
+      CREATE INDEX ext_snap_kind_idx ON extension_snapshots (kind);
+      CREATE INDEX ext_snap_captured_idx ON extension_snapshots (captured_at);
+    `);
+  }
+
+  if (!tableExists(db, "outreach_send_log")) {
+    db.exec(`
+      CREATE TABLE outreach_send_log (
+        id text PRIMARY KEY NOT NULL,
+        campaign_member_id text,
+        contact_id text NOT NULL,
+        action text NOT NULL,
+        outcome text NOT NULL,
+        error text,
+        created_at integer NOT NULL
+      );
+      CREATE INDEX outreach_send_log_created_idx ON outreach_send_log (created_at);
+      CREATE INDEX outreach_send_log_contact_idx ON outreach_send_log (contact_id);
+    `);
+  }
 }
 
-const file = dbFilePath();
-fs.mkdirSync(path.dirname(file), { recursive: true });
+const file = resolveClinDbPath();
+fs.mkdirSync(file.replace(/[/\\][^/\\]+$/, ""), { recursive: true });
 const db = new Database(file);
 try {
-  repair(db);
+  repairClinSqliteSchema(db);
   console.log(`[clin] Repaired SQLite: ${file}`);
 } finally {
   db.close();

@@ -18,6 +18,13 @@ import { updatePaceSettings } from "@/lib/pace";
 import { SCORE_RULE_VERSION, scoreContact } from "@/lib/scoring";
 import { runSelfGoalsAndPositioningLlm } from "@/lib/userProfileLlm";
 import { updateAutopilotSettings } from "@/lib/autopilot";
+import { setGlobalWriterInstructions } from "@/lib/brand";
+import { backupAndRecord } from "@/lib/dataBackup";
+import { setStoredDbDirectory } from "@/lib/dataPaths";
+import {
+  updateOutreachSendSettings,
+  type OutreachSendSettingsPatch,
+} from "@/lib/outreachSend";
 import { generateOutreachDraftForMember } from "@/lib/outreachCampaignDraft";
 import {
   addContactsFromSegment,
@@ -33,6 +40,10 @@ import {
   updateOutreachCampaign,
 } from "@/lib/outreachCampaigns";
 import { updateUserContext } from "@/lib/userContext";
+import {
+  upsertInboxThreadState,
+  type InboxThreadStatus,
+} from "@/lib/inbox";
 
 export async function recomputeAllScores() {
   const db = getDb();
@@ -411,6 +422,25 @@ export async function markCampaignMemberSentAction(formData: FormData) {
   const m = await findMemberById(memberId);
   if (!m || m.campaignId !== campaignId) return;
   await updateMemberStatus(memberId, "sent");
+  const { setMemberMessageSentAt } = await import("@/lib/campaignMemberOutreach");
+  await setMemberMessageSentAt(memberId);
+  revalidatePath(`/campaigns/${campaignId}`);
+}
+
+export async function updateMemberReplyOutcomeAction(formData: FormData) {
+  const campaignId = String(formData.get("campaignId") ?? "").trim();
+  const memberId = String(formData.get("memberId") ?? "").trim();
+  const replyOutcome = String(formData.get("replyOutcome") ?? "unknown").trim();
+  const noteRaw = String(formData.get("messageOutcomeNote") ?? "").trim();
+  if (!campaignId || !memberId) return;
+  const m = await findMemberById(memberId);
+  if (!m || m.campaignId !== campaignId) return;
+  const allowed = new Set(["unknown", "replied", "no_reply", "not_applicable"]);
+  const outcome = allowed.has(replyOutcome) ? replyOutcome : "unknown";
+  const { updateMemberReplyOutcome } = await import(
+    "@/lib/campaignMemberOutreach"
+  );
+  await updateMemberReplyOutcome(memberId, outcome, noteRaw || null);
   revalidatePath(`/campaigns/${campaignId}`);
 }
 
@@ -431,6 +461,34 @@ export async function removeMemberFromCampaignAction(formData: FormData) {
   await removeMemberFromCampaign(campaignId, memberId);
   revalidatePath(`/campaigns/${campaignId}`);
   revalidatePath("/campaigns");
+}
+
+export async function updateInboxThreadAction(formData: FormData) {
+  const contactId = String(formData.get("contactId") ?? "").trim();
+  const threadKey = String(formData.get("threadKey") ?? "").trim();
+  const statusRaw = String(formData.get("status") ?? "").trim();
+  const note = String(formData.get("note") ?? "").trim();
+  if (!contactId || !threadKey) return;
+  const status = statusRaw as InboxThreadStatus;
+  if (status !== "open" && status !== "done" && status !== "snoozed") return;
+
+  let snoozedUntil: Date | null = null;
+  if (status === "snoozed") {
+    const raw = formData.get("snoozeDays");
+    const n =
+      typeof raw === "string" && raw.trim() ? Number(raw) : 1;
+    const days = Number.isFinite(n) && n > 0 ? Math.min(n, 30) : 1;
+    snoozedUntil = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+  }
+
+  await upsertInboxThreadState({
+    contactId,
+    threadKey,
+    status,
+    snoozedUntil,
+    note: note || null,
+  });
+  revalidatePath("/inbox");
 }
 
 const CONTACT_SEGMENT_OVERRIDES = new Set([
@@ -456,4 +514,55 @@ export async function setContactSegmentOverrideAction(formData: FormData) {
     .where(eq(contacts.id, contactId));
   revalidatePath(`/contacts/${contactId}`);
   revalidatePath("/contacts");
+}
+
+export async function saveDataDirectoryForm(formData: FormData) {
+  const raw = formData.get("dbDirectory");
+  const dir =
+    typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : null;
+  await setStoredDbDirectory(dir);
+  revalidatePath("/settings");
+}
+
+export async function triggerBackupNow(): Promise<
+  { ok: true; path: string } | { ok: false; error: string }
+> {
+  try {
+    const result = await backupAndRecord();
+    revalidatePath("/settings");
+    return { ok: true, path: result.path };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Backup failed",
+    };
+  }
+}
+
+export async function saveOutreachSendForm(formData: FormData) {
+  const readInt = (key: string) => {
+    const raw = formData.get(key);
+    if (typeof raw !== "string" || raw.trim() === "") return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const patch: OutreachSendSettingsPatch = {
+    enabled: formData.get("outreachEnabled") === "on",
+    sendMode:
+      formData.get("outreachSendMode") === "auto" ? "auto" : "manual_confirm",
+    minSecondsBetweenSends: readInt("minSecondsBetweenSends"),
+    sendMaxPerDay: readInt("sendMaxPerDay"),
+    sendJitterPercent: readInt("sendJitterPercent"),
+  };
+  await updateOutreachSendSettings(patch);
+  revalidatePath("/settings");
+}
+
+export async function saveGlobalWriterForm(formData: FormData) {
+  const raw = formData.get("globalWriterInstructions");
+  const text =
+    typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : null;
+  await setGlobalWriterInstructions(text);
+  revalidatePath("/me");
+  revalidatePath("/campaigns");
 }

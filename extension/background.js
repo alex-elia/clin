@@ -143,6 +143,42 @@ function attachCampaignIdToPayload(payload, ctx) {
   return { ...payload, outreachCampaignId: id.trim() };
 }
 
+const IMPORT_CAMPAIGN_KEY = "clinImportCampaignChoice";
+
+async function applyOutreachCampaignId(payload) {
+  const { [IMPORT_CAMPAIGN_KEY]: choice } = await chrome.storage.sync.get([
+    IMPORT_CAMPAIGN_KEY,
+  ]);
+  const pick = typeof choice === "string" ? choice.trim() : "";
+  if (pick && pick !== "__none__") {
+    if (pick === "__clin_default__") {
+      const base = (await getApiBase()).replace(/\/$/, "");
+      const ctx = await getExtensionCampaignContext(base);
+      const id = ctx?.captureTargetCampaignId;
+      if (typeof id === "string" && id.trim()) {
+        return { ...payload, outreachCampaignId: id.trim() };
+      }
+    } else {
+      return { ...payload, outreachCampaignId: pick };
+    }
+  }
+  const base = (await getApiBase()).replace(/\/$/, "");
+  const ctx = await getExtensionCampaignContext(base);
+  return attachCampaignIdToPayload(payload, ctx);
+}
+
+function isMessagingThreadUrl(url) {
+  try {
+    const u = new URL(url);
+    return (
+      u.hostname.endsWith("linkedin.com") &&
+      /\/messaging\/thread\//i.test(u.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isLinkedInProfilePageUrl(url) {
   try {
     const u = new URL(url);
@@ -168,6 +204,354 @@ function isConnectionsListPageUrl(url) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Page world — 1:1 messaging thread visible bubbles.
+ */
+function scrapeMessagingThread() {
+  function clean(s) {
+    if (!s) return undefined;
+    const t = String(s).replace(/\s+/g, " ").trim();
+    return t.length ? t : undefined;
+  }
+
+  function firstParticipantProfileFrom(root) {
+    if (!root) return { url: undefined, name: undefined };
+    const links = root.querySelectorAll('a[href*="/in/"]');
+    for (const a of links) {
+      const raw = a.getAttribute("href");
+      if (!raw || raw.includes("/edit/")) continue;
+      try {
+        const abs = new URL(raw, "https://www.linkedin.com");
+        if (!abs.hostname.endsWith("linkedin.com")) continue;
+        const m = abs.pathname.match(/^\/in\/([^/?#]+)\/?/i);
+        if (!m?.[1]) continue;
+        return {
+          url: `https://www.linkedin.com/in/${m[1]}/`,
+          name: clean(a.getAttribute("aria-label")) || clean(a.textContent),
+        };
+      } catch {
+        continue;
+      }
+    }
+    return { url: undefined, name: undefined };
+  }
+
+  const sourceUrl = window.location.href;
+  let messagingThreadId;
+  try {
+    const u = new URL(sourceUrl);
+    const m = u.pathname.match(/\/messaging\/thread\/([^/?#]+)/i);
+    if (m?.[1]) messagingThreadId = decodeURIComponent(m[1]);
+  } catch {
+    /* ignore */
+  }
+
+  const main =
+    document.querySelector(".msg-overlay-conversation-bubble") ||
+    document.querySelector("[class*='msg-overlay-conversation']") ||
+    document.querySelector('main[role="main"]') ||
+    document.querySelector("main") ||
+    document.body;
+
+  const header =
+    main.querySelector(".msg-overlay-conversation-bubble-header") ||
+    main.querySelector(".msg-overlay-bubble-header") ||
+    main.querySelector("[data-test-conversation-header]") ||
+    main.querySelector(".msg-thread-modern-header") ||
+    main.querySelector("header");
+
+  let messagingParticipantProfileUrl;
+  let messagingParticipantName;
+  const headerPick = firstParticipantProfileFrom(header);
+  if (headerPick.url) {
+    messagingParticipantProfileUrl = headerPick.url;
+    messagingParticipantName = headerPick.name;
+  }
+  if (!messagingParticipantProfileUrl) {
+    const listRoot =
+      document.querySelector("ul.msg-s-message-list") ||
+      document.querySelector(".msg-s-message-list");
+    const bubble =
+      listRoot?.closest(".msg-overlay-conversation-bubble") ||
+      listRoot?.closest("section") ||
+      main;
+    const bubblePick = firstParticipantProfileFrom(bubble);
+    messagingParticipantProfileUrl = bubblePick.url;
+    messagingParticipantName = bubblePick.name ?? messagingParticipantName;
+  }
+
+  const messagingMessages = [];
+  function pushMsg(from, body) {
+    const b = clean(body);
+    if (!b || b.length < 2) return;
+    messagingMessages.push({ from, body: b });
+  }
+
+  const list =
+    document.querySelector("ul.msg-s-message-list") ||
+    document.querySelector(".msg-s-message-list");
+  if (list) {
+    const events = list.querySelectorAll(
+      "li.msg-s-message-list__event, li[class*='msg-s-message-list__event']",
+    );
+    events.forEach((li) => {
+      const group =
+        li.querySelector(".msg-s-message-group") ||
+        li.querySelector("[class*='msg-s-message-group']");
+      if (!group) return;
+      const isSent =
+        group.classList.contains("msg-s-message-group--sent") ||
+        /\bmsg-s-message-group--sent\b/.test(group.className);
+      const bodyEl =
+        group.querySelector(".msg-s-event-listitem__body") ||
+        group.querySelector(".msg-s-message-group__content") ||
+        group.querySelector("[class*='message-bubble']") ||
+        group;
+      pushMsg(isSent ? "me" : "them", bodyEl.innerText || "");
+    });
+  }
+
+  const ef = {
+    messagingParticipantProfileUrl,
+    messagingThreadId,
+    messagingParticipantName,
+    messagingMessages,
+  };
+  const fieldPresence = {
+    messagingParticipantProfileUrl: Boolean(messagingParticipantProfileUrl),
+    messagingMessages: messagingMessages.length > 0,
+  };
+  const filled = Object.values(fieldPresence).filter(Boolean).length;
+  const confidence = filled >= 2 ? 0.85 : filled * 0.4;
+
+  return {
+    schemaVersion: "1",
+    pageType: "messaging",
+    sourceUrl,
+    capturedAt: new Date().toISOString(),
+    confidence,
+    extractedFields: ef,
+    fieldPresence,
+  };
+}
+
+/**
+ * Page world — structured scrape for LinkedIn creator analytics (FR/EN).
+ */
+function scrapeLinkedInAnalyticsStructured() {
+  function clean(s) {
+    if (!s) return "";
+    return String(s).replace(/\s+/g, " ").trim();
+  }
+  function parseNum(raw) {
+    if (!raw) return null;
+    let t = String(raw).replace(/[\u00A0\u202F\s]/g, "");
+    if (/^\d+,\d+$/.test(t)) t = t.replace(",", ".");
+    else t = t.replace(/,/g, "");
+    const n = Number(t);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  }
+  function metricAfterLabel(block, labelRe) {
+    const m = block.match(
+      new RegExp(`${labelRe.source}\\s*\\n\\s*([\\d][\\d\\s\\u202F,.]*)`, "i"),
+    );
+    if (!m?.[1]) return null;
+    return parseNum(m[1].split("\n")[0].trim());
+  }
+  function metricBeforeLabel(block, labelRe) {
+    const m = block.match(
+      new RegExp(`([\\d][\\d\\s\\u202F,.]*)\\s*\\n\\s*${labelRe.source}`, "i"),
+    );
+    if (!m?.[1]) return null;
+    return parseNum(m[1].split("\n")[0].trim());
+  }
+  function pickMetric(block, labelRe) {
+    return metricAfterLabel(block, labelRe) ?? metricBeforeLabel(block, labelRe);
+  }
+  function extractPostMetrics(text) {
+    const impressions =
+      (text.match(/(?:▲|▼)?\s*([\d\s\u202F,.]+)\s+Impressions\b/i) ||
+        text.match(/(?:▲|▼)?\s*([\d\s\u202F,.]+)\s*\n\s*Impressions\b/i) ||
+        text.match(/\n\s*([\d\s\u202F,.]+)\s*\n\s*Impressions\b/i))?.[1];
+    const comM = text.match(/(\d+)\s*commentaires?\b/i);
+    const comments = comM ? parseNum(comM[1]) : null;
+    let reactions = null;
+    const rbc = text.match(/\n(\d+)\s*\n\s*\d+\s*commentaires?\b/i);
+    if (rbc) reactions = parseNum(rbc[1]);
+    return {
+      impressions: impressions ? parseNum(impressions) : null,
+      reactions,
+      comments,
+    };
+  }
+
+  const main =
+    document.querySelector("main") ||
+    document.querySelector('[role="main"]') ||
+    document.body;
+  const full = main?.innerText || "";
+  const rankPeriodM = full.match(
+    /(?:p[eé]riode allant du|period from|from)\s+(.+?)\s+(?:au|to)\s+(.+?)(?:\n|$)/i,
+  );
+  const rankPeriod = rankPeriodM
+    ? `${clean(rankPeriodM[1])} – ${clean(rankPeriodM[2])}`
+    : null;
+
+  let discoveryText = "";
+  for (const el of main.querySelectorAll("section, div, article")) {
+    const t = el.innerText || "";
+    if (
+      /D[eé]couverte|Discovery/i.test(t) &&
+      /Membres touch|Members reached/i.test(t) &&
+      t.length > 20 &&
+      t.length < 4000
+    ) {
+      if (!discoveryText || t.length < discoveryText.length) discoveryText = t;
+    }
+  }
+  const overviewBlock = discoveryText || full;
+  const trends = [...overviewBlock.matchAll(/(?:▼|▲)?\s*([\d,.]+)\s*%[^\n]*/gi)].map(
+    (m) => m[1],
+  );
+  const domOverview = {
+    rankPeriod,
+    impressions: pickMetric(overviewBlock, /Impressions/),
+    membersReached: pickMetric(
+      overviewBlock,
+      /(?:Membres touch[eé]s|Members reached)/,
+    ),
+    impressionsTrend: trends[0] ? `${trends[0]}%` : null,
+    membersTrend: trends[1] ? `${trends[1]}%` : null,
+  };
+
+  const rawCards = [...main.querySelectorAll("div, li, article")].filter((el) => {
+    const t = el.innerText || "";
+    return (
+      /a publi[eé] ceci •|posted this •/i.test(t) &&
+      /\d+\s*commentaires?|\d+\s*comments?/i.test(t) &&
+      /Impressions/i.test(t) &&
+      t.length > 60 &&
+      t.length < 8000
+    );
+  });
+  const innermost = rawCards.filter(
+    (el) => !rawCards.some((other) => other !== el && el.contains(other)),
+  );
+  const domTopPosts = [];
+  const seenKeys = new Set();
+  for (const card of innermost.slice(0, 40)) {
+    const t = card.innerText || "";
+    const header = t.match(/a publi[eé] ceci •\s*([^\n]+)|posted this •\s*([^\n]+)/i);
+    const ageLabel = clean(header?.[1] || header?.[2] || "") || null;
+    const metrics = extractPostMetrics(t);
+    if (metrics.impressions == null && metrics.comments == null) continue;
+    const key = `${ageLabel}:${metrics.impressions}:${metrics.comments}`;
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    domTopPosts.push({
+      ageLabel,
+      impressions: metrics.impressions,
+      reactions: metrics.reactions,
+      comments: metrics.comments,
+      preview: clean(t.slice(0, 220)),
+    });
+  }
+  return { domOverview, domTopPosts };
+}
+
+function scrapeExtensionSnapshot(kindRaw) {
+  const kind =
+    typeof kindRaw === "string" ? kindRaw : "linkedin_messages_inbox_visible";
+
+  function clean(s) {
+    if (!s) return "";
+    return String(s).replace(/\s+/g, " ").trim();
+  }
+
+  const sourceUrl = window.location.href;
+
+  function mainDump(maxChars) {
+    const main =
+      document.querySelector("main") ||
+      document.querySelector('[role="main"]') ||
+      document.body;
+    let t = clean(main?.innerText || "");
+    if (t.length > maxChars) t = `${t.slice(0, maxChars)}…`;
+    return t;
+  }
+
+  const capturedAt = new Date().toISOString();
+
+  if (kind === "linkedin_messages_inbox_visible") {
+    function profileUrlFromTile(el) {
+      const links = el.querySelectorAll('a[href*="/in/"]');
+      for (const a of links) {
+        const raw = a.getAttribute("href");
+        if (!raw || raw.includes("/edit/")) continue;
+        try {
+          const abs = new URL(raw, "https://www.linkedin.com");
+          const m = abs.pathname.match(/^\/in\/([^/?#]+)\/?/i);
+          if (m?.[1]) return `https://www.linkedin.com/in/${m[1]}/`;
+        } catch {
+          continue;
+        }
+      }
+      return undefined;
+    }
+    const selectors = [
+      ".msg-conversation-card",
+      "li.msg-conversation-listitem",
+      "[class*='conversation-list-item']",
+    ];
+    const tiles = [];
+    const seen = new Set();
+    for (const sel of selectors) {
+      document.querySelectorAll(sel).forEach((el) => {
+        if (tiles.length >= 160) return;
+        const t = clean(el.innerText);
+        if (!t || t.length < 20) return;
+        const key = t.slice(0, 120);
+        if (seen.has(key)) return;
+        seen.add(key);
+        const tile = { preview: t.slice(0, 1200), len: t.length };
+        const profileUrl = profileUrlFromTile(el);
+        if (profileUrl) tile.profileUrl = profileUrl;
+        tiles.push(tile);
+      });
+    }
+    const payload =
+      tiles.length === 0
+        ? {
+            fallbackPlainText: mainDump(48000),
+            note: "No conversation rows matched — dumped main text.",
+          }
+        : { tiles, tileCount: tiles.length };
+    return { kind, sourceUrl, capturedAt, payload };
+  }
+
+  if (kind === "linkedin_post_analytics_visible") {
+    const structured = scrapeLinkedInAnalyticsStructured();
+    return {
+      kind,
+      sourceUrl,
+      capturedAt,
+      payload: {
+        title: clean(document.title),
+        plainText: mainDump(80000),
+        domOverview: structured.domOverview,
+        domTopPosts: structured.domTopPosts,
+      },
+    };
+  }
+
+  return {
+    kind,
+    sourceUrl,
+    capturedAt,
+    payload: { error: `Unknown kind "${kind}".` },
+  };
 }
 
 /**
@@ -793,6 +1177,48 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
       const root = base.replace(/\/$/, "");
 
+      if (isMessagingThreadUrl(tab.url)) {
+        const [{ result: msgPayload }] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: scrapeMessagingThread,
+        });
+        if (
+          !msgPayload?.extractedFields?.messagingParticipantProfileUrl ||
+          !msgPayload?.extractedFields?.messagingMessages?.length
+        ) {
+          sendResponse({
+            ok: false,
+            error:
+              "Could not read this thread — scroll messages into view and try again.",
+          });
+          return;
+        }
+        const capBody = await applyOutreachCampaignId(msgPayload);
+        const res = await fetch(`${root}/api/ingest/capture`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(capBody),
+        });
+        const text = await res.text();
+        let json;
+        try {
+          json = JSON.parse(text);
+        } catch {
+          json = { raw: text };
+        }
+        if (!res.ok) {
+          sendResponse({
+            ok: false,
+            error: json?.error || text || `HTTP ${res.status}`,
+          });
+          return;
+        }
+        await recordBatchCaptureSuccess(pruned, 1);
+        await chrome.storage.local.remove(LAST_ERROR_KEY);
+        sendResponse({ ok: true, data: json, mode: "messaging" });
+        return;
+      }
+
       if (isConnectionsListPageUrl(tab.url)) {
         const [{ result: listPayload }] = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
@@ -807,8 +1233,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         }
 
-        const ctx = await getExtensionCampaignContext(root);
-        const listBody = attachCampaignIdToPayload(listPayload, ctx);
+        const listBody = await applyOutreachCampaignId(listPayload);
         const res = await fetch(`${root}/api/ingest/connections-page`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -856,8 +1281,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
       }
 
-      const ctx = await getExtensionCampaignContext(root);
-      const capBody = attachCampaignIdToPayload(result, ctx);
+      const capBody = await applyOutreachCampaignId(result);
       const res = await fetch(`${root}/api/ingest/capture`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1208,6 +1632,293 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }
   })();
 
+  return true;
+});
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== "CLIN_MANUAL_SNAPSHOT") return;
+
+  (async () => {
+    try {
+      const [tab] = await chrome.tabs.query({
+        active: true,
+        currentWindow: true,
+      });
+      if (!tab?.id || !tab.url?.includes("linkedin.com")) {
+        sendResponse({ ok: false, error: "Open a LinkedIn tab first." });
+        return;
+      }
+      const kind =
+        msg.kind === "linkedin_post_analytics_visible"
+          ? "linkedin_post_analytics_visible"
+          : "linkedin_messages_inbox_visible";
+      const [{ result: snap }] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: scrapeExtensionSnapshot,
+        args: [kind],
+      });
+      if (!snap?.kind) {
+        sendResponse({ ok: false, error: "Snapshot returned nothing." });
+        return;
+      }
+      const base = (await getApiBase()).replace(/\/$/, "");
+      const res = await fetch(`${base}/api/extension/snapshot`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          schemaVersion: "1",
+          kind: snap.kind,
+          sourceUrl: snap.sourceUrl,
+          capturedAt: snap.capturedAt,
+          payload: snap.payload,
+        }),
+      });
+      const text = await res.text();
+      let json = {};
+      try {
+        json = text ? JSON.parse(text) : {};
+      } catch {
+        json = { error: text };
+      }
+      if (!res.ok) {
+        sendResponse({
+          ok: false,
+          error: json?.error || text || `HTTP ${res.status}`,
+        });
+        return;
+      }
+      sendResponse({ ok: true, id: json.id, kind: snap.kind });
+    } catch (e) {
+      sendResponse({
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  })();
+
+  return true;
+});
+
+const OUTREACH_RUN_KEY = "clinOutreachRunActive";
+
+/** Page world — best-effort DM composer fill on LinkedIn messaging. */
+function clinOutreachFillComposer(draftText, autoSend) {
+  const editor =
+    document.querySelector('[contenteditable="true"][role="textbox"]') ||
+    document.querySelector(".msg-form__contenteditable") ||
+    document.querySelector('[data-artdeco-is-focused="true"]');
+  if (!editor) {
+    return { ok: false, error: "Composer not found — open the message thread first." };
+  }
+  editor.focus();
+  try {
+    document.execCommand("selectAll", false, null);
+    document.execCommand("insertText", false, draftText);
+  } catch {
+    editor.textContent = draftText;
+  }
+  if (!autoSend) {
+    return { ok: true, sent: false, needsConfirm: true };
+  }
+  const sendBtn =
+    document.querySelector("button.msg-form__send-button") ||
+    [...document.querySelectorAll("button")].find((b) =>
+      /^(send|envoyer)$/i.test((b.textContent || "").trim()),
+    );
+  if (!sendBtn) {
+    return { ok: true, sent: false, needsConfirm: true, error: "Send button not found" };
+  }
+  sendBtn.click();
+  return { ok: true, sent: true };
+}
+
+async function outreachRunStep(tabId, base) {
+  const root = base.replace(/\/$/, "");
+  const nextRes = await fetch(`${root}/api/extension/outreach-queue/next`);
+  const nextJson = await nextRes.json().catch(() => ({}));
+  if (!nextRes.ok) {
+    return { ok: false, error: nextJson?.error || `HTTP ${nextRes.status}` };
+  }
+  if (!nextJson.item) {
+    return {
+      ok: true,
+      done: true,
+      reason: nextJson.reason || "queue_empty",
+      waitMs: nextJson.waitMs || 0,
+    };
+  }
+
+  const item = nextJson.item;
+  const url = item.linkedinUrl;
+  if (!url) {
+    await fetch(`${root}/api/extension/outreach-queue/ack`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        memberId: item.memberId,
+        outcome: "failed",
+        action: "dm",
+        error: "missing_linkedin_url",
+      }),
+    });
+    return { ok: true, skipped: true };
+  }
+
+  await chrome.tabs.update(tabId, { url });
+  await new Promise((r) => setTimeout(r, 4500));
+
+  const autoSend = item.sendMode === "auto";
+  const [{ result: fill }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: clinOutreachFillComposer,
+    args: [item.draftOutreach || "", autoSend],
+  });
+
+  if (!fill?.ok) {
+    return {
+      ok: true,
+      item,
+      needsConfirm: true,
+      hint: fill?.error || "Open messaging for this contact, then confirm send.",
+    };
+  }
+
+  if (fill.sent) {
+    await fetch(`${root}/api/extension/outreach-queue/ack`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        memberId: item.memberId,
+        outcome: "sent",
+        action: "dm",
+      }),
+    });
+    return { ok: true, item, sent: true };
+  }
+
+  return {
+    ok: true,
+    item,
+    needsConfirm: true,
+    hint: "Draft inserted (or profile opened). Click Send on LinkedIn, then confirm in Clin.",
+  };
+}
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === "CLIN_OUTREACH_RUN_STOP") {
+    chrome.storage.local.set({ [OUTREACH_RUN_KEY]: false });
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (msg?.type === "CLIN_OUTREACH_RUN_STEP") {
+    (async () => {
+      try {
+        const base = await getApiBase();
+        const stored = await chrome.storage.local.get([OUTREACH_RUN_KEY]);
+        if (!stored[OUTREACH_RUN_KEY]) {
+          sendResponse({ ok: false, error: "Outreach run stopped." });
+          return;
+        }
+        const [tab] = await chrome.tabs.query({
+          active: true,
+          currentWindow: true,
+        });
+        if (!tab?.id) {
+          sendResponse({ ok: false, error: "No active tab." });
+          return;
+        }
+        const step = await outreachRunStep(tab.id, base);
+        sendResponse(step);
+      } catch (e) {
+        sendResponse({
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    })();
+    return true;
+  }
+  if (msg?.type === "CLIN_OUTREACH_CONFIRM_SENT") {
+    (async () => {
+      try {
+        const base = await getApiBase();
+        const root = base.replace(/\/$/, "");
+        const memberId = msg.memberId;
+        if (!memberId) {
+          sendResponse({ ok: false, error: "memberId required" });
+          return;
+        }
+        await fetch(`${root}/api/extension/outreach-queue/ack`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            memberId,
+            outcome: "sent",
+            action: "dm",
+          }),
+        });
+        sendResponse({ ok: true });
+      } catch (e) {
+        sendResponse({
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    })();
+    return true;
+  }
+  return false;
+});
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== "CLIN_OUTREACH_RUN_START") return false;
+  (async () => {
+    try {
+      await chrome.storage.local.set({ [OUTREACH_RUN_KEY]: true });
+      const base = await getApiBase();
+      let steps = 0;
+      const maxSteps = Math.min(20, Number(msg.maxSteps) || 5);
+      while (steps < maxSteps) {
+        const stored = await chrome.storage.local.get([OUTREACH_RUN_KEY]);
+        if (!stored[OUTREACH_RUN_KEY]) break;
+        const [tab] = await chrome.tabs.query({
+          active: true,
+          currentWindow: true,
+        });
+        if (!tab?.id) {
+          sendResponse({ ok: false, error: "No active tab." });
+          return;
+        }
+        const step = await outreachRunStep(tab.id, base);
+        if (step.done) {
+          sendResponse({ ok: true, done: true, reason: step.reason });
+          return;
+        }
+        if (step.waitMs && step.waitMs > 0) {
+          await new Promise((r) => setTimeout(r, Math.min(step.waitMs, 120000)));
+        }
+        if (step.needsConfirm) {
+          sendResponse({
+            ok: true,
+            paused: true,
+            item: step.item,
+            hint: step.hint,
+          });
+          return;
+        }
+        steps += 1;
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      sendResponse({ ok: true, done: true, steps });
+    } catch (e) {
+      sendResponse({
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      await chrome.storage.local.set({ [OUTREACH_RUN_KEY]: false });
+    }
+  })();
   return true;
 });
 

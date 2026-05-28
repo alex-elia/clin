@@ -125,6 +125,48 @@ export const notes = sqliteTable(
   (t) => [index("notes_contact_idx").on(t.contactId)],
 );
 
+/** Per (contact, thread) triage — linked to captures with page_type = messaging. */
+export const inboxThreadState = sqliteTable(
+  "inbox_thread_state",
+  {
+    id: text("id").primaryKey(),
+    contactId: text("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    threadKey: text("thread_key").notNull(),
+    status: text("status").notNull().default("open"),
+    snoozedUntil: integer("snoozed_until", { mode: "timestamp_ms" }),
+    note: text("note"),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex("inbox_thread_contact_key").on(t.contactId, t.threadKey),
+    index("inbox_thread_status_idx").on(t.status),
+  ],
+);
+
+/** Visible-page dumps from manual extension tasks (messages list, creator analytics UI, etc.). */
+export const extensionSnapshots = sqliteTable(
+  "extension_snapshots",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    payloadJson: text("payload_json", { mode: "json" })
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    capturedAt: integer("captured_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("ext_snap_kind_idx").on(t.kind),
+    index("ext_snap_captured_idx").on(t.capturedAt),
+  ],
+);
+
 export const actionQueue = sqliteTable(
   "action_queue",
   {
@@ -258,6 +300,16 @@ export const userContextRelations = relations(userContext, ({ one }) => ({
   }),
 }));
 
+export const inboxThreadStateRelations = relations(
+  inboxThreadState,
+  ({ one }) => ({
+    contact: one(contacts, {
+      fields: [inboxThreadState.contactId],
+      references: [contacts.id],
+    }),
+  }),
+);
+
 export const contactsRelations = relations(contacts, ({ many, one }) => ({
   captures: many(captureSessions),
   snapshots: many(contactSnapshots),
@@ -266,6 +318,7 @@ export const contactsRelations = relations(contacts, ({ many, one }) => ({
   queueItems: many(actionQueue),
   automationLogs: many(automationLog),
   outreachCampaignMembers: many(outreachCampaignMembers),
+  inboxThreads: many(inboxThreadState),
   linkedAsSelfOwner: one(userContext, {
     fields: [contacts.id],
     references: [userContext.selfContactId],

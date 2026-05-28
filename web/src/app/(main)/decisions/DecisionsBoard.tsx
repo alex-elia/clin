@@ -88,14 +88,14 @@ export function DecisionsBoard({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap gap-2 border-b border-zinc-200 pb-3 dark:border-zinc-800">
+      <div className="flex flex-wrap gap-2 border-b border-clin-border pb-3">
         <button
           type="button"
           onClick={() => setTab("decide")}
           className={`rounded-md px-3 py-1.5 text-sm font-medium ${
             tab === "decide"
-              ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-              : "text-zinc-600 dark:text-zinc-400"
+              ? "clin-tab-active"
+              : "text-clin-muted"
           }`}
         >
           Decide ({decideCount})
@@ -105,22 +105,22 @@ export function DecisionsBoard({
           onClick={() => setTab("ready")}
           className={`rounded-md px-3 py-1.5 text-sm font-medium ${
             tab === "ready"
-              ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-              : "text-zinc-600 dark:text-zinc-400"
+              ? "clin-tab-active"
+              : "text-clin-muted"
           }`}
         >
           Ready to send ({readyCount})
         </button>
       </div>
 
-      <p className="text-sm text-zinc-600 dark:text-zinc-400">
+      <p className="text-sm text-clin-muted">
         {tab === "decide"
           ? "Edit drafts and approve when you are happy. Nothing is sent automatically — you paste on LinkedIn yourself. The extension can read approved rows from GET /api/outreach/ready."
           : "These are approved in Clin. Open LinkedIn, paste your draft, send manually, then mark sent here."}
       </p>
 
       {list.length === 0 ? (
-        <p className="text-sm text-zinc-500">
+        <p className="text-sm text-clin-muted">
           {tab === "decide"
             ? "No items waiting for a decision."
             : "Nothing in the ready list. Approve drafts in the Decide tab first."}
@@ -130,15 +130,15 @@ export function DecisionsBoard({
           {list.map((it) => (
             <li
               key={it.queueId}
-              className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+              className="clin-card p-5"
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h3 className="font-semibold text-zinc-900 dark:text-zinc-50">
+                  <h3 className="font-semibold text-clin-text">
                     {it.fullName ?? "Unknown"}
                   </h3>
-                  <p className="text-xs text-zinc-500">{it.company ?? "—"}</p>
-                  <p className="mt-1 line-clamp-2 text-sm text-zinc-600 dark:text-zinc-400">
+                  <p className="text-xs text-clin-muted">{it.company ?? "—"}</p>
+                  <p className="mt-1 line-clamp-2 text-sm text-clin-muted">
                     {it.headline ?? ""}
                   </p>
                 </div>
@@ -146,7 +146,7 @@ export function DecisionsBoard({
                   href={it.linkedinUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="shrink-0 text-xs text-blue-600 underline dark:text-blue-400"
+                  className="shrink-0 text-xs clin-link"
                 >
                   Open profile
                 </a>
@@ -154,10 +154,10 @@ export function DecisionsBoard({
 
               {tab === "decide" ? (
                 <div className="mt-4 space-y-3">
-                  <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
+                  <label className="block text-xs font-medium text-clin-muted">
                     Message draft (you send this manually)
                     <textarea
-                      className="mt-1 min-h-[140px] w-full rounded-md border border-zinc-300 bg-white p-3 text-sm text-zinc-900 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100"
+                      className="mt-1 min-h-[140px] w-full clin-input p-3 text-sm"
                       value={drafts[it.queueId] ?? ""}
                       onChange={(e) =>
                         setDrafts((d) => ({
@@ -173,7 +173,7 @@ export function DecisionsBoard({
                       type="button"
                       disabled={busy === it.queueId}
                       onClick={() => saveDraft(it.queueId)}
-                      className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs dark:border-zinc-600"
+                      className="clin-btn-secondary text-xs px-3 py-1.5"
                     >
                       Save draft
                     </button>
@@ -189,7 +189,7 @@ export function DecisionsBoard({
                       type="button"
                       disabled={busy === it.queueId}
                       onClick={() => skipOutreach(it.queueId)}
-                      className="rounded-md px-3 py-1.5 text-xs text-zinc-600 hover:underline dark:text-zinc-400"
+                      className="clin-link rounded-md px-3 py-1.5 text-xs"
                     >
                       Skip outreach
                     </button>
@@ -197,7 +197,7 @@ export function DecisionsBoard({
                 </div>
               ) : (
                 <div className="mt-4 space-y-3">
-                  <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-zinc-50 p-3 text-sm text-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
+                  <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md bg-clin-surface-muted p-3 text-sm text-clin-text">
                     {it.draftOutreach?.trim() || "(No draft text)"}
                   </pre>
                   <div className="flex flex-wrap gap-2">
@@ -207,7 +207,7 @@ export function DecisionsBoard({
                       onClick={() =>
                         copyText(it.draftOutreach ?? "")
                       }
-                      className="rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+                      className="clin-btn-primary text-xs px-3 py-1.5"
                     >
                       Copy draft
                     </button>
@@ -215,7 +215,7 @@ export function DecisionsBoard({
                       type="button"
                       disabled={busy === it.queueId}
                       onClick={() => markSent(it.queueId)}
-                      className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs dark:border-zinc-600"
+                      className="clin-btn-secondary text-xs px-3 py-1.5"
                     >
                       Mark sent (manual)
                     </button>

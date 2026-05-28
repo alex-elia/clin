@@ -97,12 +97,91 @@ async function loadCampaignCaptureHint() {
   }
 }
 
+const IMPORT_CAMPAIGN_KEY = "clinImportCampaignChoice";
+
+async function populateImportCampaignPicker() {
+  const sel = document.getElementById("import-campaign-picker");
+  if (!sel) return;
+  const base = getBase();
+  try {
+    const res = await fetch(`${base}/api/extension/outreach-campaigns`);
+    if (!res.ok) return;
+    const j = await res.json();
+    const stored = await new Promise((resolve) => {
+      chrome.storage.sync.get([IMPORT_CAMPAIGN_KEY], (r) =>
+        resolve(r[IMPORT_CAMPAIGN_KEY]),
+      );
+    });
+    sel.replaceChildren();
+    const none = document.createElement("option");
+    none.value = "__none__";
+    none.textContent = "— none —";
+    sel.appendChild(none);
+    const def = document.createElement("option");
+    def.value = "__clin_default__";
+    def.textContent = "Clin capture target (default)";
+    sel.appendChild(def);
+    for (const c of j.campaigns ?? []) {
+      const o = document.createElement("option");
+      o.value = c.id;
+      o.textContent = c.name;
+      sel.appendChild(o);
+    }
+    const pick =
+      typeof stored === "string" && stored
+        ? stored
+        : j.captureTargetCampaignId
+          ? "__clin_default__"
+          : "__none__";
+    sel.value = pick;
+  } catch {
+    /* ignore */
+  }
+}
+
+document.getElementById("import-campaign-picker")?.addEventListener("change", (e) => {
+  const v = e.target.value;
+  chrome.storage.sync.set({ [IMPORT_CAMPAIGN_KEY]: v });
+});
+
+function sendManualSnapshotMessage(kind) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "CLIN_MANUAL_SNAPSHOT", kind }, (resp) => {
+      if (chrome.runtime.lastError) {
+        resolve({ ok: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      resolve(resp ?? { ok: false, error: "No response." });
+    });
+  });
+}
+
+document.getElementById("snapshot-messaging")?.addEventListener("click", async () => {
+  setStatus("Snapshotting messaging list…");
+  const resp = await sendManualSnapshotMessage("linkedin_messages_inbox_visible");
+  if (resp.ok) {
+    setStatus(`Messaging list saved (${resp.id?.slice(0, 8) ?? "ok"}). See Clin → Inbox.`, "ok");
+  } else {
+    setStatus(resp.error || "Snapshot failed.", "err");
+  }
+});
+
+document.getElementById("snapshot-analytics")?.addEventListener("click", async () => {
+  setStatus("Snapshotting analytics…");
+  const resp = await sendManualSnapshotMessage("linkedin_post_analytics_visible");
+  if (resp.ok) {
+    setStatus(`Analytics saved. See Clin → Analytics.`, "ok");
+  } else {
+    setStatus(resp.error || "Snapshot failed.", "err");
+  }
+});
+
 chrome.storage.sync.get(["clinApiBase"], (r) => {
   baseInput.value = r.clinApiBase || DEFAULT_BASE;
   syncDashHref();
   loadReadyOutreach();
   void loadCampaignCaptureHint();
-  refreshHygieneStatus();
+  void populateImportCampaignPicker();
   chrome.runtime.sendMessage({ type: "CLIN_POLL_PENDING_SELF" }, () => {
     void chrome.runtime.lastError;
   });
@@ -173,6 +252,14 @@ function campaignAttachLine(d) {
 
 function applyCaptureSuccess(resp) {
   clearPaceCountdown();
+  if (resp.mode === "messaging" && resp.data) {
+    setStatus(
+      `Thread saved.\nContact: ${resp.data?.contactId || "?"}` +
+        campaignAttachLine(resp.data),
+      "ok",
+    );
+    return;
+  }
   if (resp.mode === "connections" && resp.data) {
     const d = resp.data;
     setStatus(
@@ -739,3 +826,76 @@ function renderOutreachCard(it, base) {
 
   return card;
 }
+
+const outreachRunStatus = document.getElementById("outreach-run-status");
+
+function setOutreachRunStatus(text) {
+  if (outreachRunStatus) outreachRunStatus.textContent = text || "";
+}
+
+async function loadExtensionBrand() {
+  const base = getBase();
+  try {
+    const res = await fetch(`${base}/api/extension/brand`);
+    if (!res.ok) return;
+    const b = await res.json();
+    const tag = document.querySelector(".tagline");
+    if (tag && b.tagline) tag.textContent = b.tagline;
+  } catch {
+    /* ignore */
+  }
+}
+
+loadExtensionBrand();
+
+document.getElementById("outreach-run-stop")?.addEventListener("click", async () => {
+  await chrome.runtime.sendMessage({ type: "CLIN_OUTREACH_RUN_STOP" });
+  setOutreachRunStatus("Run stopped.");
+});
+
+document.getElementById("outreach-run-start")?.addEventListener("click", async () => {
+  setOutreachRunStatus("Starting outreach run…");
+  const res = await chrome.runtime.sendMessage({
+    type: "CLIN_OUTREACH_RUN_START",
+    maxSteps: 5,
+  });
+  if (chrome.runtime.lastError) {
+    setOutreachRunStatus(chrome.runtime.lastError.message);
+    return;
+  }
+  if (!res?.ok) {
+    setOutreachRunStatus(res?.error || "Run failed.");
+    return;
+  }
+  if (res.paused && res.item?.memberId) {
+    setOutreachRunStatus(
+      `${res.hint || "Confirm send on LinkedIn."} Then click Confirm below.`,
+    );
+    const confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.className = "btn btn-primary";
+    confirmBtn.style.marginTop = "8px";
+    confirmBtn.textContent = "Confirm sent";
+    confirmBtn.addEventListener("click", async () => {
+      const ack = await chrome.runtime.sendMessage({
+        type: "CLIN_OUTREACH_CONFIRM_SENT",
+        memberId: res.item.memberId,
+      });
+      if (ack?.ok) {
+        setOutreachRunStatus("Marked sent.");
+        loadReadyOutreach();
+      } else {
+        setOutreachRunStatus(ack?.error || "Ack failed.");
+      }
+    });
+    outreachRunStatus?.appendChild(confirmBtn);
+    return;
+  }
+  if (res.done) {
+    setOutreachRunStatus(`Done: ${res.reason || "queue empty"}.`);
+    loadReadyOutreach();
+    return;
+  }
+  setOutreachRunStatus("Run finished.");
+  loadReadyOutreach();
+});

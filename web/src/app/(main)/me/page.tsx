@@ -1,9 +1,11 @@
 import Link from "next/link";
 import {
   generateUserGoalsAndPositioningAction,
+  saveGlobalWriterForm,
   saveUserContextContactOnly,
   saveUserContextForm,
 } from "@/app/actions";
+import { getGlobalWriterInstructions } from "@/lib/brand";
 import { ClaimProfileUrlForm } from "@/components/ClaimProfileUrlForm";
 import { contactPickerLabel } from "@/lib/contactDisplay";
 import { getSelfProfileReadyForOllama } from "@/lib/userProfileLlm";
@@ -15,6 +17,7 @@ export const dynamic = "force-dynamic";
 
 export default async function MePage() {
   const ctx = await getOrCreateUserContext();
+  const globalWriter = await getGlobalWriterInstructions();
   const db = getDb();
 
   const ollamaReady = ctx.selfContactId
@@ -37,39 +40,39 @@ export default async function MePage() {
   return (
     <div className="mx-auto max-w-2xl space-y-10">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+        <h1 className="clin-page-title">
           You &amp; goals
         </h1>
-        <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
+        <p className="mt-2 text-sm leading-relaxed text-clin-muted">
           Order: link your contact → open your LinkedIn profile and run{" "}
-          <strong className="font-medium text-zinc-800 dark:text-zinc-200">
+          <strong className="clin-strong">
             Capture
           </strong>{" "}
           in the extension → then Ollama can generate goals and positioning from
           those fields (you can edit afterward). Contact-level{" "}
-          <strong className="font-medium text-zinc-800 dark:text-zinc-200">
+          <strong className="clin-strong">
             Ollama analysis
           </strong>{" "}
           includes this as{" "}
-          <code className="rounded bg-zinc-100 px-1 text-xs dark:bg-zinc-900">
+          <code className="clin-code">
             owner_context
           </code>{" "}
           so scores and suggestions align with your intent.
         </p>
       </div>
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
-        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+      <section className="clin-card p-5">
+        <h2 className="clin-section-title">
           From profile URL
         </h2>
-        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="mt-1 text-sm text-clin-muted">
           Paste your public profile link. Clin records it and creates (or links)
           a contact. LinkedIn does not allow server-side scraping —{" "}
-          <strong className="font-medium text-zinc-800 dark:text-zinc-200">
+          <strong className="clin-strong">
             visible fields
           </strong>{" "}
           are filled when you open that profile while logged in and run{" "}
-          <strong className="font-medium text-zinc-800 dark:text-zinc-200">
+          <strong className="clin-strong">
             Capture
           </strong>{" "}
           in the extension.
@@ -90,19 +93,19 @@ export default async function MePage() {
 
       <form
         action={saveUserContextContactOnly}
-        className="space-y-4 rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950"
+        className="clin-card space-y-4 p-5"
       >
-        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+        <h2 className="clin-section-title">
           Your profile contact
         </h2>
         <label className="block space-y-1 text-sm">
-          <span className="font-medium text-zinc-900 dark:text-zinc-100">
+          <span className="font-medium text-clin-text">
             Who is you in this database
           </span>
           <select
             name="selfContactId"
             defaultValue={ctx.selfContactId ?? ""}
-            className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+            className="mt-1 clin-input"
           >
             <option value="">— Not linked —</option>
             {contacts.map((c) => (
@@ -111,7 +114,7 @@ export default async function MePage() {
               </option>
             ))}
           </select>
-          <span className="block text-xs text-zinc-500">
+          <span className="block text-xs text-clin-muted">
             Saving queues the Clin extension to open this profile and capture
             visible fields (keep Chrome logged into LinkedIn). Open the
             extension popup once to run immediately, or wait up to ~1 minute.
@@ -119,10 +122,10 @@ export default async function MePage() {
         </label>
 
         {ctx.selfContactId ? (
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-clin-muted">
             <Link
               href={`/contacts/${ctx.selfContactId}`}
-              className="text-blue-600 underline dark:text-blue-400"
+              className="clin-link"
             >
               Open your contact record
             </Link>
@@ -138,19 +141,19 @@ export default async function MePage() {
 
         <button
           type="submit"
-          className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+          className="clin-btn-primary"
         >
           Save profile link &amp; queue capture
         </button>
       </form>
 
-      <section className="rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950">
-        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+      <section className="clin-card p-5">
+        <h2 className="clin-section-title">
           Generate goals &amp; positioning (Ollama)
         </h2>
-        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="mt-1 text-sm text-clin-muted">
           Requires at least one extension{" "}
-          <strong className="font-medium text-zinc-800 dark:text-zinc-200">
+          <strong className="clin-strong">
             profile
           </strong>{" "}
           capture (on your /in/… page) with name, headline, company, or
@@ -158,7 +161,7 @@ export default async function MePage() {
           goals are used as hints. Configure Ollama in{" "}
           <Link
             href="/settings"
-            className="text-blue-600 underline dark:text-blue-400"
+            className="clin-link"
           >
             Settings
           </Link>
@@ -173,7 +176,7 @@ export default async function MePage() {
           <button
             type="submit"
             disabled={!ollamaReady.ok}
-            className="rounded-md border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-900 enabled:hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100 dark:enabled:hover:bg-zinc-800"
+            className="clin-btn-secondary disabled:cursor-not-allowed disabled:opacity-50"
           >
             Generate with Ollama
           </button>
@@ -182,13 +185,13 @@ export default async function MePage() {
 
       <form
         action={saveUserContextForm}
-        className="space-y-5 rounded-lg border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-950"
+        className="clin-card space-y-5 p-5"
       >
-        <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+        <h2 className="clin-section-title">
           Edit goals &amp; positioning
         </h2>
         <label className="block space-y-1 text-sm">
-          <span className="font-medium text-zinc-900 dark:text-zinc-100">
+          <span className="font-medium text-clin-text">
             Goals &amp; constraints
           </span>
           <textarea
@@ -196,16 +199,16 @@ export default async function MePage() {
             rows={6}
             defaultValue={ctx.goalsText ?? ""}
             placeholder="Filled by Ollama above, or type your own."
-            className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-600"
+            className="mt-1 clin-input"
           />
-          <span className="block text-xs text-zinc-500">
+          <span className="block text-xs text-clin-muted">
             Fed into contact analysis as owner_context. Regenerate anytime with
             Ollama.
           </span>
         </label>
 
         <label className="block space-y-1 text-sm">
-          <span className="font-medium text-zinc-900 dark:text-zinc-100">
+          <span className="font-medium text-clin-text">
             Positioning summary
           </span>
           <textarea
@@ -213,19 +216,42 @@ export default async function MePage() {
             rows={8}
             defaultValue={ctx.positioningSummary ?? ""}
             placeholder="Filled by Ollama above, or write by hand."
-            className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 font-mono text-xs text-zinc-900 placeholder:text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-600"
+            className="mt-1 clin-input font-mono text-xs"
           />
         </label>
 
         <button
           type="submit"
-          className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+          className="clin-btn-primary"
         >
           Save edits
         </button>
       </form>
 
-      <p className="text-xs text-zinc-500">
+      <form
+        action={saveGlobalWriterForm}
+        className="clin-card space-y-3 p-5"
+      >
+        <h2 className="text-lg font-medium text-[var(--clin-text)]">
+          Voice for all campaign drafts
+        </h2>
+        <p className="text-sm text-[var(--clin-muted)]">
+          Merged into every outreach draft (tone, must-mention, avoid). Your goals
+          and positioning above are separate.
+        </p>
+        <textarea
+          name="globalWriterInstructions"
+          rows={5}
+          defaultValue={globalWriter ?? ""}
+          placeholder="e.g. Warm founder tone, mention Elia Studio, no hard sell…"
+          className="w-full rounded-md border border-[var(--clin-border)] px-3 py-2 text-sm"
+        />
+        <button type="submit" className="clin-btn-primary">
+          Save global voice
+        </button>
+      </form>
+
+      <p className="text-xs text-[var(--clin-muted)]">
         Last updated:{" "}
         {ctx.updatedAt
           ? new Date(ctx.updatedAt).toLocaleString(undefined, {

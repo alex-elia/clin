@@ -39,32 +39,32 @@ export default async function DecisionsPage({
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Decisions</h1>
-        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+        <h1 className="clin-page-title">Decisions</h1>
+        <p className="mt-1 text-sm text-clin-muted">
           Prepare outreach <strong className="font-medium">before</strong> you
           use the browser or extension on LinkedIn. Approve drafts here; then
           copy from the Ready tab or fetch{" "}
-          <code className="rounded bg-zinc-100 px-1 font-mono text-xs dark:bg-zinc-900">
+          <code className="clin-code font-mono">
             GET /api/outreach/ready
           </code>{" "}
           (also includes your active{" "}
-          <Link href="/campaigns" className="underline">
+          <Link href="/campaigns" className="clin-link">
             Campaign
           </Link>{" "}
           ready rows).
         </p>
-        <p className="mt-2 text-xs text-zinc-500">
-          <Link href="/queue" className="underline">
+        <p className="mt-2 text-xs text-clin-muted">
+          <Link href="/queue" className="clin-link">
             Review queue
           </Link>{" "}
           for non-outreach triage. Approved outreach leaves the queue list until
           sent.{" "}
           {sort === "cleanup" ? (
-            <Link href="/decisions" className="underline">
+            <Link href="/decisions" className="clin-link">
               Default order
             </Link>
           ) : (
-            <Link href="/decisions?order=cleanup" className="underline">
+            <Link href="/decisions?order=cleanup" className="clin-link">
               Sort by cleanup first
             </Link>
           )}

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 48" role="img" aria-label="Clin">
+  <rect x="0" y="4" width="40" height="40" rx="10" fill="#2563eb"/>
+  <path
+    d="M14 16h9c5.5 0 9.5 3.4 9.5 8.2S28.5 32.5 23 32.5H18v7.5H14V16zm4 4v8.5h5c3.1 0 5-1.8 5-4.2S26.1 20 23 20h-5z"
+    fill="#ffffff"
+  />
+  <text
+    x="52"
+    y="33"
+    font-family="system-ui, -apple-system, Segoe UI, sans-serif"
+    font-size="26"
+    font-weight="700"
+    fill="#0f172a"
+    letter-spacing="-0.02em"
+  >
+    Clin
+  </text>
+</svg>

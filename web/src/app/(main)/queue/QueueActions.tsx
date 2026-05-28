@@ -76,7 +76,7 @@ function ProfileOpenControl({
       <button
         type="button"
         onClick={openProfile}
-        className="text-xs text-blue-600 underline dark:text-blue-400"
+        className="text-xs clin-link"
       >
         Open LinkedIn profile (manual)
       </button>
@@ -128,7 +128,7 @@ export function QueueActions({
   }
 
   if (items.length === 0) {
-    return <p className="text-sm text-zinc-500">Queue is empty.</p>;
+    return <p className="text-sm text-clin-muted">Queue is empty.</p>;
   }
 
   const slice = items.slice(0, visible);
@@ -136,7 +136,7 @@ export function QueueActions({
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-zinc-600 dark:text-zinc-400">
+      <p className="text-xs text-clin-muted">
         Showing {slice.length} of {items.length} pending — small batches reduce
         bursty patterns. You still perform every LinkedIn action yourself.
       </p>
@@ -144,23 +144,23 @@ export function QueueActions({
         {slice.map(({ queue, contact }) => (
           <li
             key={queue.id}
-            className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950"
+            className="clin-card p-4"
           >
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
-                <p className="font-medium text-zinc-900 dark:text-zinc-100">
+                <p className="font-medium text-clin-text">
                   {contact.fullName ?? "Unknown"}
                 </p>
-                <p className="text-xs text-zinc-500">
+                <p className="text-xs text-clin-muted">
                   {contact.segment}
                   <span
-                    className={`ms-2 font-mono tabular-nums ${sortMode === "cleanup" ? "text-amber-800 dark:text-amber-200" : "text-zinc-400"}`}
+                    className={`ms-2 font-mono tabular-nums ${sortMode === "cleanup" ? "text-amber-800 dark:text-amber-200" : "text-clin-muted"}`}
                     title="Cleanup score — higher means stronger signal to review for removal or archive."
                   >
                     · C{contact.cleanupScore}
                   </span>
                 </p>
-                <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-300">
+                <p className="mt-2 text-sm text-clin-muted">
                   {queue.suggestedAction ?? "Review this contact."}
                 </p>
                 <ProfileOpenControl
@@ -174,7 +174,7 @@ export function QueueActions({
                   type="button"
                   disabled={busy === queue.id}
                   onClick={() => patch(queue.id, "reviewed")}
-                  className="rounded-md bg-zinc-900 px-2 py-1 text-xs font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+                  className="clin-btn-primary text-xs px-2 py-1 disabled:opacity-50"
                 >
                   Reviewed
                 </button>
@@ -182,7 +182,7 @@ export function QueueActions({
                   type="button"
                   disabled={busy === queue.id}
                   onClick={() => patch(queue.id, "deferred")}
-                  className="rounded-md border border-zinc-300 px-2 py-1 text-xs dark:border-zinc-600"
+                  className="clin-btn-secondary text-xs px-2 py-1"
                 >
                   Defer
                 </button>
@@ -190,7 +190,7 @@ export function QueueActions({
                   type="button"
                   disabled={busy === queue.id}
                   onClick={() => patch(queue.id, "dismissed")}
-                  className="rounded-md border border-zinc-300 px-2 py-1 text-xs text-zinc-600 dark:border-zinc-600 dark:text-zinc-400"
+                  className="clin-btn-secondary text-xs px-2 py-1 text-clin-muted"
                 >
                   Dismiss
                 </button>
@@ -207,7 +207,7 @@ export function QueueActions({
               Math.min(items.length, v + Math.max(1, batchSize)),
             )
           }
-          className="rounded-md border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-600"
+          className="clin-btn-secondary text-sm px-3 py-2"
         >
           Load next batch (
           {Math.min(batchSize, remaining)} more · {remaining} left)

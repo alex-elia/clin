@@ -26,7 +26,7 @@ export function RemoveFromCampaignForm({
       <input type="hidden" name="memberId" value={memberId} />
       <button
         type="submit"
-        className="rounded-md border border-red-200 bg-white px-2 py-1 text-xs text-red-800 hover:bg-red-50 dark:border-red-900 dark:bg-zinc-950 dark:text-red-200 dark:hover:bg-red-950/40"
+        className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-800 hover:bg-red-100"
       >
         Remove from campaign
       </button>
