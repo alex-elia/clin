@@ -284,6 +284,117 @@ export const userContext = sqliteTable("user_context", {
     .$defaultFn(() => new Date()),
 });
 
+/** Editorial calendar post (LinkedIn personal branding). */
+export const contentPosts = sqliteTable(
+  "content_posts",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    status: text("status").notNull().default("idea"),
+    format: text("format").notNull().default("feed"),
+    ideaNotes: text("idea_notes"),
+    hook: text("hook"),
+    body: text("body"),
+    articleBody: text("article_body"),
+    linkedTeaserPostId: text("linked_teaser_post_id"),
+    styleNotes: text("style_notes"),
+    mediaJson: text("media_json", { mode: "json" }).$type<ContentMediaJson>(),
+    coachFlags: text("coach_flags", { mode: "json" }).$type<
+      Record<string, boolean>
+    >(),
+    lastCoachSummary: text("last_coach_summary"),
+    /** `fr` | `en` — overrides brand default; null = use brand / auto-detect */
+    language: text("language"),
+    scheduledAt: integer("scheduled_at", { mode: "timestamp_ms" }),
+    readyAt: integer("ready_at", { mode: "timestamp_ms" }),
+    publishedAt: integer("published_at", { mode: "timestamp_ms" }),
+    sourceAnalyticsSnapshotId: text("source_analytics_snapshot_id"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("content_posts_status_idx").on(t.status),
+    index("content_posts_scheduled_idx").on(t.scheduledAt),
+    index("content_posts_status_scheduled_idx").on(t.status, t.scheduledAt),
+  ],
+);
+
+export type ContentMediaItem = {
+  kind: "image" | "link";
+  url?: string;
+  /** Saved filename under data/media/posts (for downloads). */
+  filename?: string;
+  /** `photo` | `text_card` — how the visual was generated. */
+  style?: "photo" | "text_card";
+  note?: string;
+  alt?: string;
+};
+
+export type ContentMediaJson = {
+  items: ContentMediaItem[];
+};
+
+/** Singleton: Brand Coach planning context (doctrine, rhythm, stance). */
+export const contentBrandContext = sqliteTable("content_brand_context", {
+  id: text("id").primaryKey(),
+  contentDoctrine: text("content_doctrine"),
+  expertiseSummary: text("expertise_summary"),
+  publishingRhythm: text("publishing_rhythm", { mode: "json" }).$type<
+    PublishingRhythmJson
+  >(),
+  stanceNotes: text("stance_notes"),
+  /** `auto` | `fr` | `en` — default for new posts and coach when post has no override */
+  contentLanguage: text("content_language").default("auto"),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export type PublishingRhythmJson = {
+  preferredWeekdays?: number[];
+  timeWindow?: string;
+  maxPostsPerWeek?: number;
+  notes?: string;
+};
+
+export const contentAiThreads = sqliteTable("content_ai_threads", {
+  id: text("id").primaryKey(),
+  scope: text("scope").notNull(),
+  postId: text("post_id").references(() => contentPosts.id, {
+    onDelete: "set null",
+  }),
+  title: text("title"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const contentAiMessages = sqliteTable(
+  "content_ai_messages",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => contentAiThreads.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    content: text("content").notNull(),
+    actionsJson: text("actions_json", { mode: "json" }).$type<
+      Record<string, unknown>[]
+    >(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [index("content_ai_messages_thread_idx").on(t.threadId)],
+);
+
 /** Tunable pacing for low-risk, human-in-the-loop workflows (local + API limits only). */
 export const appSettings = sqliteTable("app_settings", {
   key: text("key").primaryKey(),

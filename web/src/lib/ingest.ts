@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import {
   actionQueue,
@@ -8,7 +8,9 @@ import {
 } from "@/db/schema";
 import * as schema from "@/db/schema";
 import type { getDb } from "@/db";
+import { backfillContactFieldsFromLatestProfileCapture } from "@/lib/contactProfileBackfill";
 import { normalizeExtractedPersonFields } from "@/lib/linkedinNormalize";
+import { mergePersonFields } from "@/lib/personFieldMerge";
 import { canonicalizeLinkedInUrl, normalizeCompany } from "@/lib/url";
 import { SCORE_RULE_VERSION, scoreContact } from "@/lib/scoring";
 
@@ -58,27 +60,49 @@ export type ConnectionsPageInput = {
   rows: ConnectionRowInput[];
 };
 
+async function findContactByCanonical(
+  db: Db,
+  canonical: string,
+): Promise<ContactRow | undefined> {
+  const exact = await db.query.contacts.findFirst({
+    where: eq(contacts.linkedinUrlCanonical, canonical),
+  });
+  if (exact) return exact;
+
+  const [legacy] = await db
+    .select()
+    .from(contacts)
+    .where(sql`lower(${contacts.linkedinUrlCanonical}) = lower(${canonical})`)
+    .limit(1);
+  return legacy;
+}
+
 function buildMergedAndScores(
   canonical: string,
   rawUrl: string,
   extractedFields: IngestInput["extractedFields"],
   existing: ContactRow | undefined,
   now: Date,
+  pageType: string,
 ): {
   merged: Partial<typeof contacts.$inferInsert>;
   scores: ReturnType<typeof scoreContact>;
 } {
-  const companyNorm = normalizeCompany(extractedFields.company);
+  const mergedFields = mergePersonFields(
+    existing ?? {},
+    extractedFields,
+    { pageType },
+  );
+  const companyNorm = normalizeCompany(mergedFields.company);
   const merged: Partial<typeof contacts.$inferInsert> = {
     linkedinUrlCanonical: canonical,
     linkedinUrlRaw: rawUrl,
-    fullName: extractedFields.fullName ?? existing?.fullName ?? null,
-    headline: extractedFields.headline ?? existing?.headline ?? null,
-    company: extractedFields.company ?? existing?.company ?? null,
+    fullName: mergedFields.fullName ?? null,
+    headline: mergedFields.headline ?? null,
+    company: mergedFields.company ?? null,
     companyNormalized: companyNorm ?? existing?.companyNormalized ?? null,
-    location: extractedFields.location ?? existing?.location ?? null,
-    connectionDegree:
-      extractedFields.connectionDegree ?? existing?.connectionDegree ?? null,
+    location: mergedFields.location ?? null,
+    connectionDegree: mergedFields.connectionDegree ?? null,
     lastSeenAt: now,
     lastUpdatedAt: now,
   };
@@ -245,9 +269,7 @@ export async function ingestCapture(db: Db, input: IngestInput) {
 
   const now = input.capturedAt ? new Date(input.capturedAt) : new Date();
 
-  const existing = await db.query.contacts.findFirst({
-    where: eq(contacts.linkedinUrlCanonical, canonical),
-  });
+  const existing = await findContactByCanonical(db, canonical);
 
   const normalizedFields = normalizeExtractedPersonFields(input.extractedFields);
   const extractedFields = {
@@ -261,6 +283,7 @@ export async function ingestCapture(db: Db, input: IngestInput) {
     extractedFields,
     existing,
     now,
+    input.pageType,
   );
 
   const fieldPresence = {
@@ -292,7 +315,23 @@ export async function ingestCapture(db: Db, input: IngestInput) {
     where: eq(contacts.linkedinUrlCanonical, canonical),
   });
 
-  return { contactId: row!.id, canonicalUrl: canonical, scores };
+  if (row && input.pageType === "profile") {
+    await backfillContactFieldsFromLatestProfileCapture(db, row.id);
+  }
+
+  const refreshed = await db.query.contacts.findFirst({
+    where: eq(contacts.id, row!.id),
+  });
+
+  const display = refreshed ?? row!;
+
+  return {
+    contactId: display.id,
+    canonicalUrl: display.linkedinUrlCanonical,
+    scores,
+    fieldPresence: fieldPresence as Record<string, boolean>,
+    fullName: display.fullName,
+  };
 }
 
 async function ingestMessagingCapture(db: Db, input: IngestInput) {
@@ -308,9 +347,7 @@ async function ingestMessagingCapture(db: Db, input: IngestInput) {
   }
 
   const now = input.capturedAt ? new Date(input.capturedAt) : new Date();
-  const existing = await db.query.contacts.findFirst({
-    where: eq(contacts.linkedinUrlCanonical, canonical),
-  });
+  const existing = await findContactByCanonical(db, canonical);
 
   const participantName =
     input.extractedFields.messagingParticipantName?.trim() || undefined;
@@ -430,6 +467,7 @@ export async function ensureContactStubFromProfileUrl(
     {},
     undefined,
     now,
+    "profile",
   );
   const id = crypto.randomUUID();
 
@@ -527,6 +565,7 @@ export async function ingestConnectionsPage(
         extractedFields,
         existing,
         now,
+        "connections",
       );
 
       const outcome = syncPersistContact(tx, {

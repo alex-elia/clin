@@ -1,0 +1,231 @@
+/* Post autopilot pipeline + tutorial highlights */
+
+@keyframes clin-autopilot-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--clin-accent) 45%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 10px color-mix(in srgb, var(--clin-accent) 0%, transparent);
+  }
+}
+
+@keyframes clin-autopilot-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes clin-autopilot-celebrate {
+  0% {
+    transform: scale(0.92);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.03);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes clin-xp-pop {
+  0% {
+    transform: translateY(4px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.clin-autopilot-hero {
+  position: relative;
+  background: linear-gradient(
+    135deg,
+    var(--clin-primary-soft) 0%,
+    var(--clin-surface) 45%,
+    var(--clin-surface-muted) 100%
+  );
+  border: 2px solid color-mix(in srgb, var(--clin-accent) 35%, var(--clin-border));
+}
+
+.clin-autopilot-hero.is-running {
+  animation: clin-autopilot-pulse 2.2s ease-in-out infinite;
+}
+
+.clin-autopilot-hero.is-complete {
+  border-color: color-mix(in srgb, var(--clin-accent) 55%, var(--clin-border));
+  box-shadow: 0 8px 32px color-mix(in srgb, var(--clin-accent) 12%, transparent);
+}
+
+@keyframes clin-confetti-fall {
+  0% {
+    transform: translate3d(0, -20px, 0) rotate(0deg) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(calc((var(--i) - 28) * 6px), 380px, 0) rotate(540deg)
+      scale(0.6);
+    opacity: 0;
+  }
+}
+
+.clin-confetti-burst {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.clin-confetti-piece {
+  position: absolute;
+  top: 0;
+  left: calc((var(--i) * 17) % 100%);
+  width: calc(6px + (var(--i) % 5));
+  height: calc(8px + (var(--i) % 4));
+  border-radius: 1px;
+  opacity: 0;
+  animation: clin-confetti-fall 2.6s cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+  animation-delay: calc((var(--i) % 20) * 0.04s);
+  background: hsl(calc(160 + (var(--i) * 19) % 80), 62%, 52%);
+}
+
+.clin-autopilot-finale {
+  animation: clin-autopilot-celebrate 0.65s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.clin-autopilot-finale-header {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.clin-autopilot-finale-badge {
+  display: flex;
+  height: 2.5rem;
+  width: 2.5rem;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--clin-accent);
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: white;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--clin-accent) 40%, transparent);
+}
+
+.clin-autopilot-finale-card {
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+  border-radius: 0.625rem;
+  border: 1px solid var(--clin-border);
+  background: var(--clin-surface);
+  padding: 1rem;
+  box-shadow: 0 2px 12px color-mix(in srgb, var(--clin-navy) 6%, transparent);
+}
+
+.clin-autopilot-progress-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--clin-border);
+  overflow: hidden;
+}
+
+.clin-autopilot-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    var(--clin-primary) 0%,
+    var(--clin-accent-hover) 50%,
+    var(--clin-primary) 100%
+  );
+  background-size: 200% 100%;
+  transition: width 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.clin-autopilot-hero.is-running .clin-autopilot-progress-fill {
+  animation: clin-autopilot-shimmer 1.8s linear infinite;
+}
+
+.clin-autopilot-step {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  padding: 0.5rem 0;
+  transition: opacity 0.25s ease;
+}
+
+.clin-autopilot-step.is-pending {
+  opacity: 0.45;
+}
+
+.clin-autopilot-step.is-active .clin-autopilot-step-dot {
+  background: var(--clin-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--clin-accent) 25%, transparent);
+}
+
+.clin-autopilot-step.is-done .clin-autopilot-step-dot {
+  background: var(--clin-accent);
+}
+
+.clin-autopilot-step.is-skipped {
+  opacity: 0.55;
+}
+
+.clin-autopilot-step.is-error .clin-autopilot-step-dot {
+  background: #dc2626;
+}
+
+.clin-autopilot-step-dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 0.35rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--clin-border);
+  transition: background 0.3s ease, box-shadow 0.3s ease;
+}
+
+.clin-autopilot-done-banner {
+  animation: clin-autopilot-celebrate 0.55s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.clin-xp-badge {
+  animation: clin-xp-pop 0.35s ease forwards;
+}
+
+.clin-tour-highlight {
+  position: relative;
+  z-index: 41;
+  outline: 3px solid var(--clin-accent);
+  outline-offset: 4px;
+  border-radius: 0.5rem;
+}
+
+.clin-tutorial-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: color-mix(in srgb, var(--clin-navy) 35%, transparent);
+  pointer-events: none;
+}
+
+.clin-tutorial-panel {
+  position: fixed;
+  z-index: 50;
+  max-width: 22rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--clin-border);
+  background: var(--clin-surface);
+  box-shadow: 0 12px 40px color-mix(in srgb, var(--clin-navy) 18%, transparent);
+}

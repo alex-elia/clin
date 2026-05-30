@@ -50,7 +50,7 @@ export function AutopilotBatchPanel({
       <p className="clin-body">
         Picks contacts that already have a{" "}
         <strong className="clin-strong">profile</strong> capture plus name or
-        headline, but no stored analysis yet. Runs Ollama sequentially (can take
+        headline, but no stored analysis yet. Runs inference sequentially (can take
         several minutes).
       </p>
       <p className="text-sm font-medium text-clin-text">

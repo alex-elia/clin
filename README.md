@@ -1,8 +1,8 @@
 # Clin
 
-**Local-first LinkedIn assistant** — open source software you run on your own machine to capture your network, clean you contacts base, prepare outreach drafts, and run **optional, paced automation** when you choose.
+**Local-first LinkedIn assistant** — open source software you run on your own machine to capture your network, clean your contacts base, prepare outreach drafts, and run **optional, paced automation** when you choose.
 
-Clin is a **community-owned tool**: inspect the code, fork it, and adapt it. Data stays on your disk by default. You control which features are on and how fast they run.
+Clin is **open source and community-friendly**: inspect the code, fork it, and adapt it. Data stays on your disk by default. You control which features are on and how fast they run.
 
 ## What you can do
 
@@ -18,7 +18,7 @@ Typical flow: **capture → review → draft → approve → hand off to the ext
 
 ## Quick start
 
-**Prerequisites:** [Node.js](https://nodejs.org/) 20+, npm, Google Chrome.
+**Prerequisites:** [Node.js](https://nodejs.org/) **22** (see `.nvmrc`), npm, Google Chrome. Use one Node install consistently so `better-sqlite3` matches the runtime.
 
 From the repository root:
 
@@ -27,7 +27,9 @@ npm install
 npm run dev
 ```
 
-Open [http://127.0.0.1:3000](http://127.0.0.1:3000). On first API use, SQLite is created at `web/data/clin.db` (migrations from `web/drizzle/`).
+`npm run dev` binds **port 3000** (or `CLIN_DEV_PORT`), refuses a second Clin instance, and writes a dev lock under `web/data/`. Stop a stuck server with `npm run dev:stop` from `web/`.
+
+Open [http://127.0.0.1:3000](http://127.0.0.1:3000). Confirm runtime: [http://127.0.0.1:3000/api/health](http://127.0.0.1:3000/api/health) (`db: true`, `dbPath`, `apiRevision`). On first API use, SQLite is created at `web/data/clin.db` (migrations from `web/drizzle/`).
 
 ### Chrome extension
 
@@ -46,7 +48,9 @@ Install [Ollama](https://ollama.com/), pull a model (e.g. `qwen2.5:8b`), and poi
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Start Next.js dashboard + API |
+| `npm run dev` | Start dashboard + API (singleton on port 3000) |
+| `npm run dev:stop` | Stop port 3000 / orphaned Clin dev (from `web/`) |
+| `npm run dev:clean` | Clear `.next` cache then start dev (from `web/`) |
 | `npm run build` / `npm run start` | Production build / serve |
 | `npm run db:repair` | Repair / migrate local SQLite |
 | `npm run db:studio` | Drizzle Studio |
@@ -101,10 +105,21 @@ Clin is **software for end users**. We provide source code and local tooling; **
 
 If you contribute or fork this project, keep disclaimers visible and avoid positioning the tool as a way to evade platform rules.
 
+## Maintainer and community
+
+- **Repository:** [github.com/alex-elia/clin](https://github.com/alex-elia/clin)
+- **Maintainer:** Alex Gon (best-effort open source maintenance)
+- **Feedback:** [Open an issue](https://github.com/alex-elia/clin/issues/new) for bugs and questions; [pull requests](https://github.com/alex-elia/clin/pulls) welcome
+- **Expectations:** No paid support or guaranteed fix timelines. LinkedIn UI changes may break capture until the extension is patched
+
+Anyone can fork and improve Clin. Day-to-day maintenance and roadmap decisions are led by the maintainer, not a separate governance body.
+
 ## Contributing
 
-Issues and pull requests are welcome on GitHub. Read [`docs/DESIGN.md`](./docs/DESIGN.md) and [`docs/adr/README.md`](./docs/adr/README.md) before larger changes. For DOM breakage after a LinkedIn UI update, fixes usually land in `extension/background.js`.
+Read [`docs/DESIGN.md`](./docs/DESIGN.md) and [`docs/adr/README.md`](./docs/adr/README.md) before larger changes. For DOM breakage after a LinkedIn UI update, fixes usually land in `extension/background.js`.
+
+Use GitHub Issues for bugs and ideas; open a pull request when you have a focused fix or feature.
 
 ## License
 
-MIT — see [LICENSE](./LICENSE) when present in the repository.
+[MIT](./LICENSE) — Copyright (c) Alex Gon

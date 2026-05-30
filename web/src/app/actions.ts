@@ -10,13 +10,11 @@ import {
   updateAutomationSettings,
   type AutomationSettingsPatch,
 } from "@/lib/automation";
-import {
-  getOllamaSettings,
-  updateOllamaSettings,
-} from "@/lib/ollamaSettings";
+import { getLlmConfig, updateLlmConfig } from "@/lib/llm/completeChat";
 import { updatePaceSettings } from "@/lib/pace";
 import { SCORE_RULE_VERSION, scoreContact } from "@/lib/scoring";
 import { runSelfGoalsAndPositioningLlm } from "@/lib/userProfileLlm";
+import { runVoiceSetupFromProfileLlm } from "@/lib/voiceSetupLlm";
 import { updateAutopilotSettings } from "@/lib/autopilot";
 import { setGlobalWriterInstructions } from "@/lib/brand";
 import { backupAndRecord } from "@/lib/dataBackup";
@@ -108,17 +106,41 @@ export async function saveAutomationForm(formData: FormData) {
   revalidatePath("/settings");
 }
 
-export async function saveOllamaForm(formData: FormData) {
-  const baseRaw = formData.get("ollamaBaseUrl");
-  const modelRaw = formData.get("ollamaModel");
-  await updateOllamaSettings({
-    baseUrl:
-      typeof baseRaw === "string" && baseRaw.trim() ? baseRaw.trim() : undefined,
-    model:
-      typeof modelRaw === "string" && modelRaw.trim() ? modelRaw.trim() : undefined,
-  });
+function readFormString(formData: FormData, name: string): string | undefined {
+  const raw = formData.get(name);
+  if (typeof raw !== "string" || !raw.trim()) return undefined;
+  return raw.trim();
+}
+
+export async function saveLlmForm(formData: FormData) {
+  const providerRaw = formData.get("llmProvider");
+  const provider =
+    providerRaw === "openai_compatible" ? "openai_compatible" : "ollama";
+
+  const patch: Parameters<typeof updateLlmConfig>[0] = {
+    provider,
+    ollamaBaseUrl: readFormString(formData, "ollamaBaseUrl"),
+    ollamaModel: readFormString(formData, "ollamaModel"),
+    cloudBaseUrl: readFormString(formData, "cloudBaseUrl"),
+    cloudModel: readFormString(formData, "cloudModel"),
+  };
+
+  const clearKey = formData.get("clearLlmApiKey") === "on";
+  const apiKeyRaw = formData.get("llmApiKey");
+  if (clearKey) {
+    patch.apiKey = null;
+  } else if (typeof apiKeyRaw === "string" && apiKeyRaw.trim()) {
+    patch.apiKey = apiKeyRaw.trim();
+  }
+
+  await updateLlmConfig(patch);
   revalidatePath("/settings");
   revalidatePath("/contacts");
+}
+
+/** @deprecated Use saveLlmForm */
+export async function saveOllamaForm(formData: FormData) {
+  return saveLlmForm(formData);
 }
 
 export type ClaimProfileState =
@@ -224,12 +246,43 @@ export async function saveAutopilotForm(formData: FormData) {
 }
 
 export async function generateUserGoalsAndPositioningAction() {
-  const ollama = await getOllamaSettings();
+  const llm = await getLlmConfig();
   const { goalsText, positioningSummary } = await runSelfGoalsAndPositioningLlm({
-    settings: ollama,
+    settings: llm,
   });
   await updateUserContext({ goalsText, positioningSummary });
   revalidatePath("/me");
+  revalidatePath("/branding/setup");
+}
+
+export type VoiceSetupSuggestActionResult =
+  | {
+      ok: true;
+      goalsText: string;
+      positioningSummary: string;
+      contentDoctrine: string;
+      expertiseSummary: string;
+      rhythmWeekdays: string;
+      rhythmTimeWindow: string;
+    }
+  | { ok: false; error: string };
+
+export async function suggestVoiceSetupFromProfileAction(
+  userBrief?: string,
+): Promise<VoiceSetupSuggestActionResult> {
+  try {
+    const llm = await getLlmConfig();
+    const data = await runVoiceSetupFromProfileLlm({
+      settings: llm,
+      userBrief: userBrief ?? null,
+    });
+    return { ok: true, ...data };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
 }
 
 export async function createCampaignAction(formData: FormData) {
@@ -565,4 +618,263 @@ export async function saveGlobalWriterForm(formData: FormData) {
   await setGlobalWriterInstructions(text);
   revalidatePath("/me");
   revalidatePath("/campaigns");
+}
+
+function revalidateBranding() {
+  revalidatePath("/branding");
+  revalidatePath("/branding/setup");
+  revalidatePath("/branding/calendar");
+  revalidatePath("/branding/studio");
+  revalidatePath("/branding/posts");
+  revalidatePath("/me");
+}
+
+function parsePostLanguageForSave(
+  raw: FormDataEntryValue | null,
+): string | null {
+  if (typeof raw !== "string") return null;
+  const v = raw.trim();
+  if (v === "fr" || v === "en") return v;
+  return null;
+}
+
+function parseOptionalDate(raw: FormDataEntryValue | null): Date | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const d = new Date(raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+export async function saveContentBrandContextAction(formData: FormData) {
+  const { updateContentBrandContext } = await import("@/lib/contentBrandContext");
+  const doctrine = formData.get("contentDoctrine");
+  const expertise = formData.get("expertiseSummary");
+  const stance = formData.get("stanceNotes");
+  const rhythmRaw = formData.get("publishingRhythmJson");
+  let publishingRhythm = null;
+  if (typeof rhythmRaw === "string" && rhythmRaw.trim()) {
+    try {
+      publishingRhythm = JSON.parse(rhythmRaw) as import("@/db/schema").PublishingRhythmJson;
+    } catch {
+      /* keep null */
+    }
+  }
+  await updateContentBrandContext({
+    contentDoctrine:
+      typeof doctrine === "string" && doctrine.trim() ? doctrine.trim() : null,
+    expertiseSummary:
+      typeof expertise === "string" && expertise.trim() ? expertise.trim() : null,
+    stanceNotes:
+      typeof stance === "string" && stance.trim() ? stance.trim() : null,
+    publishingRhythm,
+  });
+  revalidateBranding();
+}
+
+export async function saveContentPostAction(formData: FormData) {
+  const { updateContentPost } = await import("@/lib/contentPosts");
+  const id = formData.get("id");
+  if (typeof id !== "string" || !id) return;
+  const title = formData.get("title");
+  const statusRaw = formData.get("status");
+  const formatRaw = formData.get("format");
+  await updateContentPost(id, {
+    title: typeof title === "string" && title.trim() ? title.trim() : "Untitled",
+    status:
+      typeof statusRaw === "string"
+        ? (statusRaw as import("@/lib/contentPostsShared").ContentPostStatus)
+        : "idea",
+    format:
+      typeof formatRaw === "string"
+        ? (formatRaw as import("@/lib/contentPostsShared").ContentPostFormat)
+        : "feed",
+    ideaNotes: String(formData.get("ideaNotes") ?? "") || null,
+    hook: String(formData.get("hook") ?? "") || null,
+    body: String(formData.get("body") ?? "") || null,
+    articleBody: String(formData.get("articleBody") ?? "") || null,
+    styleNotes: String(formData.get("styleNotes") ?? "") || null,
+    scheduledAt: parseOptionalDate(formData.get("scheduledAt")),
+    mediaJson: parseMediaJsonField(formData.get("mediaJson")),
+    language: parsePostLanguageForSave(formData.get("language")),
+  });
+  revalidateBranding();
+  revalidatePath(`/branding/posts/${id}`);
+}
+
+function parseMediaJsonField(
+  raw: FormDataEntryValue | null,
+): import("@/db/schema").ContentMediaJson | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  try {
+    const parsed = JSON.parse(raw) as { items?: unknown };
+    if (!Array.isArray(parsed.items)) return null;
+    return { items: parsed.items as import("@/db/schema").ContentMediaJson["items"] };
+  } catch {
+    return null;
+  }
+}
+
+export async function createContentPostAction(formData: FormData) {
+  const { createContentPost } = await import("@/lib/contentPosts");
+  const { getOrCreateContentBrandContext } = await import(
+    "@/lib/contentBrandContext"
+  );
+  const { parseContentLanguagePreference } = await import(
+    "@/lib/contentLanguage"
+  );
+  const title = formData.get("title");
+  const brand = await getOrCreateContentBrandContext();
+  const pref = parseContentLanguagePreference(brand.contentLanguage);
+  const id = await createContentPost({
+    title: typeof title === "string" && title.trim() ? title.trim() : "New post",
+    scheduledAt: parseOptionalDate(formData.get("scheduledAt")),
+    ideaNotes: String(formData.get("ideaNotes") ?? "") || null,
+    language: pref === "fr" || pref === "en" ? pref : null,
+  });
+  revalidateBranding();
+  redirect(`/branding/posts/${id}`);
+}
+
+export async function updateContentPostStatusAction(formData: FormData) {
+  const { updateContentPost } = await import("@/lib/contentPosts");
+  const id = formData.get("id");
+  const status = formData.get("status");
+  if (typeof id !== "string" || typeof status !== "string") return;
+  await updateContentPost(id, { status: status as import("@/lib/contentPostsShared").ContentPostStatus });
+  revalidateBranding();
+}
+
+/** Persist unsaved editor fields before handoff actions (preview uses live state). */
+async function persistPostEditorSnapshot(formData: FormData): Promise<string> {
+  const id = formData.get("id");
+  if (typeof id !== "string" || !id) {
+    throw new Error("Missing post id.");
+  }
+  const { updateContentPost } = await import("@/lib/contentPosts");
+  const patch: Parameters<typeof updateContentPost>[1] = {};
+  const mediaJson = parseMediaJsonField(formData.get("mediaJson"));
+  if (mediaJson !== null) patch.mediaJson = mediaJson;
+  const hook = formData.get("hook");
+  const body = formData.get("body");
+  if (typeof hook === "string") patch.hook = hook || null;
+  if (typeof body === "string") patch.body = body || null;
+  const title = formData.get("title");
+  if (typeof title === "string" && title.trim()) {
+    patch.title = title.trim();
+  }
+  const formatRaw = formData.get("format");
+  if (typeof formatRaw === "string" && formatRaw.trim()) {
+    patch.format = formatRaw as import("@/lib/contentPostsShared").ContentPostFormat;
+  }
+  if (Object.keys(patch).length > 0) {
+    await updateContentPost(id, patch);
+  }
+  return id;
+}
+
+function revalidateContentPost(id: string) {
+  revalidateBranding();
+  revalidatePath(`/branding/posts/${id}`);
+}
+
+export async function markContentPostReadyAction(formData: FormData) {
+  const { markContentPostReady } = await import("@/lib/contentPosts");
+  const id = await persistPostEditorSnapshot(formData);
+  const result = await markContentPostReady(id);
+  if (!result.ok) {
+    throw new Error(result.error ?? "Could not mark post ready.");
+  }
+  revalidateContentPost(id);
+  redirect(`/branding/posts/${id}`);
+}
+
+export async function markContentPostPublishedAction(formData: FormData) {
+  const { markContentPostPublished } = await import("@/lib/contentPosts");
+  const id = await persistPostEditorSnapshot(formData);
+  await markContentPostPublished(id);
+  revalidateContentPost(id);
+  redirect(`/branding/posts/${id}`);
+}
+
+export async function archiveContentPostAction(formData: FormData) {
+  const id = await persistPostEditorSnapshot(formData);
+  const { updateContentPost } = await import("@/lib/contentPosts");
+  await updateContentPost(id, { status: "archived" });
+  revalidateBranding();
+  redirect("/branding/calendar");
+}
+
+export async function applyCoachActionsAction(
+  actions: unknown[],
+): Promise<{ applied: number; errors: string[]; createdPostIds: string[] }> {
+  const { applyCoachActions } = await import("@/lib/brandCoachApply");
+  const result = await applyCoachActions(actions);
+  revalidateBranding();
+  return result;
+}
+
+export async function completeVoiceSetupAction(formData: FormData) {
+  const { updateUserContext } = await import("@/lib/userContext");
+  const { updateContentBrandContext } = await import("@/lib/contentBrandContext");
+  const { markVoiceSetupComplete } = await import("@/lib/voiceSetup");
+
+  const goals = formData.get("goalsText");
+  const positioning = formData.get("positioningSummary");
+  const doctrine = formData.get("contentDoctrine");
+  const expertise = formData.get("expertiseSummary");
+  const rhythmDays = formData.get("rhythmWeekdays");
+  const rhythmTime = formData.get("rhythmTimeWindow");
+
+  await updateUserContext({
+    goalsText: typeof goals === "string" && goals.trim() ? goals.trim() : null,
+    positioningSummary:
+      typeof positioning === "string" && positioning.trim()
+        ? positioning.trim()
+        : null,
+  });
+
+  let publishingRhythm: import("@/db/schema").PublishingRhythmJson | null = null;
+  if (typeof rhythmDays === "string" && rhythmDays) {
+    const weekdays = rhythmDays
+      .split(",")
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n) => !Number.isNaN(n));
+    publishingRhythm = {
+      preferredWeekdays: weekdays,
+      timeWindow:
+        typeof rhythmTime === "string" && rhythmTime.trim()
+          ? rhythmTime.trim()
+          : "08:45-09:15",
+      maxPostsPerWeek: 2,
+    };
+  }
+
+  const contentLanguageRaw = formData.get("contentLanguage");
+  const { parseContentLanguagePreference } = await import(
+    "@/lib/contentLanguage"
+  );
+
+  await updateContentBrandContext({
+    contentDoctrine:
+      typeof doctrine === "string" && doctrine.trim() ? doctrine.trim() : null,
+    expertiseSummary:
+      typeof expertise === "string" && expertise.trim() ? expertise.trim() : null,
+    publishingRhythm,
+    contentLanguage:
+      typeof contentLanguageRaw === "string"
+        ? parseContentLanguagePreference(contentLanguageRaw)
+        : "auto",
+  });
+
+  await markVoiceSetupComplete();
+  revalidateBranding();
+  revalidatePath("/me");
+  redirect("/branding/calendar");
+}
+
+export async function saveSdSettingsAction(formData: FormData) {
+  const { updateSdSettings } = await import("@/lib/sdSettings");
+  await updateSdSettings({
+    userEnabled: formData.get("sdEnabled") === "on",
+  });
+  revalidatePath("/settings");
 }

@@ -16,7 +16,12 @@ export default async function AutopilotPage() {
   return (
     <div className="mx-auto max-w-2xl space-y-8">
       <div>
-        <h1 className="clin-page-title">Autopilot</h1>
+        <p className="mb-1 text-xs font-medium uppercase tracking-wide text-[var(--clin-muted)]">
+          <Link href="/data" className="clin-link">
+            Data & cleaning
+          </Link>
+        </p>
+        <h1 className="clin-page-title">Cleaning</h1>
         <p className="clin-page-lead">
           <strong className="clin-strong">On LinkedIn</strong>, Clin stays
           human-in-the-loop: you open pages and press Capture (or use the optional
@@ -30,7 +35,7 @@ export default async function AutopilotPage() {
         </p>
         <p className="mt-3 clin-page-lead">
           <strong className="clin-strong">On your machine</strong>, you can put{" "}
-          <strong className="clin-strong">Ollama analysis</strong> on autopilot:
+          <strong className="clin-strong">AI contact analysis</strong> on autopilot:
           after each <em>profile</em> capture, or in batches below. That uses only
           data already stored in your local SQLite DB.
         </p>

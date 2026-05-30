@@ -11,7 +11,7 @@ import {
   inferAnalysisTier,
   runContactLlmAnalysis,
 } from "@/lib/llmAnalysis";
-import type { OllamaSettings } from "@/lib/ollamaSettings";
+import type { LlmConfig } from "@/lib/llm/types";
 import { contactAnalyzeBodySchema } from "@/lib/schemas";
 
 type Db = ReturnType<typeof getDb>;
@@ -30,7 +30,7 @@ export async function executeContactAnalysis(
   db: Db,
   contactId: string,
   body: ContactAnalyzeInput,
-  ollama: OllamaSettings,
+  llm: LlmConfig,
 ): Promise<ExecuteContactAnalysisResult> {
   const row = await db.query.contacts.findFirst({
     where: eq(contacts.id, contactId),
@@ -55,21 +55,21 @@ export async function executeContactAnalysis(
     contactId,
     tier: tierIn,
     messageContext: msgCtx,
-    settings: ollama,
+    settings: llm,
   });
 
   const jsonStr = JSON.stringify(result.envelope);
-  persistLlmAnalysis(contactId, result.tier, jsonStr, ollama.model);
+  persistLlmAnalysis(contactId, result.tier, jsonStr, llm.model);
 
   const updated = await db.query.contacts.findFirst({
     where: eq(contacts.id, contactId),
   });
-  const llm = selectContactLlmExtension(contactId);
+  const llmExt = selectContactLlmExtension(contactId);
 
   return {
     tier: result.tier,
     envelope: result.envelope,
-    contact: updated ? { ...updated, ...(llm ?? {}) } : null,
+    contact: updated ? { ...updated, ...(llmExt ?? {}) } : null,
   };
 }
 

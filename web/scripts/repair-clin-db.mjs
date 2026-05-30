@@ -138,6 +138,91 @@ function repairClinSqliteSchema(db) {
     `);
   }
 
+  if (!tableExists(db, "content_posts")) {
+    db.exec(`
+      CREATE TABLE content_posts (
+        id text PRIMARY KEY NOT NULL,
+        title text NOT NULL,
+        status text NOT NULL DEFAULT 'idea',
+        format text NOT NULL DEFAULT 'feed',
+        idea_notes text,
+        hook text,
+        body text,
+        article_body text,
+        linked_teaser_post_id text,
+        style_notes text,
+        media_json text,
+        coach_flags text,
+        last_coach_summary text,
+        scheduled_at integer,
+        ready_at integer,
+        published_at integer,
+        source_analytics_snapshot_id text,
+        created_at integer NOT NULL,
+        updated_at integer NOT NULL
+      );
+      CREATE INDEX content_posts_status_idx ON content_posts (status);
+      CREATE INDEX content_posts_scheduled_idx ON content_posts (scheduled_at);
+      CREATE INDEX content_posts_status_scheduled_idx ON content_posts (status, scheduled_at);
+    `);
+  }
+
+  if (!tableExists(db, "content_brand_context")) {
+    db.exec(`
+      CREATE TABLE content_brand_context (
+        id text PRIMARY KEY NOT NULL,
+        content_doctrine text,
+        expertise_summary text,
+        publishing_rhythm text,
+        stance_notes text,
+        updated_at integer NOT NULL
+      );
+    `);
+    db.prepare(
+      "INSERT OR IGNORE INTO content_brand_context (id, updated_at) VALUES ('default', ?)",
+    ).run(Date.now());
+  }
+
+  if (!tableExists(db, "content_ai_threads")) {
+    db.exec(`
+      CREATE TABLE content_ai_threads (
+        id text PRIMARY KEY NOT NULL,
+        scope text NOT NULL,
+        post_id text,
+        title text,
+        created_at integer NOT NULL,
+        updated_at integer NOT NULL,
+        FOREIGN KEY (post_id) REFERENCES content_posts(id) ON DELETE SET NULL
+      );
+    `);
+  }
+
+  if (tableExists(db, "content_brand_context")) {
+    addColumnOrExists(
+      db,
+      "ALTER TABLE content_brand_context ADD COLUMN content_language text DEFAULT 'auto'",
+    );
+  }
+
+  if (tableExists(db, "content_posts")) {
+    addColumnOrExists(db, "ALTER TABLE content_posts ADD COLUMN language text");
+  }
+
+  if (!tableExists(db, "content_ai_messages")) {
+    db.exec(`
+      CREATE TABLE content_ai_messages (
+        id text PRIMARY KEY NOT NULL,
+        thread_id text NOT NULL,
+        role text NOT NULL,
+        content text NOT NULL,
+        actions_json text,
+        created_at integer NOT NULL,
+        FOREIGN KEY (thread_id) REFERENCES content_ai_threads(id) ON DELETE CASCADE
+      );
+      CREATE INDEX content_ai_messages_thread_idx ON content_ai_messages (thread_id);
+    `);
+  }
+
   if (!tableExists(db, "outreach_send_log")) {
     db.exec(`
       CREATE TABLE outreach_send_log (

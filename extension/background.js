@@ -12,6 +12,44 @@ async function getApiBase() {
   return (typeof clinApiBase === "string" && clinApiBase.trim()) || DEFAULT_BASE;
 }
 
+/**
+ * Verify the API base is the live Clin instance (correct port, DB, revision).
+ */
+async function fetchClinHealth(base) {
+  const root = base.replace(/\/$/, "");
+  try {
+    const res = await fetch(`${root}/api/health`, { cache: "no-store" });
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: `Health check failed: HTTP ${res.status} at ${root}`,
+      };
+    }
+    const health = await res.json();
+    if (health?.service !== "clin") {
+      return {
+        ok: false,
+        error: `Not Clin at ${root} (got service=${health?.service ?? "?"})`,
+      };
+    }
+    if (!health.db) {
+      return {
+        ok: false,
+        error:
+          `Clin DB unavailable at ${root}. In clin/web run: npm rebuild better-sqlite3 then npm run dev`,
+        health,
+      };
+    }
+    return { ok: true, health };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return {
+      ok: false,
+      error: `Cannot reach Clin at ${root}: ${msg}. Is npm run dev running on that port?`,
+    };
+  }
+}
+
 async function fetchPace(base) {
   try {
     const res = await fetch(`${base.replace(/\/$/, "")}/api/settings`);
@@ -555,6 +593,26 @@ function scrapeExtensionSnapshot(kindRaw) {
 }
 
 /**
+ * Page world — wait for profile top card before scrape (LinkedIn hydrates after "complete").
+ */
+async function waitForProfileDomReady(maxMs) {
+  const deadline = Date.now() + (maxMs || 5000);
+  function hasNameSignal() {
+    if (document.querySelector('[data-anonymize="person-name"]')) return true;
+    if (document.querySelector('a[href*="/in/"] h1')) return true;
+    if (document.querySelector("main h1")) return true;
+    const t = document.title || "";
+    if (/^[^|]+\|\s*LinkedIn/i.test(t)) return true;
+    return false;
+  }
+  while (Date.now() < deadline) {
+    if (hasNameSignal()) return { ready: true, waitedMs: maxMs - (deadline - Date.now()) };
+    await new Promise((r) => setTimeout(r, 180));
+  }
+  return { ready: false, waitedMs: maxMs };
+}
+
+/**
  * Runs in the page world via scripting API — must not close over extension scope.
  */
 function scrapeVisibleProfile() {
@@ -567,7 +625,7 @@ function scrapeVisibleProfile() {
   function firstText(...selectors) {
     for (const sel of selectors) {
       const el = document.querySelector(sel);
-      const t = clean(el?.textContent);
+      const t = clean(el?.innerText || el?.textContent);
       if (t) return t;
     }
     return undefined;
@@ -575,14 +633,122 @@ function scrapeVisibleProfile() {
 
   const sourceUrl = window.location.href;
 
-  const fullName =
-    firstText(
+  function vanitySlugFromUrl() {
+    try {
+      const parts = new URL(sourceUrl).pathname.split("/").filter(Boolean);
+      if (parts[0] === "in" && parts[1]) {
+        return decodeURIComponent(parts[1]).toLowerCase();
+      }
+    } catch {
+      /* ignore */
+    }
+    return undefined;
+  }
+
+  function isNotificationUiChrome(text) {
+    return /gérer les notifications|manage notifications|turn on notifications|notification preferences|paramètres de notification/i.test(
+      text,
+    );
+  }
+
+  function acceptNameCandidate(raw) {
+    const t = clean(raw);
+    if (!t) return undefined;
+    if (isNotificationUiChrome(t)) {
+      const fr = t.match(/au sujet de (.+)$/i);
+      if (fr?.[1]) return clean(fr[1]);
+      const en = t.match(/about (.+)$/i);
+      if (en?.[1]) return clean(en[1]);
+      return undefined;
+    }
+    if (/^(gérer|manage|voir le profil|view profile|open profile)\b/i.test(t)) {
+      return undefined;
+    }
+    if (t.length > 90 && /\bnotifications?\b/i.test(t)) return undefined;
+    return t;
+  }
+
+  function nameFromDocumentTitle() {
+    const t = document.title || "";
+    const m = t.match(/^(.+?)\s*(?:\||[-–—])\s*LinkedIn/i);
+    if (!m) return undefined;
+    return acceptNameCandidate(m[1]);
+  }
+
+  function nameFromOpenGraph() {
+    const og =
+      document.querySelector('meta[property="og:title"]') ||
+      document.querySelector('meta[name="og:title"]');
+    let c = clean(og?.getAttribute("content"));
+    if (!c) return undefined;
+    c = c.replace(/\s*[-|–—]\s*LinkedIn.*$/i, "").trim();
+    return acceptNameCandidate(c);
+  }
+
+  function nameFromProfileAnchors() {
+    const slug = vanitySlugFromUrl();
+    const links = slug
+      ? document.querySelectorAll(
+          `a[href*="/in/${slug}"], a[href*="/in/${encodeURIComponent(slug)}"]`,
+        )
+      : document.querySelectorAll('a[href*="/in/"]');
+    for (const a of links) {
+      const h1 = a.querySelector("h1");
+      if (h1) {
+        const t = acceptNameCandidate(h1.innerText || h1.textContent);
+        if (t) return t;
+      }
+      const label = clean(a.getAttribute("aria-label"));
+      if (
+        label &&
+        label.length >= 2 &&
+        label.length < 120 &&
+        !/view\s+profile|profile\s+photo|background\s+image/i.test(label)
+      ) {
+        const fromLabel = acceptNameCandidate(label);
+        if (fromLabel) return fromLabel;
+      }
+    }
+    const loose = document.querySelector('a[href*="/in/"] h1');
+    if (loose) {
+      const t = acceptNameCandidate(loose.innerText || loose.textContent);
+      if (t) return t;
+    }
+    return undefined;
+  }
+
+  function nameFromHeadingCandidates() {
+    const selectors = [
       '[data-anonymize="person-name"]',
       "main h1.text-heading-xlarge",
+      "main h1.inline",
       "main h1",
       "h1.text-heading-xlarge",
       ".pv-text-details__left-panel h1",
-    ) || undefined;
+      '[data-view-name*="profile"] h1',
+      '[componentkey*="Topcard"] h1',
+    ];
+    for (const sel of selectors) {
+      const t = acceptNameCandidate(firstText(sel));
+      if (t) return t;
+    }
+    for (const h1 of document.querySelectorAll("h1")) {
+      const t = acceptNameCandidate(h1.innerText || h1.textContent);
+      if (!t) continue;
+      if (/^(home|linkedin|notifications|jobs|messaging|search)$/i.test(t)) {
+        continue;
+      }
+      if (h1.closest("main") || h1.closest("[data-view-name]")) return t;
+    }
+    return undefined;
+  }
+
+  const fullName =
+    nameFromHeadingCandidates() ||
+    nameFromDocumentTitle() ||
+    nameFromOpenGraph() ||
+    nameFromProfileAnchors() ||
+    undefined;
 
   let headline = firstText(
     '[data-anonymize="headline"]',
@@ -735,6 +901,24 @@ function scrapeVisibleProfile() {
     extractedFields,
     fieldPresence,
   };
+}
+
+/** Wait for LinkedIn top card, then scrape profile fields from a tab. */
+async function scrapeProfileFromTab(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: waitForProfileDomReady,
+      args: [5000],
+    });
+  } catch {
+    /* best-effort: scrape even if wait injection failed */
+  }
+  const injected = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: scrapeVisibleProfile,
+  });
+  return injected[0]?.result;
 }
 
 /**
@@ -1005,10 +1189,7 @@ async function postProfileCaptureForTab(tabId, root, pruned) {
   if (!isLinkedInProfilePageUrl(tab.url)) {
     return { ok: false, error: "Not on a profile page." };
   }
-  const [{ result }] = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: scrapeVisibleProfile,
-  });
+  const result = await scrapeProfileFromTab(tabId);
   if (!result) {
     return { ok: false, error: "Extractor returned nothing." };
   }
@@ -1133,10 +1314,31 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === "CLIN_HEALTH_CHECK") {
+    (async () => {
+      const base = typeof msg.apiBase === "string" ? msg.apiBase : await getApiBase();
+      sendResponse(await fetchClinHealth(base));
+    })();
+    return true;
+  }
+  return false;
+});
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type !== "CLIN_CAPTURE") return;
 
   (async () => {
     try {
+      campaignContextFetchedAt = 0;
+      campaignContextPayload = null;
+
+      const base = await getApiBase();
+      const healthCheck = await fetchClinHealth(base);
+      if (!healthCheck.ok) {
+        sendResponse({ ok: false, error: healthCheck.error });
+        return;
+      }
+
       const [tab] = await chrome.tabs.query({
         active: true,
         currentWindow: true,
@@ -1153,7 +1355,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
       }
 
-      const base = await getApiBase();
       const paceCheck = await checkPaceForCapture(base);
       if (!paceCheck.ok) {
         await chrome.storage.local.set({ [LAST_ERROR_KEY]: paceCheck.message });
@@ -1271,10 +1472,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
       }
 
-      const [{ result }] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: scrapeVisibleProfile,
-      });
+      const result = await scrapeProfileFromTab(tab.id);
 
       if (!result) {
         sendResponse({ ok: false, error: "Extractor returned nothing." });
@@ -1306,7 +1504,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
       await recordBatchCaptureSuccess(pruned, 1);
       await chrome.storage.local.remove(LAST_ERROR_KEY);
-      sendResponse({ ok: true, data: json, mode: "profile" });
+      const scrapeFp = result.fieldPresence;
+      sendResponse({
+        ok: true,
+        data: { ...json, fieldPresence: json.fieldPresence ?? scrapeFp },
+        mode: "profile",
+      });
     } catch (e) {
       sendResponse({
         ok: false,
@@ -1362,10 +1565,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
       }
 
-      const [{ result }] = await chrome.scripting.executeScript({
-        target: { tabId },
-        func: scrapeVisibleProfile,
-      });
+      const result = await scrapeProfileFromTab(tabId);
 
       if (!result) {
         sendResponse({ ok: false, error: "Extractor returned nothing." });

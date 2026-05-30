@@ -1,3 +1,5 @@
+import { sanitizeScrapedFullName } from "@/lib/linkedinNormalize";
+
 /**
  * Human-readable labels for contacts that may be URL stubs (no name captured yet).
  */
@@ -34,7 +36,10 @@ function shortId(id: string): string {
  * then a short id token — never the full UUID as the only text.
  */
 export function contactPickerLabel(c: PickerContact): string {
-  const name = (c.fullName || c.headline)?.trim();
+  const name = (
+    sanitizeScrapedFullName(c.fullName) ||
+    c.headline
+  )?.trim();
   if (name) {
     const co = c.company?.trim();
     const suffix = co ? ` · ${co.slice(0, 40)}` : "";

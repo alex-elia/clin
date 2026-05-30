@@ -21,7 +21,7 @@ export default async function CampaignsPage() {
             One <strong className="font-medium">campaign</strong> is your pitch context plus a{" "}
             <strong className="font-medium">list of contacts</strong>. Set a{" "}
             <strong className="font-medium">capture target</strong> on a campaign, then use the extension on LinkedIn
-            search/lists/profiles to fill that list. Generate drafts with Ollama (dashboard or extension), edit, mark{" "}
+            search/lists/profiles to fill that list. Generate drafts with AI (dashboard or extension), edit, mark{" "}
             <strong className="font-medium">ready</strong>, set{" "}
             <strong className="font-medium">active for extension</strong>, then refresh{" "}
             <code className="clin-code font-mono">

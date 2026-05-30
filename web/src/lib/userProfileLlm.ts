@@ -2,11 +2,9 @@ import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { captureSessions, contacts } from "@/db/schema";
-import {
-  callOllamaJson,
-  extractJsonObjectFromModelText,
-} from "@/lib/llmAnalysis";
-import type { OllamaSettings } from "@/lib/ollamaSettings";
+import { extractJsonObjectFromModelText } from "@/lib/llmAnalysis";
+import { completeChat } from "@/lib/llm/completeChat";
+import type { LlmConfig } from "@/lib/llm/types";
 import { backfillContactFieldsFromLatestProfileCapture } from "@/lib/contactProfileBackfill";
 import { getOrCreateUserContext } from "@/lib/userContext";
 
@@ -75,7 +73,7 @@ export async function getSelfProfileReadyForOllama(
  * contact capture (and optional prior goals as hints).
  */
 export async function runSelfGoalsAndPositioningLlm(opts: {
-  settings: OllamaSettings;
+  settings: LlmConfig;
 }): Promise<SelfProfileLlmResult> {
   const db = getDb();
   const ctx = await getOrCreateUserContext();
@@ -120,10 +118,11 @@ If data is thin, say so in both fields and suggest what to capture next on Linke
     2,
   );
 
-  const rawText = await callOllamaJson({
-    settings: opts.settings,
+  const rawText = await completeChat({
+    config: opts.settings,
     system,
     user,
+    jsonMode: true,
     timeoutMs: 120_000,
   });
   const jsonStr = extractJsonObjectFromModelText(rawText);

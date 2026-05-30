@@ -3,6 +3,7 @@ const DEFAULT_BASE = "http://127.0.0.1:3000";
 const baseInput = document.getElementById("base");
 const activityEl = document.getElementById("activity");
 const outreachEl = document.getElementById("outreach");
+const brandingPostsEl = document.getElementById("branding-posts");
 const dashLink = document.getElementById("dash-link");
 
 function getBase() {
@@ -21,6 +22,7 @@ function initTabs() {
   const tabBar = document.querySelector(".tab-bar");
   if (!tabBar) return;
   const buttons = [...tabBar.querySelectorAll("button[data-panel]")];
+  const settingsGear = document.getElementById("open-settings");
   const panels = new Map(
     buttons.map((b) => [b.dataset.panel, document.getElementById(`panel-${b.dataset.panel}`)]),
   );
@@ -31,6 +33,9 @@ function initTabs() {
       btn.classList.toggle("is-active", on);
       btn.setAttribute("aria-selected", on ? "true" : "false");
     }
+    if (settingsGear) {
+      settingsGear.classList.toggle("is-active", name === "settings");
+    }
     for (const [id, panel] of panels) {
       if (!panel) continue;
       const on = id === name;
@@ -40,14 +45,30 @@ function initTabs() {
   }
 
   buttons.forEach((btn) => {
-    btn.addEventListener("click", () => activate(btn.dataset.panel));
+    btn.addEventListener("click", () => {
+      activate(btn.dataset.panel);
+      if (btn.dataset.panel === "data") void refreshCampaignUi();
+      if (btn.dataset.panel === "branding") void loadReadyBranding();
+    });
   });
+  settingsGear?.addEventListener("click", () => activate("settings"));
 
-  activate("capture");
+  activate("data");
+}
+
+/** Campaign dropdown + capture-target hints (refresh after capture or new campaigns in Clin). */
+async function refreshCampaignUi() {
+  await Promise.all([loadCampaignCaptureHint(), populateImportCampaignPicker()]);
 }
 
 function syncDashHref() {
   dashLink.href = `${getBase()}/`;
+}
+
+const extVersionEl = document.getElementById("ext-version");
+if (extVersionEl) {
+  const v = chrome.runtime.getManifest().version;
+  extVersionEl.textContent = `v${v} · `;
 }
 
 initTabs();
@@ -180,8 +201,8 @@ chrome.storage.sync.get(["clinApiBase"], (r) => {
   baseInput.value = r.clinApiBase || DEFAULT_BASE;
   syncDashHref();
   loadReadyOutreach();
-  void loadCampaignCaptureHint();
-  void populateImportCampaignPicker();
+  loadReadyBranding();
+  void refreshCampaignUi();
   chrome.runtime.sendMessage({ type: "CLIN_POLL_PENDING_SELF" }, () => {
     void chrome.runtime.lastError;
   });
@@ -195,20 +216,33 @@ document.getElementById("save").addEventListener("click", () => {
     setStatus("Saved API base.", "ok");
     syncDashHref();
     loadReadyOutreach();
-    void loadCampaignCaptureHint();
+    loadReadyBranding();
+    void refreshCampaignUi();
   });
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") void refreshCampaignUi();
 });
 
 document.getElementById("ping").addEventListener("click", async () => {
   const base = getBase();
-  setStatus("Checking…");
-  try {
-    const res = await fetch(`${base}/api/health`);
-    const j = await res.json();
-    setStatus(JSON.stringify(j, null, 2), res.ok ? "ok" : "err");
-  } catch (e) {
-    setStatus(String(e), "err");
+  setStatus("Checking Clin…");
+  const health = await checkClinHealth(base);
+  if (!health.ok) {
+    setStatus(health.error || "Health check failed.", "err");
+    return;
   }
+  const h = health.health;
+  setStatus(
+    [
+      `Clin ${h?.version ?? "?"} · port ${h?.port ?? "?"}`,
+      `DB: ${h?.db ? "OK" : "FAIL"} · ${h?.dbPath ?? "?"}`,
+      `Revision: ${h?.apiRevision ?? "?"}`,
+      `Node: ${h?.nodeVersion ?? "?"}`,
+    ].join("\n"),
+    h?.db ? "ok" : "err",
+  );
 });
 
 document.getElementById("open-next-profile-capture")?.addEventListener("click", () => {
@@ -226,6 +260,21 @@ function clearPaceCountdown() {
     clearInterval(paceCountdownTimer);
     paceCountdownTimer = null;
   }
+}
+
+function checkClinHealth(base) {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      { type: "CLIN_HEALTH_CHECK", apiBase: base },
+      (resp) => {
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+        resolve(resp ?? { ok: false, error: "No health response." });
+      },
+    );
+  });
 }
 
 function sendCaptureMessage() {
@@ -273,20 +322,42 @@ function applyCaptureSuccess(resp) {
     );
     return;
   }
+  const fp = resp.data?.fieldPresence;
+  const partial =
+    fp && !fp.fullName
+      ? "\n\nName not detected — let the profile finish loading (scroll to top), then capture again."
+      : "";
+  const nameLine = resp.data?.fullName
+    ? `\nName: ${resp.data.fullName}`
+    : "";
   setStatus(
-    `Saved.\nContact: ${resp.data?.contactId || "?"}\n${resp.data?.canonicalUrl || ""}` +
-      campaignAttachLine(resp.data),
-    "ok",
+    `Saved.\nContact: ${resp.data?.contactId || "?"}\n${resp.data?.canonicalUrl || ""}${nameLine}` +
+      campaignAttachLine(resp.data) +
+      partial,
+    fp && !fp.fullName ? "err" : "ok",
   );
 }
 
 async function runCaptureFlow() {
   clearPaceCountdown();
+  const base = getBase();
+  setStatus("Checking Clin API…");
+  const health = await checkClinHealth(base);
+  if (!health.ok) {
+    setStatus(health.error || "Clin health check failed.", "err");
+    return;
+  }
+  const h = health.health;
+  setStatus(
+    `Clin OK · ${h?.dbPath ? h.dbPath.split(/[/\\]/).pop() : "db"} · ${h?.apiRevision ?? ""}`,
+    "ok",
+  );
+  await new Promise((r) => setTimeout(r, 400));
   setStatus("Capturing…");
   const resp = await sendCaptureMessage();
   if (resp.ok) {
     applyCaptureSuccess(resp);
-    void loadCampaignCaptureHint();
+    void refreshCampaignUi();
     return;
   }
   if (resp.paceKind === "gap" && resp.paceWaitSeconds > 0) {
@@ -320,7 +391,7 @@ document.getElementById("cap").addEventListener("click", () => {
 const genDraftBtn = document.getElementById("campaign-gen-draft");
 if (genDraftBtn) {
   genDraftBtn.addEventListener("click", () => {
-    setStatus("Generating draft (Ollama)…");
+    setStatus("Generating draft (AI)…");
     const base = getBase();
     chrome.runtime.sendMessage(
       { type: "CLIN_GENERATE_CAMPAIGN_DRAFT", apiBase: base },
@@ -332,8 +403,9 @@ if (genDraftBtn) {
         if (!resp?.ok) {
           const lines = [resp?.error || "Draft failed."];
           if (resp?.stage) lines.push(`Stage: ${resp.stage}`);
-          if (resp?.ollama?.model)
-            lines.push(`Ollama model: ${resp.ollama.model} (Clin → Settings)`);
+          const model = resp?.llm?.model ?? resp?.ollama?.model;
+          if (model)
+            lines.push(`Inference model: ${model} (Clin → Settings → Inference)`);
           setStatus(lines.join("\n"), "err");
           return;
         }
@@ -654,6 +726,205 @@ document.getElementById("hygiene-run").addEventListener("click", async () => {
   setStatus(`Hygiene: finished ${maxSteps} profile(s).`, "ok");
   refreshHygieneStatus();
 });
+
+document.getElementById("refresh-branding")?.addEventListener("click", () => {
+  loadReadyBranding();
+});
+
+async function loadReadyBranding() {
+  if (!brandingPostsEl) return;
+  brandingPostsEl.replaceChildren();
+  const hint = document.createElement("p");
+  hint.className = "text-muted";
+  hint.textContent = "Loading…";
+  brandingPostsEl.appendChild(hint);
+
+  const base = getBase();
+  try {
+    const res = await fetch(`${base}/api/branding/posts/ready`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      hint.textContent = data?.error || `HTTP ${res.status}`;
+      hint.classList.add("is-err");
+      return;
+    }
+    brandingPostsEl.replaceChildren();
+    const items = data.items || [];
+    if (items.length === 0) {
+      const p = document.createElement("p");
+      p.className = "text-muted";
+      p.textContent =
+        "Nothing ready. In Clin → Content plan, mark posts as ready, then refresh.";
+      brandingPostsEl.appendChild(p);
+      return;
+    }
+
+    const cap = document.createElement("p");
+    cap.className = "text-muted";
+    cap.textContent = `${data.count} ready post(s).`;
+    brandingPostsEl.appendChild(cap);
+
+    for (const it of items.slice(0, 8)) {
+      brandingPostsEl.appendChild(renderBrandingPostCard(it, base));
+    }
+  } catch (e) {
+    brandingPostsEl.replaceChildren();
+    const p = document.createElement("p");
+    p.className = "text-muted is-err";
+    p.textContent = String(e);
+    brandingPostsEl.appendChild(p);
+  }
+}
+
+function clinAbsoluteUrl(base, path) {
+  if (!path) return "";
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  const b = base.replace(/\/$/, "");
+  return `${b}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+async function copyClinImageToClipboard(base, image) {
+  const url = clinAbsoluteUrl(base, image.downloadUrl || image.url);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Image fetch failed (${res.status})`);
+  const blob = await res.blob();
+  const bmp = await createImageBitmap(blob);
+  const canvas = document.createElement("canvas");
+  canvas.width = bmp.width;
+  canvas.height = bmp.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas unavailable");
+  ctx.drawImage(bmp, 0, 0);
+  const png = await new Promise((resolve, reject) => {
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("PNG encode failed"))), "image/png");
+  });
+  await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+}
+
+function downloadClinImage(base, image) {
+  const url = clinAbsoluteUrl(base, image.downloadUrl || image.url);
+  const filename = image.filename || `clin-post-${Date.now()}.jpg`;
+  if (chrome.downloads?.download) {
+    chrome.downloads.download({ url, filename, saveAs: true });
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.rel = "noopener";
+  a.click();
+}
+
+function renderBrandingPostCard(it, base) {
+  const card = document.createElement("div");
+  card.className = "card";
+
+  const h3 = document.createElement("h3");
+  h3.className = "card-title";
+  h3.textContent = it.title || "Post";
+  card.appendChild(h3);
+
+  const primary = it.primaryImage || (it.images && it.images[0]) || null;
+  if (primary?.url) {
+    const imgWrap = document.createElement("div");
+    imgWrap.style.marginTop = "8px";
+    const img = document.createElement("img");
+    img.src = clinAbsoluteUrl(base, primary.url);
+    img.alt = primary.alt || "Post image";
+    img.style.maxWidth = "100%";
+    img.style.maxHeight = "140px";
+    img.style.borderRadius = "6px";
+    img.style.border = "1px solid var(--border, #e2e8f0)";
+    imgWrap.appendChild(img);
+    if (primary.style) {
+      const cap = document.createElement("p");
+      cap.className = "text-muted";
+      cap.style.fontSize = "11px";
+      cap.style.marginTop = "4px";
+      cap.textContent =
+        primary.style === "text_card" ? "Text graphic" : "Photo";
+      imgWrap.appendChild(cap);
+    }
+    card.appendChild(imgWrap);
+  }
+
+  const ta = document.createElement("textarea");
+  ta.className = "card-draft";
+  ta.readOnly = true;
+  ta.value = it.copyText?.trim() || "(No copy)";
+  card.appendChild(ta);
+
+  const row = document.createElement("div");
+  row.className = "btn-row";
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "btn btn-secondary";
+  copyBtn.textContent = "Copy post";
+  copyBtn.addEventListener("click", () => {
+    const text = (ta.value && ta.value !== "(No copy)" ? ta.value : it.copyText) || "";
+    navigator.clipboard.writeText(text.replace(/\r\n/g, "\n").trim()).catch(() => {
+      window.prompt("Copy post:", text);
+    });
+  });
+  row.appendChild(copyBtn);
+
+  if (primary?.url) {
+    const dlBtn = document.createElement("button");
+    dlBtn.type = "button";
+    dlBtn.className = "btn btn-secondary";
+    dlBtn.textContent = "Download image";
+    dlBtn.addEventListener("click", () => {
+      try {
+        downloadClinImage(base, primary);
+        setStatus("Downloading image…", "ok");
+      } catch (e) {
+        setStatus(String(e), "err");
+      }
+    });
+    row.appendChild(dlBtn);
+
+    const imgCopyBtn = document.createElement("button");
+    imgCopyBtn.type = "button";
+    imgCopyBtn.className = "btn btn-secondary";
+    imgCopyBtn.textContent = "Copy image";
+    imgCopyBtn.addEventListener("click", async () => {
+      try {
+        await copyClinImageToClipboard(base, primary);
+        setStatus("Image copied — paste into LinkedIn post composer", "ok");
+      } catch (e) {
+        setStatus(String(e), "err");
+      }
+    });
+    row.appendChild(imgCopyBtn);
+  }
+
+  const pubBtn = document.createElement("button");
+  pubBtn.type = "button";
+  pubBtn.className = "btn btn-secondary";
+  pubBtn.textContent = "Mark published";
+  pubBtn.addEventListener("click", async () => {
+    try {
+      const res = await fetch(`${base}/api/extension/branding-post-published`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ postId: it.postId }),
+      });
+      if (res.ok) {
+        setStatus(`Marked published: ${it.title}`, "ok");
+        loadReadyBranding();
+      } else {
+        setStatus("Mark published failed.", "err");
+      }
+    } catch (e) {
+      setStatus(String(e), "err");
+    }
+  });
+  row.appendChild(pubBtn);
+  card.appendChild(row);
+
+  return card;
+}
 
 async function loadReadyOutreach() {
   outreachEl.replaceChildren();

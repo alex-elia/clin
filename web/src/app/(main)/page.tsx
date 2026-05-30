@@ -27,19 +27,31 @@ export default async function OverviewPage() {
   return (
     <div className="space-y-10">
       <div>
-        <h1 className="clin-page-title">Overview</h1>
+        <h1 className="clin-page-title">Home</h1>
         <p className="clin-page-lead">
-          Local-first network intelligence. Data stays on this machine.{" "}
-          <Link href="/settings" className="clin-link">
-            Pacing
-          </Link>{" "}
-          keeps captures slow;{" "}
-          <Link href="/decisions" className="clin-link">
-            Decisions
-          </Link>{" "}
-          is where you approve drafts before manual sends.
+          Local-first LinkedIn assistant. Data stays on this machine. Work in
+          three areas below — capture and clean your graph, run outreach, and
+          grow your personal brand.
         </p>
       </div>
+
+      <section className="grid gap-4 sm:grid-cols-3">
+        <PillarCard
+          href="/data"
+          title="Data & cleaning"
+          description="Capture from search, lists, or profiles. Contacts, queue, and batch cleaning."
+        />
+        <PillarCard
+          href="/outreach"
+          title="Outreach"
+          description="Campaigns, approved drafts, inbox snapshots, and extension handoff."
+        />
+        <PillarCard
+          href="/branding"
+          title="Personal branding"
+          description="Your voice, goals, post analytics, and influence signals."
+        />
+      </section>
 
       <dl className="grid gap-4 sm:grid-cols-3">
         <Stat label="Contacts" value={stats.contacts} />
@@ -103,6 +115,23 @@ export default async function OverviewPage() {
         </form>
       </section>
     </div>
+  );
+}
+
+function PillarCard({
+  href,
+  title,
+  description,
+}: {
+  href: string;
+  title: string;
+  description: string;
+}) {
+  return (
+    <Link href={href} className="clin-card block p-5 hover:shadow-md">
+      <h2 className="text-base font-semibold text-[var(--clin-text)]">{title}</h2>
+      <p className="mt-2 text-sm text-[var(--clin-muted)]">{description}</p>
+    </Link>
   );
 }
 

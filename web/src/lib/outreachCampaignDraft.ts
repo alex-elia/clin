@@ -2,11 +2,8 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { contacts, outreachCampaignMembers, outreachCampaigns } from "@/db/schema";
-import {
-  callOllamaJson,
-  extractJsonObjectFromModelText,
-} from "@/lib/llmAnalysis";
-import { getOllamaSettings } from "@/lib/ollamaSettings";
+import { extractJsonObjectFromModelText } from "@/lib/llmAnalysis";
+import { completeChat, getLlmConfig } from "@/lib/llm/completeChat";
 import { getGlobalWriterInstructions } from "@/lib/brand";
 import { getLatestProfileContextForOutreach } from "@/lib/profileCaptureContext";
 import { updateMemberDraft } from "@/lib/outreachCampaigns";
@@ -50,7 +47,7 @@ export async function generateOutreachDraftForMember(
     return { ok: false, error: "Missing campaign or contact", stage: "load" };
   }
 
-  const ollama = await getOllamaSettings();
+  const llm = await getLlmConfig();
   const override = campaign.systemPromptOverride?.trim();
   const system =
     override && override.length > 0 ? override : DEFAULT_OUTREACH_SYSTEM;
@@ -76,18 +73,20 @@ export async function generateOutreachDraftForMember(
     memberId,
     campaignId: campaign.id,
     contactId: contact.id,
-    model: ollama.model,
-    baseUrl: ollama.baseUrl,
+    model: llm.model,
+    baseUrl: llm.baseUrl,
+    provider: llm.provider,
     systemOverride: Boolean(override),
     hasWriterInstructions: Boolean(writerNotes),
   });
 
   let raw: string;
   try {
-    raw = await callOllamaJson({
-      settings: ollama,
+    raw = await completeChat({
+      config: llm,
       system,
       user,
+      jsonMode: true,
       timeoutMs: 180_000,
     });
   } catch (e) {
@@ -95,7 +94,7 @@ export async function generateOutreachDraftForMember(
     logDraft("ollama_http_error", msg);
     return {
       ok: false,
-      error: `Ollama request failed: ${msg}. Is Ollama running and the model installed? (Clin → Settings)`,
+      error: `LLM request failed: ${msg}. Check Settings → Inference.`,
       stage: "ollama",
     };
   }

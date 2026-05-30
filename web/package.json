@@ -2,10 +2,16 @@
   "name": "clin-web",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22 <26"
+  },
   "scripts": {
     "clean": "node scripts/clean-next.mjs",
-    "dev": "next dev",
-    "dev:clean": "npm run clean && next dev",
+    "predev": "node scripts/ensure-sqlite-native.mjs",
+    "dev": "node scripts/dev-start.mjs",
+    "dev:stop": "node scripts/stop-dev-port.mjs",
+    "dev:clean": "npm run clean && npm run predev && next dev",
+    "rebuild:native": "npm rebuild better-sqlite3",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",

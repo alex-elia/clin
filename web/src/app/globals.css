@@ -3,6 +3,8 @@
 @tailwind utilities;
 
 @import "../styles/clin-theme.css";
+@import "../styles/post-autopilot.css";
+@import "../styles/speech-input.css";
 
 :root {
   --background: var(--clin-bg);

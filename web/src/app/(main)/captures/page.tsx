@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { contactPickerLabel } from "@/lib/contactDisplay";
 import { listCaptures } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
@@ -45,8 +46,21 @@ export default async function CapturesPage() {
               </p>
               <p className="mt-2 text-xs text-clin-muted">
                 Contact:{" "}
-                {r.contacts?.fullName ?? r.contacts?.linkedinUrlCanonical ?? "—"}
+                {r.contacts
+                  ? contactPickerLabel(r.contacts)
+                  : "—"}
               </p>
+              {r.capture_sessions.fieldPresence ? (
+                <p className="mt-1 font-mono text-[11px] text-clin-muted">
+                  Fields:{" "}
+                  {Object.entries(
+                    r.capture_sessions.fieldPresence as Record<string, boolean>,
+                  )
+                    .filter(([, v]) => v)
+                    .map(([k]) => k)
+                    .join(", ") || "none"}
+                </p>
+              ) : null}
             </li>
           ))
         )}

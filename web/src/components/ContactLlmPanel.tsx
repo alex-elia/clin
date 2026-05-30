@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { setContactSegmentOverrideAction } from "@/app/actions";
+import { VoiceInputButton } from "@/components/VoiceInputButton";
+import { appendTranscriptToText } from "@/lib/speechRecognition";
 
 type Props = {
   contactId: string;
@@ -151,7 +153,7 @@ export function ContactLlmPanel({
             before pasting.
           </li>
           <li>
-            Choose analysis tier if needed, then <strong className="font-medium">Run Ollama analysis</strong>. If
+            Choose analysis tier if needed, then <strong className="font-medium">Run LLM analysis</strong>. If
             the thread is long, use <strong className="font-medium">Refined</strong>.
           </li>
         </ol>
@@ -161,13 +163,22 @@ export function ContactLlmPanel({
         <span className="clin-strong">
           Pasted message thread (local only, optional but needed for removal advice)
         </span>
-        <textarea
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-          rows={12}
-          placeholder={`Example:\nYou: Hi — loved your post on …\nThem: Thanks!\nYou: …follow-up…\n(no reply since 3 months)`}
-          className="w-full clin-input font-mono text-xs leading-relaxed"
-        />
+        <div className="clin-voice-field">
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            rows={12}
+            placeholder={`Speak or paste the thread…\nYou: Hi — loved your post on …\nThem: Thanks!`}
+            className="min-h-0 flex-1 w-full clin-input font-mono text-xs leading-relaxed"
+          />
+          <VoiceInputButton
+            size="sm"
+            label="Voice thread paste"
+            onAppend={(text) =>
+              setMessage((m) => appendTranscriptToText(m, text))
+            }
+          />
+        </div>
       </label>
 
       <label className="flex cursor-pointer items-center gap-2 text-sm text-clin-muted">
@@ -224,14 +235,14 @@ export function ContactLlmPanel({
 
       <div className="border-t border-clin-border pt-5">
         <h2 className="text-sm font-semibold text-clin-text">
-          Full LLM analysis (Ollama)
+          Full LLM analysis
         </h2>
         <p className="mt-1 text-xs leading-relaxed text-clin-muted">
           Rule-based R/B/C above stay the source of truth for default segments until you override. The model adds
           scores, rationale, and suggested actions.
         </p>
         <p className="mt-2 text-xs text-clin-muted">
-          Endpoint:{" "}
+          Active inference:{" "}
           <code className="clin-code">{ollamaBase}</code> · Model:{" "}
           <code className="clin-code">{ollamaModel}</code> ·{" "}
           <a href="/settings" className="clin-link">
@@ -269,7 +280,7 @@ export function ContactLlmPanel({
           onClick={() => void runAnalysis()}
           className="mt-4 clin-btn-primary disabled:opacity-50"
         >
-          {loading ? "Calling Ollama… (can take 1–2 min)" : "Run Ollama analysis"}
+          {loading ? "Running inference… (can take 1–2 min)" : "Run LLM analysis"}
         </button>
 
         {error ? (

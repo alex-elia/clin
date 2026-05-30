@@ -1,6 +1,9 @@
 import { and, desc, eq } from "drizzle-orm";
 import { captureSessions, contacts } from "@/db/schema";
-import { normalizeExtractedPersonFields } from "@/lib/linkedinNormalize";
+import {
+  normalizeExtractedPersonFields,
+  sanitizeScrapedFullName,
+} from "@/lib/linkedinNormalize";
 import { SCORE_RULE_VERSION, scoreContact } from "@/lib/scoring";
 import { normalizeCompany } from "@/lib/url";
 import type { getDb } from "@/db";
@@ -65,7 +68,8 @@ export async function backfillContactFieldsFromLatestProfileCapture(
   });
   if (!c) return false;
 
-  const fullName = c.fullName?.trim() || normalized.fullName || null;
+  const existingName = sanitizeScrapedFullName(c.fullName);
+  const fullName = existingName || normalized.fullName || null;
   const headline = c.headline?.trim() || normalized.headline || null;
   const company = c.company?.trim() || normalized.company || null;
   const location = c.location?.trim() || normalized.location || null;

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { CampaignFormFields } from "@/components/CampaignFormFields";
 import { RemoveFromCampaignForm } from "@/components/RemoveFromCampaignForm";
 import {
   addContactIdsToCampaignAction,
@@ -179,7 +180,7 @@ export default async function CampaignDetailPage({
           </li>
           <li>
             Optional: paste Clin contact IDs, or use <strong className="font-medium">Generate draft</strong> in the
-            extension on an open profile (Ollama), or batch-generate on this page.
+            extension on an open profile, or batch-generate on this page.
           </li>
           <li>
             Edit drafts, then <strong className="font-medium">Ready for extension</strong> and set{" "}
@@ -197,67 +198,20 @@ export default async function CampaignDetailPage({
 
       <section className="space-y-3">
         <h2 className="text-sm font-semibold">Campaign details</h2>
-        <form action={updateCampaignAction} className="space-y-3 clin-card p-4">
-          <input type="hidden" name="campaignId" value={id} />
-          <label className="block">
-            <span className="text-xs font-medium uppercase text-clin-muted">Name</span>
-            <input
-              name="name"
-              defaultValue={campaign.name}
-              required
-              className="mt-1 w-full max-w-md clin-input text-sm"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium uppercase text-clin-muted">Context</span>
-            <textarea
-              name="contextText"
-              defaultValue={campaign.contextText}
-              required
-              rows={6}
-              className="mt-1 w-full clin-input text-sm"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium uppercase text-clin-muted">
-              Writer instructions (for AI)
-            </span>
-            <textarea
-              name="writerInstructions"
-              defaultValue={campaign.writerInstructions ?? ""}
-              rows={5}
-              className="mt-1 w-full clin-input text-sm"
-              placeholder="Tone, must-say, avoid, length, CTA… Merged into each draft request."
-            />
-          </label>
-          <details className="clin-card p-3">
-            <summary className="cursor-pointer text-sm font-medium">
-              Advanced: custom system prompt
-            </summary>
-            <textarea
-              name="systemPromptOverride"
-              defaultValue={campaign.systemPromptOverride ?? ""}
-              rows={6}
-              className="mt-2 w-full clin-input font-mono text-xs"
-              placeholder={
-                'Empty = default. Must still require JSON {"message":"..."} only.'
-              }
-            />
-          </details>
+        <form action={updateCampaignAction} className="space-y-4 clin-card p-4">
+          <CampaignFormFields
+            submitLabel="Save"
+            defaultName={campaign.name}
+            defaultContext={campaign.contextText}
+            defaultWriter={campaign.writerInstructions ?? ""}
+            defaultSystemOverride={campaign.systemPromptOverride ?? ""}
+            hiddenCampaignId={id}
+          />
           <p className="text-xs text-clin-muted">
-            Ollama:{" "}
-            <Link href="/settings" className="clin-link">
-              Settings
-            </Link>
-            . Dev server logs:{" "}
-            <code className="clin-code">[clin:outreach-draft]</code>
+            Per-contact draft logs:{" "}
+            <code className="clin-code">[clin:outreach-draft]</code> in the dev
+            terminal.
           </p>
-          <button
-            type="submit"
-            className="clin-btn-secondary text-sm px-3 py-1.5"
-          >
-            Save
-          </button>
         </form>
       </section>
 
@@ -443,7 +397,7 @@ export default async function CampaignDetailPage({
       </section>
 
       <section className="clin-card p-4">
-        <h3 className="text-sm font-semibold">Batch generate (Ollama)</h3>
+        <h3 className="text-sm font-semibold">Batch generate drafts</h3>
         <p className="mt-1 text-xs text-clin-muted">
           Fills empty drafts for up to N members in <strong className="font-medium">draft</strong> status. By default
           only people with a <strong className="font-medium">detailed profile capture</strong> (About or Experience on

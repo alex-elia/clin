@@ -2,8 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ContactLlmPanel } from "@/components/ContactLlmPanel";
 import { selectContactLlmExtension } from "@/lib/contactSqlExtras";
+import { contactPickerLabel } from "@/lib/contactDisplay";
 import { getContactById } from "@/lib/queries";
-import { getOllamaSettings } from "@/lib/ollamaSettings";
+import { getLlmConfig } from "@/lib/llm/completeChat";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +19,7 @@ export default async function ContactDetailPage({
 
   const llm = selectContactLlmExtension(contact.id);
 
-  const ollama = await getOllamaSettings();
+  const inference = await getLlmConfig();
 
   return (
     <div className="mx-auto max-w-4xl space-y-8">
@@ -30,7 +31,7 @@ export default async function ContactDetailPage({
           ← Contacts
         </Link>
         <h1 className="mt-2 clin-page-title">
-          {contact.fullName ?? "Unknown"}
+          {contactPickerLabel(contact).split(" · ")[0]}
         </h1>
         <p className="mt-1 text-sm text-clin-muted">
           {contact.headline ?? "—"}
@@ -77,8 +78,8 @@ export default async function ContactDetailPage({
         initialMessage={llm?.llmMessageContext ?? ""}
         initialProvisional={llm?.llmProvisionalJson ?? null}
         initialRefined={llm?.llmRefinedJson ?? null}
-        ollamaBase={ollama.baseUrl}
-        ollamaModel={ollama.model}
+        ollamaBase={inference.baseUrl}
+        ollamaModel={inference.model}
       />
     </div>
   );

@@ -1,0 +1,10 @@
+.clin-voice-field {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.clin-voice-field .clin-input {
+  flex: 1;
+  min-width: 0;
+}

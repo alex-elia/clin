@@ -15,6 +15,33 @@ function clean(s: string | undefined): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
+/** LinkedIn FR/EN UI strings mistaken for profile names (notification bell aria-label, etc.). */
+const NOTIFICATION_UI =
+  /gérer les notifications|manage notifications|turn on notifications|notification preferences|paramètres de notification/i;
+
+/**
+ * Strip notification UI chrome; extract embedded name when present
+ * ("Gérer les notifications au sujet de Jane Doe" → "Jane Doe").
+ */
+export function sanitizeScrapedFullName(
+  raw: string | undefined | null,
+): string | undefined {
+  const t = clean(raw ?? undefined);
+  if (!t) return undefined;
+  if (NOTIFICATION_UI.test(t)) {
+    const fr = t.match(/au sujet de (.+)$/i);
+    if (fr?.[1]) return clean(fr[1]) || undefined;
+    const en = t.match(/about (.+)$/i);
+    if (en?.[1]) return clean(en[1]) || undefined;
+    return undefined;
+  }
+  if (/^(gérer|manage|voir le profil|view profile|open profile)\b/i.test(t)) {
+    return undefined;
+  }
+  if (t.length > 90 && /\bnotifications?\b/i.test(t)) return undefined;
+  return t;
+}
+
 /** Title-like fragment starts with these (FR/EN LinkedIn). */
 const TITLE_LEAD =
   /^(Chef|Directeur|Directrice|Manager|Ingénieur|Ing\.|Engineer|Engineering|Partner|Partners|Consultant|Consultante|Engagement|Principal|Associate|Associé|Associée|Head|Lead|Senior|Junior|CIO|CTO|CEO|COO|CFO|Officer|President|Vice|VP|Developer|Designer|Analyst|Architect|Specialist|Advisor|Conseil|Professeur|Professor|Research|Product|Project|Programme|Program|Business|Sales|Marketing|Founder|Co-founder|Owner|Director|Investment|Transformation|Cloud|Data|Software|Freelance|Independent|Self-employed|Stagiaire|Intern|Student|PhD|Dr\.|MD|Chief|Executive|Chair|Board|Member|Administrator|Responsable|Coordinateur|Expert|Technique|Commercial|Legal|Finance|HR|Human|Operations|Strategy|Innovation|Digital|IT|ICT|International|Global|Regional|Country|Area)\b/i;
@@ -90,7 +117,7 @@ function splitConcatenatedNameTitle(blob: string): { name: string; title?: strin
  * Normalize scraped person fields (safe to run on every ingest).
  */
 export function normalizeExtractedPersonFields(input: PersonExtract): PersonExtract {
-  let name = clean(input.fullName);
+  let name = sanitizeScrapedFullName(input.fullName) ?? "";
   let headline = clean(input.headline);
   let company = clean(input.company);
   const location = input.location;

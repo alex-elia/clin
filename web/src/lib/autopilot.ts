@@ -5,7 +5,7 @@ import {
   defaultAutopilotAnalyzeBody,
   executeContactAnalysis,
 } from "@/lib/contactAnalyzeRunner";
-import { getOllamaSettings } from "@/lib/ollamaSettings";
+import { getLlmConfig } from "@/lib/llm/completeChat";
 
 export const AUTOPILOT_KEYS = {
   analyzeAfterProfileCapture: "autopilot.analyze_after_profile_capture",
@@ -173,14 +173,14 @@ export async function runLlmAnalysisBatch(opts: {
   limit: number;
 }): Promise<{ results: BatchAnalyzeItemResult[] }> {
   const db = getDb();
-  const ollama = await getOllamaSettings();
+  const llm = await getLlmConfig();
   const ids = await resolvePendingLlmContactIds(opts.limit);
   const results: BatchAnalyzeItemResult[] = [];
   const body = defaultAutopilotAnalyzeBody();
 
   for (const contactId of ids) {
     try {
-      const { tier } = await executeContactAnalysis(db, contactId, body, ollama);
+      const { tier } = await executeContactAnalysis(db, contactId, body, llm);
       results.push({ contactId, ok: true, tier });
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
@@ -205,12 +205,12 @@ export function maybeAutopilotAnalyzeAfterProfileCapture(
       const settings = await getAutopilotSettings();
       if (!settings.analyzeAfterProfileCapture) return;
       const db = getDb();
-      const ollama = await getOllamaSettings();
+      const llm = await getLlmConfig();
       await executeContactAnalysis(
         db,
         contactId,
         defaultAutopilotAnalyzeBody(),
-        ollama,
+        llm,
       );
     } catch (err) {
       console.error(
