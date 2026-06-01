@@ -45,10 +45,18 @@ export const POST_WRITING_QUICK_PROMPTS_POST = {
   ],
 } as const;
 
-export const POST_WRITING_QUICK_PROMPTS_STUDIO = [
-  "What should I publish next this week?",
-  "I published yesterday — reschedule my pipeline.",
-] as const;
+export const POST_WRITING_QUICK_PROMPTS_STUDIO = {
+  en: [
+    "Plan next week: add Tue/Thu calendar slots with titles and idea notes (create_post actions).",
+    "What should I publish this week given my pipeline? Then add the best slots to the calendar.",
+    "Reschedule my pipeline to the next Tue/Thu morning slots.",
+  ],
+  fr: [
+    "Planifie la semaine prochaine : créneaux mar/jeu avec titres et briefs (actions create_post).",
+    "Que publier cette semaine vu mon pipeline ? Puis ajoute les créneaux au calendrier.",
+    "Réorganise mon pipeline sur les prochains créneaux mar/jeu matin.",
+  ],
+} as const;
 
 export type PostWorkflowDraft = CoachDraftPayload & {
   brandLanguage?: string;

@@ -19,6 +19,7 @@ const bodySchema = z.object({
   message: z.string().min(2).max(12_000),
   threadId: z.string().optional(),
   postId: z.string().optional(),
+  scope: z.enum(["studio", "post"]).optional(),
   draft: draftSchema.optional(),
 });
 

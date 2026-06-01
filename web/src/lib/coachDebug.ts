@@ -18,6 +18,17 @@ export type BrandCoachTurnDebug = {
   parse: CoachActionsParseDebug;
 };
 
+/** Valid coach-actions block but zero actions — often OK in planning chat. */
+export function isAdvisoryCoachReply(debug?: BrandCoachTurnDebug | null): boolean {
+  if (!debug) return false;
+  const p = debug.parse;
+  return (
+    p.hasCoachActionsBlock &&
+    p.schemaValid &&
+    p.actionsCount === 0
+  );
+}
+
 export function formatCoachNoActionsMessage(debug?: BrandCoachTurnDebug | null): string {
   if (!debug) {
     return "Coach returned no post updates. Try adding more detail to your brief. See Settings → AI call logs.";

@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { PlanningChatPanel } from "@/components/PlanningChatPanel";
 import { listContentPosts, listRecentPublished } from "@/lib/contentPosts";
 import { CONTENT_STATUS_LABELS, type ContentPostStatus } from "@/lib/contentPostsShared";
+import { getOrCreateContentBrandContext } from "@/lib/contentBrandContext";
 import { getVoiceSetupStatus } from "@/lib/voiceSetup";
 
 export const dynamic = "force-dynamic";
@@ -13,9 +14,10 @@ export default async function BrandStudioPage() {
     redirect("/branding/setup");
   }
 
-  const [posts, published] = await Promise.all([
+  const [posts, published, brand] = await Promise.all([
     listContentPosts({ limit: 30 }),
     listRecentPublished(5),
+    getOrCreateContentBrandContext(),
   ]);
 
   const upcoming = posts
@@ -73,7 +75,7 @@ export default async function BrandStudioPage() {
         </section>
       </div>
 
-      <PlanningChatPanel />
+      <PlanningChatPanel brandLanguage={brand.contentLanguage} />
     </div>
   );
 }

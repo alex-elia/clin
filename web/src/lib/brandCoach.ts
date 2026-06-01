@@ -60,8 +60,21 @@ Allowed action types:
 
 Use postIds from the pipeline context.`;
 
-function buildBrandCoachSystemPrompt(resolved: ResolvedLanguage): string {
-  return `${SYSTEM_PROMPT_BASE}
+const STUDIO_PLANNING_INSTRUCTIONS = `Planning chat (studio scope — no single active post):
+- When the user asks what to publish this week/month, or to plan the calendar: propose concrete ideas AND add them with create_post actions (title, ideaNotes with angle + key points, scheduledAt on Tue/Thu mornings per publishing_rhythm unless they specify otherwise). Use status "idea" or "drafting".
+- Do NOT return {"actions":[]} after listing ideas they asked to plan — either create_post for each slot or ask ONE clarifying question without an empty actions block.
+- reschedule_pipeline when they ask to move existing posts; use postIds from the pipeline.
+- Market / country context: when they mention France, EU, US, etc., factor in holidays and quiet periods (e.g. August in France, early May, year-end) and say so briefly in the reply.
+- Advisory-only turn (user still choosing): reply in prose, omit the coach-actions block entirely — do not send an empty actions array.
+- Full hook/body writing happens on each post page; here you plan titles, briefs, and schedule only.`;
+
+function buildBrandCoachSystemPrompt(
+  resolved: ResolvedLanguage,
+  scope: CoachThreadScope,
+): string {
+  const studioBlock =
+    scope === "studio" ? `\n\n${STUDIO_PLANNING_INSTRUCTIONS}` : "";
+  return `${SYSTEM_PROMPT_BASE}${studioBlock}
 
 ${buildCoachLanguageInstruction(resolved.language)}`;
 }
@@ -251,7 +264,7 @@ USER: ${trimmed}`;
   try {
     raw = await completeChat({
       config: llm,
-      system: buildBrandCoachSystemPrompt(resolvedLanguage),
+      system: buildBrandCoachSystemPrompt(resolvedLanguage, scope),
       user: userBlock,
       temperature: 0.55,
       feature: "brand_coach",
