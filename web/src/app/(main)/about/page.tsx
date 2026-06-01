@@ -1,5 +1,9 @@
 import Image from "next/image";
 import Link from "next/link";
+import {
+  CLIN_GITHUB_ISSUES_NEW,
+  CLIN_GITHUB_REPO,
+} from "@/lib/projectLinks";
 
 export const dynamic = "force-dynamic";
 
@@ -16,56 +20,107 @@ export default function AboutPage() {
         />
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-[var(--clin-text)]">
-            Clin
+            About Clin
           </h1>
           <p className="mt-1 text-sm text-[var(--clin-muted)]">
-            Local-first LinkedIn network intelligence
+            Local-first LinkedIn assistant
           </p>
         </div>
       </div>
 
       <section className="clin-card space-y-3 p-6">
         <h2 className="text-lg font-medium text-[var(--clin-text)]">
-          What Clin does
+          Three workspaces
+        </h2>
+        <ul className="space-y-3 text-sm text-[var(--clin-muted)]">
+          <li>
+            <Link href="/data" className="clin-link font-medium text-[var(--clin-text)]">
+              Data & cleaning
+            </Link>
+            — capture and analyze profiles from search pages or individual
+            profiles; review contacts and run optional cleaning batches.
+          </li>
+          <li>
+            <Link href="/outreach" className="clin-link font-medium text-[var(--clin-text)]">
+              Outreach
+            </Link>
+            — campaigns, messaging drafts, decisions, and inbox snapshots.
+          </li>
+          <li>
+            <Link href="/branding" className="clin-link font-medium text-[var(--clin-text)]">
+              Personal branding
+            </Link>
+            — your voice and goals, post analytics, and influence-oriented
+            captures from LinkedIn.
+          </li>
+        </ul>
+      </section>
+
+      <section className="clin-card space-y-3 p-6">
+        <h2 className="text-lg font-medium text-[var(--clin-text)]">
+          Maintainer
         </h2>
         <p className="text-sm leading-relaxed text-[var(--clin-muted)]">
-          Clin runs on your machine. The Chrome extension captures what you see
-          on LinkedIn—profiles, lists, inbox threads, analytics—and stores it in
-          a local database. The dashboard helps you score contacts, queue
-          reviews, run campaigns, and track outcomes.
+          Clin is created and maintained by{" "}
+          <strong className="text-[var(--clin-text)]">Alex Gon</strong> as open
+          source software — a local, inspectable assistant, not a hosted growth
+          product. Maintenance is <strong className="text-[var(--clin-text)]">best-effort</strong>:
+          no paid support or guaranteed response times.
         </p>
-        <ol className="list-decimal space-y-2 pl-5 text-sm text-[var(--clin-muted)]">
+      </section>
+
+      <section className="clin-card space-y-3 p-6">
+        <h2 className="text-lg font-medium text-[var(--clin-text)]">
+          Community and GitHub
+        </h2>
+        <p className="text-sm leading-relaxed text-[var(--clin-muted)]">
+          The project is open source and community-friendly: you can fork,
+          inspect, and adapt the code. Feedback and contributions go through
+          GitHub.
+        </p>
+        <ul className="space-y-2 text-sm">
           <li>
-            <strong className="text-[var(--clin-text)]">Capture</strong> — save
-            visible data with the extension
+            <a
+              href={CLIN_GITHUB_REPO}
+              className="clin-link"
+              target="_blank"
+              rel="noreferrer"
+            >
+              github.com/alex-elia/clin
+            </a>
+            — source and releases
           </li>
           <li>
-            <strong className="text-[var(--clin-text)]">Decide</strong> — approve
-            drafts and pacing in the dashboard
+            <a
+              href={CLIN_GITHUB_ISSUES_NEW}
+              className="clin-link"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open an issue
+            </a>
+            — bugs, LinkedIn DOM breakage, ideas
           </li>
-          <li>
-            <strong className="text-[var(--clin-text)]">Outreach</strong> —
-            campaigns with optional paced send automation (opt-in)
+          <li className="text-[var(--clin-muted)]">
+            Pull requests welcome for focused fixes (especially{" "}
+            <code className="rounded bg-[var(--clin-surface-muted)] px-1.5 py-0.5 text-xs">
+              extension/background.js
+            </code>
+            ).
           </li>
-        </ol>
+        </ul>
       </section>
 
       <section className="clin-card space-y-2 p-6">
         <h2 className="text-lg font-medium text-[var(--clin-text)]">
           Get started
         </h2>
-        <ul className="space-y-2 text-sm">
+        <ul className="space-y-2 text-sm text-[var(--clin-muted)]">
           <li>
             <Link href="/settings" className="clin-link">
               Settings
             </Link>{" "}
-            — pacing, data backup, outreach automation
-          </li>
-          <li>
-            <Link href="/me" className="clin-link">
-              You & goals
-            </Link>{" "}
-            — positioning for smarter drafts
+            — pacing, data path, backup, automation toggles
           </li>
           <li>
             Load the unpacked extension from{" "}

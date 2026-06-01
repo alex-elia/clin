@@ -55,7 +55,7 @@ export function DataSettingsSection({
   }
 
   return (
-    <section className="clin-card space-y-4 p-5">
+    <section className="clin-card h-full space-y-4 p-6">
       <div>
         <h2 className="text-lg font-medium text-[var(--clin-text)]">Data</h2>
         <p className="mt-1 text-sm text-[var(--clin-muted)]">

@@ -1,6 +1,7 @@
 import { and, count, desc, eq, like, ne, or } from "drizzle-orm";
 import { getDb, getSqlite, repairClinSqliteSchema } from "@/db";
 import { actionQueue, captureSessions, contacts } from "@/db/schema";
+import { backfillContactFieldsFromLatestProfileCapture } from "@/lib/contactProfileBackfill";
 import { shuffledCopy } from "@/lib/shuffle";
 
 /** Review queue ordering: manual priority column vs. highest cleanup score first. */
@@ -39,6 +40,11 @@ export async function getOverviewStats() {
 export async function getContactById(id: string) {
   repairClinSqliteSchema(getSqlite());
   const db = getDb();
+  const row = await db.query.contacts.findFirst({
+    where: eq(contacts.id, id),
+  });
+  if (!row) return undefined;
+  await backfillContactFieldsFromLatestProfileCapture(db, id);
   return db.query.contacts.findFirst({
     where: eq(contacts.id, id),
   });

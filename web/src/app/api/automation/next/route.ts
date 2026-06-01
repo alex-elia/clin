@@ -1,11 +1,16 @@
 import { randomInt } from "node:crypto";
 import { NextResponse } from "next/server";
+import { countContactsNeedingProfileCapture } from "@/lib/enrichment";
 import {
   countHygieneVisitsToday,
   getAutomationSettings,
   hygieneBetweenProfileMs,
   pickNextHygieneContact,
 } from "@/lib/automation";
+import {
+  loadLatestProfileCapturesByContactId,
+  profileDepthFromLatestJson,
+} from "@/lib/campaignMemberReadiness";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,7 +19,7 @@ export async function GET(req: Request) {
   const automation = await getAutomationSettings();
   if (!automation.enabled) {
     return NextResponse.json(
-      { error: "Hygiene automation is off. Turn it on in Settings." },
+      { error: "Background enrich is off. Turn it on in Clin → Settings." },
       { status: 403 },
     );
   }
@@ -33,6 +38,7 @@ export async function GET(req: Request) {
   }
 
   const row = await pickNextHygieneContact();
+  const needsProfileCount = await countContactsNeedingProfileCapture();
   if (!row) {
     return NextResponse.json({
       done: true,
@@ -51,18 +57,28 @@ export async function GET(req: Request) {
     ? randomInt(0, 5001)
     : hygieneBetweenProfileMs(automation);
 
+  const caps = await loadLatestProfileCapturesByContactId([row.id]);
+  const cap = caps.get(row.id);
+  let profileDepth: "missing" | "thin" | "ok" = cap
+    ? profileDepthFromLatestJson(cap.extractedJson)
+    : "missing";
+  if (cap && profileDepth === "missing") profileDepth = "thin";
+
   return NextResponse.json({
     done: false,
     automation,
     todayCount,
     maxPerDay: automation.maxPerDay,
     remainingToday: Math.max(0, automation.maxPerDay - todayCount),
+    needsProfileCount,
     waitBeforeMs,
+    purpose: profileDepth === "ok" ? "refresh" : "enrich",
     contact: {
       id: row.id,
       fullName: row.fullName,
       linkedinUrl: row.linkedinUrlCanonical,
       segment: row.segment,
+      profileDepth,
     },
   });
 }

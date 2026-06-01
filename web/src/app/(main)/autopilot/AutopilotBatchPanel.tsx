@@ -50,8 +50,12 @@ export function AutopilotBatchPanel({
       <p className="clin-body">
         Picks contacts that already have a{" "}
         <strong className="clin-strong">profile</strong> capture plus name or
-        headline, but no stored analysis yet. Runs Ollama sequentially (can take
-        several minutes).
+        headline, but no stored analysis yet. Runs inference sequentially (can take
+        several minutes). For ICP fit (reach out / skip), fill goals &amp; positioning on{" "}
+        <a href="/branding/setup?edit=1" className="clin-link">
+          goals &amp; positioning
+        </a>{" "}
+        first.
       </p>
       <p className="text-sm font-medium text-clin-text">
         Currently waiting for analysis:{" "}

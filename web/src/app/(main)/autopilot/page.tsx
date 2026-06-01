@@ -3,75 +3,78 @@ import {
   countContactsPendingLlmAnalysis,
   getAutopilotSettings,
 } from "@/lib/autopilot";
+import { countCampaignMembersPendingAnalysis } from "@/lib/campaignAutopilot";
+import { countContactsNeedingProfileCapture } from "@/lib/enrichment";
+import { listOutreachCampaigns } from "@/lib/outreachCampaigns";
 import { AutopilotBatchPanel } from "./AutopilotBatchPanel";
+import { AutopilotCampaignPanel } from "./AutopilotCampaignPanel";
 
 export const dynamic = "force-dynamic";
 
 export default async function AutopilotPage() {
-  const [pending, settings] = await Promise.all([
+  const [pending, settings, needsProfile, campaignRows] = await Promise.all([
     Promise.resolve(countContactsPendingLlmAnalysis()),
     getAutopilotSettings(),
+    countContactsNeedingProfileCapture(),
+    listOutreachCampaigns(),
   ]);
+  const campaigns = campaignRows.map((c) => ({
+    id: c.id,
+    name: c.name,
+    pendingAnalysis: countCampaignMembersPendingAnalysis(c.id),
+  }));
 
   return (
     <div className="mx-auto max-w-2xl space-y-8">
       <div>
+        <p className="mb-1 text-xs font-medium uppercase tracking-wide text-[var(--clin-muted)]">
+          <Link href="/data" className="clin-link">
+            Data & cleaning
+          </Link>
+        </p>
         <h1 className="clin-page-title">Autopilot</h1>
         <p className="clin-page-lead">
-          <strong className="clin-strong">On LinkedIn</strong>, Clin stays
-          human-in-the-loop: you open pages and press Capture (or use the optional
-          hygiene runner under{" "}
-          <Link href="/settings" className="clin-link">
-            Settings
-          </Link>
-          ). There is no supported mode that auto-scrolls, auto-clicks, or pulls
-          data without your action — that is intentional for safety and ToS
-          posture.
-        </p>
-        <p className="mt-3 clin-page-lead">
-          <strong className="clin-strong">On your machine</strong>, you can put{" "}
-          <strong className="clin-strong">Ollama analysis</strong> on autopilot:
-          after each <em>profile</em> capture, or in batches below. That uses only
-          data already stored in your local SQLite DB.
+          Local AI scores fit vs your offer (reach out / nurture / skip), runs in
+          batches, and can draft outreach for a campaign. Import and enrich run in
+          the <strong className="clin-strong">extension → Import &amp; enrich</strong>{" "}
+          — enable messaging capture there for better thread context.
         </p>
       </div>
 
       <section className="clin-callout">
-        <h2 className="clin-section-title">Maximize what each contact stores</h2>
-        <ol className="mt-2 list-decimal space-y-2 pl-5">
+        <h2 className="clin-section-title">Simple workflow</h2>
+        <ol className="mt-2 list-decimal space-y-2 pl-5 text-sm text-[var(--clin-muted)]">
           <li>
-            Import the <strong>connections / search list</strong> with one-off
-            Capture, or use the extension side panel{" "}
-            <strong>List sprint</strong> (auto-scroll + import rounds) while the
-            same <strong>pacing and hourly caps</strong> apply. Allow sprint in
-            Clin → Settings if needed.
+            LinkedIn people search → extension <strong>Import &amp; enrich</strong>{" "}
+            ({needsProfile > 0 ? `${needsProfile} contacts still need full profile locally` : "list + profiles"}).
           </li>
           <li>
-            Open high-value <strong>/in/… profiles</strong> and Capture on each tab
-            for full name, headline, company, and richer context (best signal for
-            LLM advice).
+            Fill <Link href="/branding/setup?edit=1" className="clin-link">goals &amp; offer</Link>{" "}
+            so analysis is meaningful.
           </li>
           <li>
-            Enable{" "}
-            <strong className="clin-strong">
-              Analyze after each profile capture
-            </strong>{" "}
-            in Settings, or run batches here when you have hundreds of pending
-            contacts.
+            Analysis runs after <strong>profile or messaging</strong> capture when
+            enabled in Settings — or run batches below.
+          </li>
+          <li>
+            <strong>Campaign autopilot</strong> analyzes members and can generate drafts
+            or update segments from fit.
           </li>
         </ol>
       </section>
+
+      <AutopilotCampaignPanel
+        campaigns={campaigns}
+        defaultLimit={settings.batchDefaultLimit}
+        draftOnReachOut={settings.campaignDraftOnReachOut}
+        tagSkipAsGhost={settings.campaignTagSkipGhost}
+        tagNurtureAsWarm={settings.campaignTagNurtureWarm}
+      />
 
       <AutopilotBatchPanel
         defaultLimit={settings.batchDefaultLimit}
         pendingCount={pending}
       />
-
-      <p className="text-xs text-clin-muted">
-        API:{" "}
-        <code className="clin-code">POST /api/autopilot/analyze-batch</code> with
-        body <code className="clin-code">{`{"limit":8}`}</code>.
-      </p>
     </div>
   );
 }

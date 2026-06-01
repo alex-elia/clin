@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import {
   actionQueue,
@@ -8,7 +8,9 @@ import {
 } from "@/db/schema";
 import * as schema from "@/db/schema";
 import type { getDb } from "@/db";
+import { backfillContactFieldsFromLatestProfileCapture } from "@/lib/contactProfileBackfill";
 import { normalizeExtractedPersonFields } from "@/lib/linkedinNormalize";
+import { mergePersonFields } from "@/lib/personFieldMerge";
 import { canonicalizeLinkedInUrl, normalizeCompany } from "@/lib/url";
 import { SCORE_RULE_VERSION, scoreContact } from "@/lib/scoring";
 
@@ -37,6 +39,14 @@ export type IngestInput = {
     messagingThreadId?: string;
     messagingParticipantName?: string;
     messagingMessages?: { from: "me" | "them" | "unknown"; body: string }[];
+    targetProfileUrl?: string;
+    profilePosts?: {
+      text: string;
+      ageLabel?: string;
+      reactions?: number;
+      comments?: number;
+      postUrl?: string;
+    }[];
   };
   fieldPresence?: Record<string, boolean>;
 };
@@ -48,6 +58,7 @@ export type ConnectionRowInput = {
   company?: string;
   location?: string;
   connectionDegree?: string;
+  mutualConnectionsHint?: string;
 };
 
 export type ConnectionsPageInput = {
@@ -58,27 +69,49 @@ export type ConnectionsPageInput = {
   rows: ConnectionRowInput[];
 };
 
+async function findContactByCanonical(
+  db: Db,
+  canonical: string,
+): Promise<ContactRow | undefined> {
+  const exact = await db.query.contacts.findFirst({
+    where: eq(contacts.linkedinUrlCanonical, canonical),
+  });
+  if (exact) return exact;
+
+  const [legacy] = await db
+    .select()
+    .from(contacts)
+    .where(sql`lower(${contacts.linkedinUrlCanonical}) = lower(${canonical})`)
+    .limit(1);
+  return legacy;
+}
+
 function buildMergedAndScores(
   canonical: string,
   rawUrl: string,
   extractedFields: IngestInput["extractedFields"],
   existing: ContactRow | undefined,
   now: Date,
+  pageType: string,
 ): {
   merged: Partial<typeof contacts.$inferInsert>;
   scores: ReturnType<typeof scoreContact>;
 } {
-  const companyNorm = normalizeCompany(extractedFields.company);
+  const mergedFields = mergePersonFields(
+    existing ?? {},
+    extractedFields,
+    { pageType },
+  );
+  const companyNorm = normalizeCompany(mergedFields.company);
   const merged: Partial<typeof contacts.$inferInsert> = {
     linkedinUrlCanonical: canonical,
     linkedinUrlRaw: rawUrl,
-    fullName: extractedFields.fullName ?? existing?.fullName ?? null,
-    headline: extractedFields.headline ?? existing?.headline ?? null,
-    company: extractedFields.company ?? existing?.company ?? null,
+    fullName: mergedFields.fullName ?? null,
+    headline: mergedFields.headline ?? null,
+    company: mergedFields.company ?? null,
     companyNormalized: companyNorm ?? existing?.companyNormalized ?? null,
-    location: extractedFields.location ?? existing?.location ?? null,
-    connectionDegree:
-      extractedFields.connectionDegree ?? existing?.connectionDegree ?? null,
+    location: mergedFields.location ?? null,
+    connectionDegree: mergedFields.connectionDegree ?? null,
     lastSeenAt: now,
     lastUpdatedAt: now,
   };
@@ -238,6 +271,10 @@ export async function ingestCapture(db: Db, input: IngestInput) {
     return ingestMessagingCapture(db, input);
   }
 
+  if (input.pageType === "posts") {
+    return ingestPostsCapture(db, input);
+  }
+
   const canonical = canonicalizeLinkedInUrl(input.sourceUrl);
   if (!canonical) {
     throw new Error("Could not derive canonical LinkedIn URL from sourceUrl");
@@ -245,9 +282,7 @@ export async function ingestCapture(db: Db, input: IngestInput) {
 
   const now = input.capturedAt ? new Date(input.capturedAt) : new Date();
 
-  const existing = await db.query.contacts.findFirst({
-    where: eq(contacts.linkedinUrlCanonical, canonical),
-  });
+  const existing = await findContactByCanonical(db, canonical);
 
   const normalizedFields = normalizeExtractedPersonFields(input.extractedFields);
   const extractedFields = {
@@ -261,6 +296,7 @@ export async function ingestCapture(db: Db, input: IngestInput) {
     extractedFields,
     existing,
     now,
+    input.pageType,
   );
 
   const fieldPresence = {
@@ -268,9 +304,15 @@ export async function ingestCapture(db: Db, input: IngestInput) {
     headline: Boolean(extractedFields.headline),
     company: Boolean(extractedFields.company),
     location: Boolean(extractedFields.location),
+    connectionDegree: Boolean(extractedFields.connectionDegree),
+    about: Boolean(extractedFields.about?.trim()),
+    experienceBullets: Boolean(extractedFields.experienceBullets?.length),
+    educationBullets: Boolean(extractedFields.educationBullets?.length),
+    ...(input.fieldPresence ?? {}),
   };
   const confidence =
-    Object.values(fieldPresence).filter(Boolean).length / 4;
+    input.confidence ??
+    Object.values(fieldPresence).filter(Boolean).length / 7;
   const extractedJson = extractedFields as Record<string, unknown>;
 
   db.transaction((tx) => {
@@ -292,7 +334,23 @@ export async function ingestCapture(db: Db, input: IngestInput) {
     where: eq(contacts.linkedinUrlCanonical, canonical),
   });
 
-  return { contactId: row!.id, canonicalUrl: canonical, scores };
+  if (row && input.pageType === "profile") {
+    await backfillContactFieldsFromLatestProfileCapture(db, row.id);
+  }
+
+  const refreshed = await db.query.contacts.findFirst({
+    where: eq(contacts.id, row!.id),
+  });
+
+  const display = refreshed ?? row!;
+
+  return {
+    contactId: display.id,
+    canonicalUrl: display.linkedinUrlCanonical,
+    scores,
+    fieldPresence: fieldPresence as Record<string, boolean>,
+    fullName: display.fullName,
+  };
 }
 
 async function ingestMessagingCapture(db: Db, input: IngestInput) {
@@ -308,9 +366,7 @@ async function ingestMessagingCapture(db: Db, input: IngestInput) {
   }
 
   const now = input.capturedAt ? new Date(input.capturedAt) : new Date();
-  const existing = await db.query.contacts.findFirst({
-    where: eq(contacts.linkedinUrlCanonical, canonical),
-  });
+  const existing = await findContactByCanonical(db, canonical);
 
   const participantName =
     input.extractedFields.messagingParticipantName?.trim() || undefined;
@@ -364,6 +420,79 @@ async function ingestMessagingCapture(db: Db, input: IngestInput) {
   });
 
   return { contactId: row!.id, canonicalUrl: canonical, scores };
+}
+
+async function ingestPostsCapture(db: Db, input: IngestInput) {
+  const profileRaw =
+    input.extractedFields.targetProfileUrl?.trim() || input.sourceUrl;
+  const canonical = canonicalizeLinkedInUrl(profileRaw);
+  if (!canonical || !isProfileCanonicalUrl(canonical)) {
+    throw new Error("Could not parse target profile URL for posts capture.");
+  }
+
+  const posts = (input.extractedFields.profilePosts ?? []).filter(
+    (p) => typeof p.text === "string" && p.text.trim().length > 0,
+  );
+  if (posts.length === 0) {
+    throw new Error("Posts capture requires at least one post.");
+  }
+
+  const now = input.capturedAt ? new Date(input.capturedAt) : new Date();
+  const existing = await findContactByCanonical(db, canonical);
+
+  const extractedFields = {
+    targetProfileUrl: canonical,
+    profilePosts: posts.slice(0, 40),
+  };
+
+  const fieldPresence = {
+    targetProfileUrl: true,
+    profilePosts: true,
+    ...(input.fieldPresence ?? {}),
+  };
+  const confidence =
+    input.confidence ?? (posts.length >= 3 ? 0.85 : 0.65);
+
+  const merged: Partial<typeof contacts.$inferInsert> = {
+    linkedinUrlCanonical: canonical,
+    linkedinUrlRaw: profileRaw,
+    lastSeenAt: now,
+    lastUpdatedAt: now,
+  };
+
+  const baseForScore: Partial<ContactRow> = {
+    ...(existing ?? {}),
+    ...merged,
+    lastSeenAt: now,
+  };
+  const scores = scoreContact(baseForScore);
+
+  db.transaction((tx) => {
+    syncPersistContact(tx, {
+      now,
+      schemaVersion: input.schemaVersion,
+      pageType: "posts",
+      captureSourceUrl: input.sourceUrl,
+      confidence,
+      fieldPresence,
+      extractedJson: extractedFields as Record<string, unknown>,
+      existing,
+      merged,
+      scores,
+    });
+  });
+
+  const row = await db.query.contacts.findFirst({
+    where: eq(contacts.linkedinUrlCanonical, canonical),
+  });
+
+  return {
+    contactId: row!.id,
+    canonicalUrl: canonical,
+    scores,
+    postCount: posts.length,
+    fieldPresence,
+  };
 }
 
 /** Dedupe by canonical profile URL; skips non-/in/ profile URLs. */
@@ -430,6 +559,7 @@ export async function ensureContactStubFromProfileUrl(
     {},
     undefined,
     now,
+    "profile",
   );
   const id = crypto.randomUUID();
 
@@ -499,12 +629,19 @@ export async function ingestConnectionsPage(
         company: row.company,
         location: row.location,
       });
-      const extractedFields: IngestInput["extractedFields"] = {
+      const extractedFields: IngestInput["extractedFields"] & {
+        mutualConnectionsHint?: string;
+      } = {
         fullName: normalized.fullName,
         headline: normalized.headline,
         company: normalized.company,
         location: normalized.location,
-        connectionDegree: row.connectionDegree ?? "1st",
+        ...(row.connectionDegree
+          ? { connectionDegree: row.connectionDegree }
+          : {}),
+        ...(row.mutualConnectionsHint?.trim()
+          ? { mutualConnectionsHint: row.mutualConnectionsHint.trim() }
+          : {}),
       };
 
       const fieldPresence = {
@@ -513,9 +650,13 @@ export async function ingestConnectionsPage(
         company: Boolean(extractedFields.company),
         location: Boolean(extractedFields.location),
         connectionDegree: Boolean(extractedFields.connectionDegree),
+        mutualConnectionsHint: Boolean(
+          "mutualConnectionsHint" in extractedFields &&
+            extractedFields.mutualConnectionsHint,
+        ),
       };
       const filled = Object.values(fieldPresence).filter(Boolean).length;
-      const confidence = filled / 4;
+      const confidence = filled / 5;
 
       const existing = tx.query.contacts.findFirst({
         where: eq(contacts.linkedinUrlCanonical, canonical),
@@ -527,6 +668,7 @@ export async function ingestConnectionsPage(
         extractedFields,
         existing,
         now,
+        "connections",
       );
 
       const outcome = syncPersistContact(tx, {

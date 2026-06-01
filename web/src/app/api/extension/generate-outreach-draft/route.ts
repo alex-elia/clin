@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { generateOutreachDraftForMember } from "@/lib/outreachCampaignDraft";
-import { getOllamaSettings } from "@/lib/ollamaSettings";
+import { getLlmConfig } from "@/lib/llm/completeChat";
 import {
   findMemberByCampaignAndContact,
   getActiveOutreachCampaignId,
@@ -89,14 +89,15 @@ export async function POST(req: Request) {
     );
   }
 
-  const ollama = await getOllamaSettings();
+  const llm = await getLlmConfig();
   if (process.env.NODE_ENV !== "production") {
     console.info("[clin:outreach-draft] POST generate-outreach-draft", {
       contactId: contact.id,
       memberId: member.id,
       campaignId,
-      model: ollama.model,
-      baseUrl: ollama.baseUrl,
+      provider: llm.provider,
+      model: llm.model,
+      baseUrl: llm.baseUrl,
     });
   }
 
@@ -106,7 +107,8 @@ export async function POST(req: Request) {
       {
         error: gen.error,
         stage: gen.stage,
-        ollama: { baseUrl: ollama.baseUrl, model: ollama.model },
+        llm: { provider: llm.provider, baseUrl: llm.baseUrl, model: llm.model },
+        ollama: { baseUrl: llm.baseUrl, model: llm.model },
       },
       { status: 502 },
     );

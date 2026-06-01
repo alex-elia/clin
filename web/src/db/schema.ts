@@ -284,6 +284,264 @@ export const userContext = sqliteTable("user_context", {
     .$defaultFn(() => new Date()),
 });
 
+/** Editorial calendar post (LinkedIn personal branding). */
+export const contentPosts = sqliteTable(
+  "content_posts",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    status: text("status").notNull().default("idea"),
+    format: text("format").notNull().default("feed"),
+    ideaNotes: text("idea_notes"),
+    hook: text("hook"),
+    body: text("body"),
+    articleBody: text("article_body"),
+    linkedTeaserPostId: text("linked_teaser_post_id"),
+    styleNotes: text("style_notes"),
+    mediaJson: text("media_json", { mode: "json" }).$type<ContentMediaJson>(),
+    coachFlags: text("coach_flags", { mode: "json" }).$type<
+      Record<string, boolean>
+    >(),
+    lastCoachSummary: text("last_coach_summary"),
+    /** `fr` | `en` — overrides brand default; null = use brand / auto-detect */
+    language: text("language"),
+    scheduledAt: integer("scheduled_at", { mode: "timestamp_ms" }),
+    readyAt: integer("ready_at", { mode: "timestamp_ms" }),
+    publishedAt: integer("published_at", { mode: "timestamp_ms" }),
+    sourceAnalyticsSnapshotId: text("source_analytics_snapshot_id"),
+    /** Provenance from content_source_items (JSON string[]). */
+    sourceItemIds: text("source_item_ids", { mode: "json" }).$type<
+      string[]
+    >(),
+    /** ISO week label for batch planning views, e.g. 2026-W22. */
+    planningWeek: text("planning_week"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [
+    index("content_posts_status_idx").on(t.status),
+    index("content_posts_scheduled_idx").on(t.scheduledAt),
+    index("content_posts_status_scheduled_idx").on(t.status, t.scheduledAt),
+  ],
+);
+
+export type ContentMediaItem = {
+  kind: "image" | "link";
+  url?: string;
+  /** Saved filename under data/media/posts (for downloads). */
+  filename?: string;
+  /** `photo` | `text_card` — how the visual was generated. */
+  style?: "photo" | "text_card";
+  note?: string;
+  alt?: string;
+};
+
+export type ContentMediaJson = {
+  items: ContentMediaItem[];
+};
+
+/** Singleton: Brand Coach planning context (doctrine, rhythm, stance). */
+export const contentBrandContext = sqliteTable("content_brand_context", {
+  id: text("id").primaryKey(),
+  contentDoctrine: text("content_doctrine"),
+  expertiseSummary: text("expertise_summary"),
+  publishingRhythm: text("publishing_rhythm", { mode: "json" }).$type<
+    PublishingRhythmJson
+  >(),
+  stanceNotes: text("stance_notes"),
+  /** People/companies to @mention — one per line, exact LinkedIn spellings. */
+  mentionRoster: text("mention_roster"),
+  /** `auto` | `fr` | `en` — default for new posts and coach when post has no override */
+  contentLanguage: text("content_language").default("auto"),
+  /** Default market calendar pack: fr | eu | us | custom */
+  marketRegion: text("market_region").default("fr"),
+  planningHorizonDays: integer("planning_horizon_days").default(14),
+  editorialAutopilotEnabled: integer("editorial_autopilot_enabled", {
+    mode: "boolean",
+  }).default(false),
+  editorialAutopilotPolicy: text("editorial_autopilot_policy", {
+    mode: "json",
+  }).$type<EditorialAutopilotPolicyJson>(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export type PublishingRhythmJson = {
+  preferredWeekdays?: number[];
+  timeWindow?: string;
+  maxPostsPerWeek?: number;
+  notes?: string;
+};
+
+export type EditorialAutopilotPolicyJson = {
+  /** Auto-draft every post in Writing (drafting), any scheduled date. Default on. */
+  runDraftWhenWriting?: boolean;
+  /** Auto-draft ideas scheduled for today only. */
+  runDraftWhenDue?: boolean;
+  /** Max Writing posts to queue per tick (default 10). */
+  maxWritingDraftsPerTick?: number;
+  autoMarkReady?: boolean;
+  includeImage?: boolean;
+  maxPostsPerRun?: number;
+  quietWeekReducePosts?: boolean;
+  trendQueries?: string[];
+  maxTrendItemsPerWeek?: number;
+  maxTavilyCreditsPerTick?: number;
+  tavilyDiscoveryEnabled?: boolean;
+  /** When true (default), **bold** / *italic* become Unicode on copy. */
+  useUnicodeEmphasis?: boolean;
+};
+
+export type ContentSourceType =
+  | "rss"
+  | "url"
+  | "paste"
+  | "search_digest"
+  | "trend_digest";
+
+export type ContentSourceConfigJson = {
+  adapter?: "rss" | "paste" | "url_readability" | "tavily_search" | "rss_bundle";
+  feedUrl?: string;
+  feedUrls?: string[];
+  url?: string;
+  queries?: string[];
+  region?: string;
+  language?: string;
+  maxItemsPerRun?: number;
+  recencyDays?: number;
+  excludeDomains?: string[];
+  pasteText?: string;
+};
+
+export const contentSources = sqliteTable("content_sources", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  type: text("type").notNull().$type<ContentSourceType>(),
+  configJson: text("config_json", { mode: "json" }).$type<ContentSourceConfigJson>(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  fetchIntervalHours: integer("fetch_interval_hours").default(168),
+  lastFetchedAt: integer("last_fetched_at", { mode: "timestamp_ms" }),
+  lastError: text("last_error"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export type SourceItemKind = "article" | "trend_topic" | "paste";
+
+export const contentSourceItems = sqliteTable(
+  "content_source_items",
+  {
+    id: text("id").primaryKey(),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => contentSources.id, { onDelete: "cascade" }),
+    fetchedAt: integer("fetched_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    title: text("title").notNull(),
+    url: text("url"),
+    excerpt: text("excerpt"),
+    bodyMarkdown: text("body_markdown"),
+    contentHash: text("content_hash").notNull(),
+    itemKind: text("item_kind").notNull().$type<SourceItemKind>().default("article"),
+    trendScore: integer("trend_score"),
+    publishedAt: integer("published_at", { mode: "timestamp_ms" }),
+    usedAt: integer("used_at", { mode: "timestamp_ms" }),
+    dismissedAt: integer("dismissed_at", { mode: "timestamp_ms" }),
+  },
+  (t) => [
+    index("content_source_items_source_idx").on(t.sourceId),
+    index("content_source_items_hash_idx").on(t.contentHash),
+    index("content_source_items_fetched_idx").on(t.fetchedAt),
+  ],
+);
+
+export type EditorialJobType =
+  | "ingest_sources"
+  | "ingest_trends"
+  | "plan_horizon"
+  | "draft_post"
+  | "review_digest";
+
+export type EditorialJobStatus =
+  | "pending"
+  | "running"
+  | "done"
+  | "failed"
+  | "cancelled";
+
+export const editorialJobs = sqliteTable(
+  "editorial_jobs",
+  {
+    id: text("id").primaryKey(),
+    type: text("type").notNull().$type<EditorialJobType>(),
+    postId: text("post_id").references(() => contentPosts.id, {
+      onDelete: "set null",
+    }),
+    payloadJson: text("payload_json", { mode: "json" }).$type<
+      Record<string, unknown>
+    >(),
+    runAfter: integer("run_after", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    status: text("status").notNull().$type<EditorialJobStatus>().default("pending"),
+    lockedUntil: integer("locked_until", { mode: "timestamp_ms" }),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
+  },
+  (t) => [
+    index("editorial_jobs_status_run_idx").on(t.status, t.runAfter),
+    index("editorial_jobs_post_idx").on(t.postId),
+  ],
+);
+
+export const contentAiThreads = sqliteTable("content_ai_threads", {
+  id: text("id").primaryKey(),
+  scope: text("scope").notNull(),
+  postId: text("post_id").references(() => contentPosts.id, {
+    onDelete: "set null",
+  }),
+  title: text("title"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const contentAiMessages = sqliteTable(
+  "content_ai_messages",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => contentAiThreads.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    content: text("content").notNull(),
+    actionsJson: text("actions_json", { mode: "json" }).$type<
+      Record<string, unknown>[]
+    >(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => [index("content_ai_messages_thread_idx").on(t.threadId)],
+);
+
 /** Tunable pacing for low-risk, human-in-the-loop workflows (local + API limits only). */
 export const appSettings = sqliteTable("app_settings", {
   key: text("key").primaryKey(),

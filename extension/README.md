@@ -4,17 +4,26 @@ Companion to the local Clin web app: capture visible LinkedIn data, manage campa
 
 ## Load unpacked
 
-1. Run the web app from the repo root: `npm install && npm run dev` (default API `http://127.0.0.1:3000`).
+1. Run the web app from the repo root: `npm install && npm run dev` (fixed port **3000**; use `npm run dev:stop` in `web/` if a stale server is still running).
 2. Chrome → **Extensions** → enable **Developer mode** → **Load unpacked** → select this `extension/` folder.
 3. Open LinkedIn, open the Clin popup, and connect to your local API.
 
 ## Settings
 
-- **Clin API base** — defaults to `http://127.0.0.1:3000`. Save after editing.
+- **Clin API base** — defaults to `http://127.0.0.1:3000`. Save after editing. Use **Ping** in Settings tab to verify `/api/health` (`db: true`, same `dbPath` as dashboard). Capture refuses to run if health fails.
+
+## Tabs
+
+| Tab | Purpose |
+|-----|---------|
+| **Data** | Capture, list sprint, hygiene batch (search/list or profile workflows) |
+| **Outreach** | Ready campaigns, paced outreach run |
+| **Branding** | Ready content posts: copy text, download or copy image, mark published |
+| **Settings** | API base URL and health check (replaces the old Connect tab). Use the **gear** in the header for the same panel. |
 
 ## Capture
 
-Click **Capture this page** on a profile (or use **list sprint** when allowed in Settings) to send visible fields to `POST /api/ingest/capture` or the connections ingest endpoint.
+Click **Capture LinkedIn tab** on a profile (or use **list sprint** when allowed in Settings) to send visible fields to `POST /api/ingest/capture` or the connections ingest endpoint.
 
 ## Pacing
 
@@ -23,6 +32,10 @@ The background script calls `GET /api/settings` and applies the same **rolling h
 ## Outreach handoff
 
 Approve drafts in the dashboard (**Decisions** / campaigns → Ready). The popup loads ready items via `/api/outreach/ready` and campaign APIs. You can **copy drafts**, **open profiles**, **mark sent**, or start a **paced outreach run** when configured.
+
+## Branding handoff
+
+In Clin → **Content plan**, add a **photo** or **text graphic** (section 3), save, then **Mark ready**. The extension **Branding** tab loads `/api/branding/posts/ready` with post copy and image URLs. Use **Copy post**, **Download image**, or **Copy image** (paste into LinkedIn’s composer), then **Mark published** when live.
 
 ## Optional automation (Settings)
 

@@ -68,6 +68,49 @@
         gap: 8px;
       }
 
+      .btn-icon {
+        flex-shrink: 0;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        font-size: 16px;
+        line-height: 1;
+        color: var(--muted);
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+      }
+
+      .btn-icon:hover,
+      .btn-icon.is-active {
+        color: var(--accent-dim);
+        border-color: var(--accent);
+        background: var(--accent-soft);
+      }
+
+      .sub-block {
+        margin-top: 16px;
+        padding-top: 14px;
+        border-top: 1px solid var(--border);
+      }
+
+      .creator {
+        margin: 8px 0 0;
+        font-size: 10px;
+        color: var(--muted);
+        text-align: center;
+      }
+
+      .creator a {
+        color: var(--accent-dim);
+        text-decoration: none;
+      }
+
+      .creator a:hover {
+        text-decoration: underline;
+      }
+
       .brand-mark {
         display: flex;
         align-items: center;
@@ -251,6 +294,21 @@
         background: var(--surface-2);
       }
 
+      .capture-scopes {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 8px;
+      }
+
+      .capture-scopes .btn-scope {
+        flex: 1;
+        min-width: 0;
+        margin-top: 0;
+        padding: 8px 6px;
+        font-size: 11px;
+      }
+
       .btn-row {
         display: flex;
         gap: 8px;
@@ -405,28 +463,42 @@
           <div class="brand-mark">
             <img src="icons/Clin_Logo_Small.png" alt="Clin" width="106" height="70" />
           </div>
-          <span class="tagline">Local CRM</span>
+          <span class="tagline">LinkedIn assistant</span>
+          <button
+            type="button"
+            id="open-settings"
+            class="btn-icon"
+            title="Settings"
+            aria-label="Open settings"
+          >
+            ⚙
+          </button>
         </div>
       </header>
 
       <nav class="tab-bar" role="tablist" aria-label="Sections">
-        <button type="button" class="is-active" data-panel="capture" role="tab" aria-selected="true">
-          Capture
+        <button type="button" class="is-active" data-panel="data" role="tab" aria-selected="true">
+          Data
         </button>
         <button type="button" data-panel="outreach" role="tab" aria-selected="false">
-          Campaign
+          Outreach
         </button>
-        <button type="button" data-panel="connect" role="tab" aria-selected="false">
-          Connect
+        <button type="button" data-panel="branding" role="tab" aria-selected="false">
+          Branding
+        </button>
+        <button type="button" data-panel="settings" role="tab" aria-selected="false">
+          Settings
         </button>
       </nav>
 
       <main>
-        <section id="panel-capture" class="panel is-active" role="tabpanel">
+        <section id="panel-data" class="panel is-active" role="tabpanel">
+          <p class="section-title">Capture &amp; analysis</p>
           <p class="section-title">Import from this tab</p>
           <p class="hint">
-            <strong>Profile</strong> <code>/in/…</code> · <strong>List</strong> connections/search ·
-            <strong>Thread</strong> open a 1:1 chat and scroll messages first. Pacing applies.
+            On a <strong>people search</strong> or <strong>Connections</strong> tab, use{" "}
+            <strong>Import &amp; enrich</strong> (one flow: list → full profiles → AI analysis).
+            On a profile (<code>/in/…</code>), use Capture. Pacing applies — see Clin Settings.
           </p>
           <label class="field">
             <span>Import into campaign</span>
@@ -445,8 +517,22 @@
             Open next profile (capture queue)
           </button>
           <button id="cap" type="button" class="btn btn-primary">
-            Capture LinkedIn tab
+            Capture tab (auto)
           </button>
+          <div class="capture-scopes" role="group" aria-label="Capture scope">
+            <button id="cap-profile" type="button" class="btn btn-secondary btn-scope">
+              Profile
+            </button>
+            <button id="cap-posts" type="button" class="btn btn-secondary btn-scope">
+              Posts
+            </button>
+            <button id="cap-messaging" type="button" class="btn btn-secondary btn-scope">
+              Messaging
+            </button>
+            <button id="cap-list" type="button" class="btn btn-secondary btn-scope">
+              List
+            </button>
+          </div>
           <button id="snapshot-messaging" type="button" class="btn btn-secondary">
             Snapshot messaging list
           </button>
@@ -457,53 +543,38 @@
             Generate campaign draft (this profile)
           </button>
           <p class="text-muted">
-            Uses Ollama on Clin for the <strong>active tab</strong> profile if they’re already in your capture-target
+            Uses Clin AI for the <strong>active tab</strong> profile if they’re already in your capture-target
             campaign. You paste and send on LinkedIn yourself.
           </p>
-        </section>
 
-        <section id="panel-sprint" class="panel" role="tabpanel" hidden>
-          <p class="section-title">Connections list sprint</p>
+          <div class="sub-block">
+          <p class="section-title">Import &amp; enrich (recommended)</p>
           <p class="hint">
-            Stay on <strong>Connections</strong> or <strong>people search</strong>.
-            Each round: scroll the list (after round 1), wait, then import visible
-            rows. <strong>Clin pacing</strong> (gap + hourly cap) applies between
-            imports — same as manual Capture. Enable under Settings →
-            <em>Allow connections list sprint</em>. Keep this panel open for the
-            run.
+            Stay on your <strong>search results</strong> tab. Clin imports visible people,
+            then opens each profile in this tab (paced). After each profile capture, AI
+            analysis runs automatically if enabled in Clin Settings. Keep this popup open
+            during the run.
           </p>
+          <p id="pipeline-status" class="pill" aria-live="polite"></p>
           <label class="field">
-            <span>Rounds (2–20)</span>
-            <input id="sprint-rounds" type="number" min="2" max="20" value="6" />
+            <span>List scroll rounds (1–12)</span>
+            <input id="pipeline-list-rounds" type="number" min="1" max="12" value="4" />
+          </label>
+          <label class="field">
+            <span>Full profile captures (0–20, 0 = auto after list)</span>
+            <input id="pipeline-enrich-steps" type="number" min="0" max="20" value="0" />
           </label>
           <label class="field">
             <span>Pause after scroll (ms)</span>
-            <input id="sprint-pause" type="number" min="800" max="12000" value="2800" />
+            <input id="pipeline-pause" type="number" min="800" max="12000" value="2800" />
           </label>
-          <button id="sprint-run" type="button" class="btn btn-primary">
-            Run list sprint
+          <button id="pipeline-run" type="button" class="btn btn-primary">
+            Import &amp; enrich
           </button>
+          </div>
         </section>
 
-        <section id="panel-hygiene" class="panel" role="tabpanel">
-          <p class="section-title">Hygiene batch</p>
-          <p class="hint">
-            Opens the next contact’s profile in your <strong>current tab</strong>, waits for
-            <code>/in/…</code>, then captures visible fields. Enable
-            <strong>Allow hygiene runner</strong> in Clin → Settings. Stay logged into
-            LinkedIn. Keep this popup open for the run.
-          </p>
-          <p id="hygiene-status" class="pill" aria-live="polite"></p>
-          <label class="field">
-            <span>Profiles this run (1–8)</span>
-            <input id="hygiene-steps" type="number" min="1" max="8" value="3" />
-          </label>
-          <button id="hygiene-run" type="button" class="btn btn-primary">
-            Run hygiene batch
-          </button>
-        </section>
-
-        <section id="panel-outreach" class="panel" role="tabpanel">
+        <section id="panel-outreach" class="panel" role="tabpanel" hidden>
           <p class="section-title">Ready to send</p>
           <p class="hint">
             Loads <strong>ready</strong> items from your active <strong>Campaign</strong> (Clin → Campaigns) and
@@ -524,7 +595,20 @@
           <div id="outreach"></div>
         </section>
 
-        <section id="panel-connect" class="panel" role="tabpanel">
+        <section id="panel-branding" class="panel" role="tabpanel" hidden>
+          <p class="section-title">Ready posts</p>
+          <p class="hint">
+            Posts marked <strong>ready</strong> in Clin → Content plan. Copy text, download or
+            copy the image, then paste on
+            LinkedIn yourself, then mark published.
+          </p>
+          <button id="refresh-branding" type="button" class="btn btn-secondary">
+            Refresh list
+          </button>
+          <div id="branding-posts" style="margin-top: 10px"></div>
+        </section>
+
+        <section id="panel-settings" class="panel" role="tabpanel" hidden>
           <p class="section-title">Clin server</p>
           <p class="hint">
             Must match your Next app URL. Saving also notifies the extension to process queued
@@ -557,6 +641,11 @@
         >
           Open Clin dashboard →
         </a>
+        <p class="creator">
+          <span id="ext-version" class="ext-version"></span>
+          Created by Alex Gon ·
+          <a href="https://github.com/alex-elia/clin" target="_blank" rel="noreferrer">GitHub</a>
+        </p>
       </footer>
     </div>
     <script src="popup.js"></script>

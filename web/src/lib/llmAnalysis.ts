@@ -4,7 +4,8 @@ import { z } from "zod";
 import * as schema from "@/db/schema";
 import { captureSessions, contacts } from "@/db/schema";
 import { parseScoreReasons } from "@/lib/scoreExplain";
-import type { OllamaSettings } from "@/lib/ollamaSettings";
+import { completeChat } from "@/lib/llm/completeChat";
+import type { LlmConfig } from "@/lib/llm/types";
 import {
   getUserContextForLlm,
   userContextHasLlmSignal,
@@ -12,6 +13,11 @@ import {
 } from "@/lib/userContext";
 
 type Db = BetterSQLite3Database<typeof schema>;
+
+const nullishString = z.preprocess(
+  (v) => (v === null || v === "" ? undefined : v),
+  z.string().optional(),
+);
 
 export const llmAnalysisOutputSchema = z.object({
   scores: z.object({
@@ -21,21 +27,29 @@ export const llmAnalysisOutputSchema = z.object({
   }),
   rationale: z
     .object({
-      relationship: z.string().optional(),
-      business: z.string().optional(),
-      cleanup: z.string().optional(),
+      relationship: nullishString,
+      business: nullishString,
+      cleanup: nullishString,
     })
     .optional(),
-  suggested_actions: z.array(z.string()).optional(),
-  data_gaps: z.array(z.string()).optional(),
-  message_read: z.string().optional(),
+  suggested_actions: z.array(z.string()).nullish(),
+  data_gaps: z.array(z.string()).nullish(),
+  message_read: nullishString,
   /** Populated when the user pasted a message thread — advice on pruning the connection. */
   connection_stewardship: z
     .object({
       recommendation: z.enum(["keep", "consider_removing", "unclear"]),
       rationale: z.string(),
     })
-    .optional(),
+    .nullish(),
+  /** When owner_context (goals/offer) is present — fit vs what the user sells. */
+  outreach_fit: z
+    .object({
+      recommendation: z.enum(["reach_out", "nurture", "skip", "unclear"]),
+      rationale: z.string(),
+      icp_signals: z.array(z.string()).nullish(),
+    })
+    .nullish(),
 });
 
 export type LlmAnalysisOutput = z.infer<typeof llmAnalysisOutputSchema>;
@@ -94,8 +108,13 @@ export async function inferAnalysisTier(
     Boolean(c.company?.trim() || c.location?.trim());
   const hasMessageSnippet =
     typeof messageContext === "string" && messageContext.trim().length >= 40;
+  const hasMessagingCapture = caps.some((s) => s.pageType === "messaging");
 
   if (hasMessageSnippet && c.headline?.trim()) return "refined";
+  if (hasMessagingCapture && hasMessageSnippet) return "refined";
+  if (hasMessagingCapture && caps.some((s) => s.pageType === "profile")) {
+    return "refined";
+  }
   if (hasProfileCapture && rich) return "refined";
   return "provisional";
 }
@@ -113,7 +132,8 @@ Respond with a single JSON object (no markdown) matching this shape:
   "suggested_actions": ["write" | "visit_profile" | "stay_connected" | "consider_removing" | "none"],
   "data_gaps": ["optional short strings: what is missing for confidence"],
   "message_read": "optional: brief read on tone/recency if messages were provided",
-  "connection_stewardship": { "recommendation": "keep" | "consider_removing" | "unclear", "rationale": "string" }
+  "connection_stewardship": { "recommendation": "keep" | "consider_removing" | "unclear", "rationale": "string" },
+  "outreach_fit": { "recommendation": "reach_out" | "nurture" | "skip" | "unclear", "rationale": "string", "icp_signals": ["short strings"] }
 }
 
 Definitions (align with user's app):
@@ -127,6 +147,17 @@ When the user message includes a non-empty "message_context" (pasted LinkedIn DM
 - This is guidance for the user's own CRM only — they still remove connections manually on LinkedIn if they choose.
 
 When "message_context" is null or empty, omit "connection_stewardship" or set recommendation to "unclear" with rationale "no thread pasted".
+Use null or omit optional fields — do not set optional strings to JSON null.
+
+When "owner_context" includes goals or positioning_and_offer, you MUST include "outreach_fit":
+- Compare the contact's role, company, headline, and any profile/messaging evidence to what the owner sells and who they want to reach.
+- reach_out: strong ICP match and a clear reason to message now.
+- nurture: plausible fit but weak data, wrong timing, or better as a soft follow later.
+- skip: poor fit, wrong seniority/sector, or likely waste of attention.
+- unclear: owner offer context too thin to judge — say what is missing in rationale and data_gaps.
+- icp_signals: 0–4 short bullets (e.g. "VP Engineering", "B2B SaaS", "no overlap with owner's offer").
+
+If owner_context is absent or empty, omit "outreach_fit".
 
 If data is thin (list-only capture, missing headline), give **provisional** scores and say so in data_gaps.
 If richer profile + optional messages exist, be more confident (refined). Never claim certainty you lack.
@@ -137,7 +168,7 @@ Do not invent private facts. Do not output anything outside JSON.`;
 
   return `${base}
 
-The JSON user message may include "owner_context": goals, a positioning summary, and a minimal snapshot of the owner's own captured profile. When present, use it as the database owner's networking intent: steer business relevance (b), relationship emphasis (r), suggested_actions, and rationale toward those goals. Do not contradict obvious facts from the contact record; if owner_context is too thin to apply, note that in data_gaps instead of guessing.`;
+The JSON user message may include "owner_context": goals, positioning_and_offer (what they sell / ICP), and a minimal snapshot of the owner's own captured profile. When present, use it as the database owner's networking intent: steer business relevance (b), relationship emphasis (r), suggested_actions, outreach_fit, and rationale toward those goals. Do not contradict obvious facts from the contact record; if owner_context is too thin to apply, note that in data_gaps instead of guessing.`;
 }
 
 function buildUserPayload(input: {
@@ -177,83 +208,12 @@ function buildUserPayload(input: {
   if (oc && userContextHasLlmSignal(oc)) {
     body.owner_context = {
       goals: oc.goalsText,
-      positioning_summary: oc.positioningSummary,
+      positioning_and_offer: oc.positioningSummary,
       my_profile: oc.selfProfile,
     };
   }
 
   return JSON.stringify(body, null, 2);
-}
-
-/** User-facing message when /api/chat fails (missing model, wrong URL, etc.). */
-export function formatOllamaChatError(
-  status: number,
-  bodyText: string,
-  model: string,
-): string {
-  const trimmed = bodyText.trim();
-  let detail = trimmed.slice(0, 500) || `HTTP ${status}`;
-  try {
-    const j = JSON.parse(trimmed) as { error?: string };
-    if (typeof j.error === "string" && j.error) detail = j.error;
-  } catch {
-    /* keep raw snippet */
-  }
-  let out = `Ollama HTTP ${status}: ${detail}`;
-  const looksMissingModel =
-    status === 404 ||
-    /not found|unknown model|model.*not found|does not exist/i.test(detail);
-  if (looksMissingModel) {
-    out += `\n\nFix: open a terminal and run: ollama pull ${model}`;
-    out += `\nOr in Clin → Settings, set “Model name” to an installed tag (run ollama list — names must match exactly, e.g. qwen2.5:7b vs qwen2.5:8b).`;
-  }
-  return out;
-}
-
-export async function callOllamaJson(opts: {
-  settings: OllamaSettings;
-  system: string;
-  user: string;
-  timeoutMs?: number;
-}): Promise<string> {
-  const timeoutMs = opts.timeoutMs ?? 120_000;
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(`${opts.settings.baseUrl}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: opts.settings.model,
-        messages: [
-          { role: "system", content: opts.system },
-          { role: "user", content: opts.user },
-        ],
-        stream: false,
-        format: "json",
-        options: { temperature: 0.35 },
-      }),
-    });
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      throw new Error(
-        formatOllamaChatError(
-          res.status,
-          errText,
-          opts.settings.model,
-        ),
-      );
-    }
-    const data = (await res.json()) as { message?: { content?: string } };
-    const content = data.message?.content;
-    if (typeof content !== "string" || !content.trim()) {
-      throw new Error("Ollama returned empty message content.");
-    }
-    return content;
-  } finally {
-    clearTimeout(t);
-  }
 }
 
 export async function runContactLlmAnalysis(
@@ -262,7 +222,7 @@ export async function runContactLlmAnalysis(
     contactId: string;
     tier: "provisional" | "refined";
     messageContext: string | null;
-    settings: OllamaSettings;
+    settings: LlmConfig;
   },
 ): Promise<{
   tier: "provisional" | "refined";
@@ -287,8 +247,9 @@ export async function runContactLlmAnalysis(
   const ownerContext = await getUserContextForLlm();
   const includeOwner = userContextHasLlmSignal(ownerContext);
 
-  const rawText = await callOllamaJson({
-    settings: input.settings,
+  const rawText = await completeChat({
+    config: input.settings,
+    feature: "contact_analyze",
     system: buildSystemPrompt(includeOwner),
     user: buildUserPayload({
       tier: input.tier,
@@ -297,6 +258,8 @@ export async function runContactLlmAnalysis(
       messageContext: input.messageContext,
       ownerContext,
     }),
+    jsonMode: true,
+    timeoutMs: 120_000,
   });
 
   const jsonStr = extractJsonObjectFromModelText(rawText);

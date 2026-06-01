@@ -2,10 +2,16 @@
   "name": "clin-web",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22 <26"
+  },
   "scripts": {
     "clean": "node scripts/clean-next.mjs",
-    "dev": "next dev",
-    "dev:clean": "npm run clean && next dev",
+    "predev": "node scripts/ensure-sqlite-native.mjs",
+    "dev": "node scripts/dev-start.mjs",
+    "dev:stop": "node scripts/stop-dev-port.mjs",
+    "dev:clean": "npm run clean && npm run predev && next dev",
+    "rebuild:native": "npm rebuild better-sqlite3",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -16,7 +22,8 @@
     "db:export": "node scripts/run-export.mjs",
     "db:backup": "node scripts/db-backup.mjs",
     "brand:crop-logo": "node scripts/crop-clin-logo.mjs",
-    "brand:migrate-theme": "node scripts/migrate-clin-theme.mjs"
+    "brand:migrate-theme": "node scripts/migrate-clin-theme.mjs",
+    "branding:tick": "npx tsx scripts/branding-tick.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",

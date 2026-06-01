@@ -1,61 +1,51 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
-import { setContactSegmentOverrideAction } from "@/app/actions";
+import { VoiceInputButton } from "@/components/VoiceInputButton";
+import {
+  outreachFitHeadline,
+  outreachFitHint,
+  pickLatestAnalysisView,
+  SUGGESTED_ACTION_LABELS,
+  type LlmAnalysisView,
+} from "@/lib/contactLlmDisplay";
+import { appendTranscriptToText } from "@/lib/speechRecognition";
 
 type Props = {
   contactId: string;
   ruleScores: { r: number; b: number; c: number };
   initialMessage: string;
+  messagingCaptureMeta?: {
+    messageCount: number;
+    capturedAt: string;
+  } | null;
   initialProvisional: string | null;
   initialRefined: string | null;
-  ollamaBase: string;
-  ollamaModel: string;
 };
 
-type Stewardship = {
-  recommendation: "keep" | "consider_removing" | "unclear";
-  rationale: string;
-};
-
-function prettyJson(raw: string | null): string | null {
-  if (!raw) return null;
-  try {
-    return JSON.stringify(JSON.parse(raw), null, 2);
-  } catch {
-    return raw;
+function fitPanelClass(
+  rec: "reach_out" | "nurture" | "skip" | "unclear",
+): string {
+  if (rec === "reach_out") {
+    return "border-emerald-300 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/35";
   }
-}
-
-function stewardshipFromEnvelope(env: unknown): Stewardship | null {
-  if (!env || typeof env !== "object") return null;
-  const o = env as Record<string, unknown>;
-  const output = o.output;
-  if (!output || typeof output !== "object") return null;
-  const cs = (output as Record<string, unknown>).connection_stewardship;
-  if (!cs || typeof cs !== "object") return null;
-  const rec = (cs as Record<string, unknown>).recommendation;
-  const rat = (cs as Record<string, unknown>).rationale;
-  if (
-    (rec === "keep" || rec === "consider_removing" || rec === "unclear") &&
-    typeof rat === "string"
-  ) {
-    return { recommendation: rec, rationale: rat };
+  if (rec === "skip") {
+    return "border-zinc-300 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900/40";
   }
-  return null;
+  if (rec === "nurture") {
+    return "border-sky-300 bg-sky-50 dark:border-sky-900 dark:bg-sky-950/35";
+  }
+  return "border-clin-border bg-clin-surface-muted";
 }
 
-function stewardshipTitle(s: Stewardship): string {
-  if (s.recommendation === "consider_removing") return "Lean: consider removing";
-  if (s.recommendation === "keep") return "Lean: worth keeping";
-  return "Unclear from this thread";
-}
-
-function stewardshipPanelClass(s: Stewardship): string {
-  if (s.recommendation === "consider_removing") {
+function stewardshipPanelClass(
+  rec: "keep" | "consider_removing" | "unclear",
+): string {
+  if (rec === "consider_removing") {
     return "border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40";
   }
-  if (s.recommendation === "keep") {
+  if (rec === "keep") {
     return "border-emerald-300 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/35";
   }
   return "border-clin-border bg-clin-surface-muted";
@@ -65,10 +55,9 @@ export function ContactLlmPanel({
   contactId,
   ruleScores,
   initialMessage,
+  messagingCaptureMeta,
   initialProvisional,
   initialRefined,
-  ollamaBase,
-  ollamaModel,
 }: Props) {
   const [message, setMessage] = useState(initialMessage);
   const [tier, setTier] = useState<"auto" | "provisional" | "refined">("auto");
@@ -78,11 +67,16 @@ export function ContactLlmPanel({
   const [provisional, setProvisional] = useState(initialProvisional);
   const [refined, setRefined] = useState(initialRefined);
   const [lastEnvelope, setLastEnvelope] = useState<unknown>(null);
+  const [showMessaging, setShowMessaging] = useState(
+    Boolean(messagingCaptureMeta) || initialMessage.trim().length > 0,
+  );
+  const [showTechnical, setShowTechnical] = useState(false);
 
-  const stewardship =
-    stewardshipFromEnvelope(lastEnvelope) ??
-    stewardshipFromEnvelope(tryParseJson(refined ?? "")) ??
-    stewardshipFromEnvelope(tryParseJson(provisional ?? ""));
+  const analysis = pickLatestAnalysisView(
+    lastEnvelope,
+    tryParseJson(refined ?? ""),
+    tryParseJson(provisional ?? ""),
+  );
 
   async function runAnalysis() {
     setLoading(true);
@@ -120,157 +114,29 @@ export function ContactLlmPanel({
     }
   }
 
+  const hasAnalysis = Boolean(analysis?.outreachFit || analysis?.rationale);
+
   return (
-    <section className="space-y-6 clin-card p-5">
-      <div>
-        <h2 className="text-sm font-semibold text-clin-text">
-          Message history → should I drop this contact?
-        </h2>
-        <p className="mt-2 text-xs leading-relaxed text-clin-muted">
-          Clin cannot read LinkedIn for you. Paste a recent thread below, then run analysis. The local
-          model returns a <strong className="clin-strong">lean</strong>{" "}
-          (not a verdict): keep, consider removing, or unclear. You still remove connections on LinkedIn
-          yourself if you want.
-        </p>
-        <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-xs text-clin-muted">
-          <li>
-            Open{" "}
-            <a
-              href="https://www.linkedin.com/messaging/"
-              target="_blank"
-              rel="noreferrer"
-              className="clin-link font-medium"
-            >
-              LinkedIn Messaging
-            </a>{" "}
-            and open the conversation with this person.
-          </li>
-          <li>
-            Select the messages you care about (your notes + theirs), <strong className="font-medium">copy</strong>,
-            and <strong className="font-medium">paste</strong> into the box below. You can redact sensitive lines
-            before pasting.
-          </li>
-          <li>
-            Choose analysis tier if needed, then <strong className="font-medium">Run Ollama analysis</strong>. If
-            the thread is long, use <strong className="font-medium">Refined</strong>.
-          </li>
-        </ol>
-      </div>
-
-      <label className="block space-y-1 text-sm">
-        <span className="clin-strong">
-          Pasted message thread (local only, optional but needed for removal advice)
-        </span>
-        <textarea
-          value={message}
-          onChange={(e) => setMessage(e.target.value)}
-          rows={12}
-          placeholder={`Example:\nYou: Hi — loved your post on …\nThem: Thanks!\nYou: …follow-up…\n(no reply since 3 months)`}
-          className="w-full clin-input font-mono text-xs leading-relaxed"
-        />
-      </label>
-
-      <label className="flex cursor-pointer items-center gap-2 text-sm text-clin-muted">
-        <input
-          type="checkbox"
-          checked={persist}
-          onChange={(e) => setPersist(e.target.checked)}
-        />
-        Save this text on the contact for the next run
-      </label>
-
-      {stewardship ? (
-        <div
-          className={`rounded-lg border p-4 ${stewardshipPanelClass(stewardship)}`}
-          role="status"
-        >
-          <h3 className="text-sm font-semibold text-clin-text">
-            {stewardshipTitle(stewardship)}
-          </h3>
-          <p className="mt-2 text-sm leading-relaxed text-clin-text">
-            {stewardship.rationale}
-          </p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <form action={setContactSegmentOverrideAction}>
-              <input type="hidden" name="contactId" value={contactId} />
-              <input type="hidden" name="segment" value="remove_candidate" />
-              <button
-                type="submit"
-                className="rounded-md border border-amber-800/40 bg-amber-100 px-3 py-1.5 text-xs font-medium text-amber-950 hover:bg-amber-200 dark:border-amber-700 dark:bg-amber-950/80 dark:text-amber-100 dark:hover:bg-amber-900/80"
-              >
-                Tag in Clin: remove candidate
-              </button>
-            </form>
-            <form action={setContactSegmentOverrideAction}>
-              <input type="hidden" name="contactId" value={contactId} />
-              <input type="hidden" name="segment" value="warm" />
-              <button
-                type="submit"
-                className="clin-btn-secondary text-xs px-3 py-1.5"
-              >
-                Tag in Clin: warm
-              </button>
-            </form>
+    <section className="space-y-6">
+      <div className="clin-card p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="clin-section-title">AI insight</h2>
+            <p className="mt-1 text-sm text-clin-muted">
+              Fit vs your offer and relationship signals. Use{" "}
+              <strong className="clin-strong">What to do next</strong> above to
+              message or add to a campaign.
+            </p>
           </div>
-          <p className="mt-3 text-[11px] text-clin-muted">
-            Tags only change Clin&apos;s segment — they do not unfollow or remove anyone on LinkedIn.
-          </p>
-        </div>
-      ) : message.trim().length > 0 && message.trim().length < 40 ? (
-        <p className="text-xs text-amber-800 dark:text-amber-200">
-          Tip: paste a bit more of the thread (40+ characters) so auto tier can treat this as refined context.
-        </p>
-      ) : null}
-
-      <div className="border-t border-clin-border pt-5">
-        <h2 className="text-sm font-semibold text-clin-text">
-          Full LLM analysis (Ollama)
-        </h2>
-        <p className="mt-1 text-xs leading-relaxed text-clin-muted">
-          Rule-based R/B/C above stay the source of truth for default segments until you override. The model adds
-          scores, rationale, and suggested actions.
-        </p>
-        <p className="mt-2 text-xs text-clin-muted">
-          Endpoint:{" "}
-          <code className="clin-code">{ollamaBase}</code> · Model:{" "}
-          <code className="clin-code">{ollamaModel}</code> ·{" "}
-          <a href="/settings" className="clin-link">
-            Settings
-          </a>
-        </p>
-
-        <div className="mt-3 rounded-md bg-clin-surface-muted px-3 py-2 text-xs">
-          <span className="font-medium text-clin-muted">
-            Rule scores (deterministic):{" "}
-          </span>
-          <span className="font-mono text-clin-muted">
-            R{ruleScores.r} B{ruleScores.b} C{ruleScores.c}
-          </span>
-        </div>
-
-        <label className="mt-4 block space-y-1 text-sm">
-          <span className="text-clin-muted">Analysis tier</span>
-          <select
-            value={tier}
-            onChange={(e) =>
-              setTier(e.target.value as "auto" | "provisional" | "refined")
-            }
-            className="w-full clin-input"
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => void runAnalysis()}
+            className="clin-btn-primary shrink-0 text-sm disabled:opacity-50"
           >
-            <option value="auto">Auto (from captures + message length)</option>
-            <option value="provisional">Provisional (expect thin data)</option>
-            <option value="refined">Refined (profile + pasted thread)</option>
-          </select>
-        </label>
-
-        <button
-          type="button"
-          disabled={loading}
-          onClick={() => void runAnalysis()}
-          className="mt-4 clin-btn-primary disabled:opacity-50"
-        >
-          {loading ? "Calling Ollama… (can take 1–2 min)" : "Run Ollama analysis"}
-        </button>
+            {loading ? "Analyzing…" : analysis ? "Re-run analysis" : "Run analysis"}
+          </button>
+        </div>
 
         {error ? (
           <p className="mt-3 whitespace-pre-wrap text-sm text-red-600 dark:text-red-400">
@@ -278,35 +144,219 @@ export function ContactLlmPanel({
           </p>
         ) : null}
 
-        <div className="mt-6 grid gap-4 lg:grid-cols-2">
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-clin-muted">
-              Last provisional
-            </h3>
-            {prettyJson(provisional) ? (
-              <pre className="mt-2 max-h-80 overflow-auto rounded-md bg-clin-navy p-3 text-[11px] leading-relaxed text-white">
-                {prettyJson(provisional)}
-              </pre>
-            ) : (
-              <p className="mt-2 text-xs text-clin-muted">None yet.</p>
-            )}
+        {!hasAnalysis && !loading ? (
+          <p className="mt-4 rounded-lg border border-dashed border-clin-border px-4 py-6 text-center text-sm text-clin-muted">
+            No analysis yet. Capture a full profile, fill{" "}
+            <Link href="/branding/setup?edit=1" className="clin-link">
+              goals &amp; offer
+            </Link>
+            , then run analysis.
+          </p>
+        ) : null}
+
+        {analysis?.outreachFit ? (
+          <div
+            className={`mt-4 rounded-lg border p-4 ${fitPanelClass(analysis.outreachFit.recommendation)}`}
+          >
+            <p className="text-xs font-medium uppercase tracking-wide text-clin-muted">
+              Recommendation
+            </p>
+            <p className="mt-1 text-xl font-semibold text-clin-text">
+              {outreachFitHeadline(analysis.outreachFit)}
+            </p>
+            <p className="mt-1 text-sm text-clin-muted">
+              {outreachFitHint(analysis.outreachFit)}
+            </p>
+            <p className="mt-3 text-sm leading-relaxed text-clin-text">
+              {analysis.outreachFit.rationale}
+            </p>
+            {analysis.outreachFit.icp_signals?.length ? (
+              <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-clin-muted">
+                {analysis.outreachFit.icp_signals.map((s) => (
+                  <li key={s}>{s}</li>
+                ))}
+              </ul>
+            ) : null}
           </div>
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-clin-muted">
-              Last refined
-            </h3>
-            {prettyJson(refined) ? (
-              <pre className="mt-2 max-h-80 overflow-auto rounded-md bg-clin-navy p-3 text-[11px] leading-relaxed text-white">
-                {prettyJson(refined)}
-              </pre>
-            ) : (
-              <p className="mt-2 text-xs text-clin-muted">None yet.</p>
-            )}
+        ) : null}
+
+        {analysis?.rationale &&
+        (analysis.rationale.business ||
+          analysis.rationale.relationship ||
+          analysis.rationale.cleanup) ? (
+          <dl className="mt-4 space-y-3 text-sm">
+            {analysis.rationale.business ? (
+              <div>
+                <dt className="font-medium text-clin-text">Business</dt>
+                <dd className="mt-0.5 text-clin-muted">
+                  {analysis.rationale.business}
+                </dd>
+              </div>
+            ) : null}
+            {analysis.rationale.relationship ? (
+              <div>
+                <dt className="font-medium text-clin-text">Relationship</dt>
+                <dd className="mt-0.5 text-clin-muted">
+                  {analysis.rationale.relationship}
+                </dd>
+              </div>
+            ) : null}
+            {analysis.rationale.cleanup ? (
+              <div>
+                <dt className="font-medium text-clin-text">Network hygiene</dt>
+                <dd className="mt-0.5 text-clin-muted">
+                  {analysis.rationale.cleanup}
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        ) : null}
+
+        {analysis?.suggestedActions.length ? (
+          <ul className="mt-4 space-y-1 text-sm text-clin-muted">
+            {analysis.suggestedActions.map((a) => (
+              <li key={a}>
+                {SUGGESTED_ACTION_LABELS[a] ?? a}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        {analysis?.dataGaps.length ? (
+          <p className="mt-4 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-950 dark:bg-amber-950/40 dark:text-amber-100">
+            <strong className="font-medium">Missing for confidence:</strong>{" "}
+            {analysis.dataGaps.join(" · ")}
+          </p>
+        ) : null}
+
+        <details className="mt-4 text-xs text-clin-muted">
+          <summary className="cursor-pointer font-medium text-clin-text">
+            What do R / B / C mean?
+          </summary>
+          <p className="mt-2 leading-relaxed">
+            <strong>R{ruleScores.r}</strong> — how recently you captured this person.{" "}
+            <strong>B{ruleScores.b}</strong> — rough keyword match to business roles
+            (not AI). <strong>C{ruleScores.c}</strong> — stale or thin profile in Clin.
+            Segment tags use these until you override.
+          </p>
+        </details>
+
+        {analysis?.analyzedAt ? (
+          <p className="mt-3 text-[11px] text-clin-muted">
+            Last run: {new Date(analysis.analyzedAt).toLocaleString()}
+            {analysis.tier ? ` · ${analysis.tier}` : ""}
+            {analysis.model ? ` · ${analysis.model}` : ""}
+          </p>
+        ) : null}
+
+        <details
+          className="mt-4"
+          open={showTechnical}
+          onToggle={(e) => setShowTechnical(e.currentTarget.open)}
+        >
+          <summary className="cursor-pointer text-xs font-medium text-clin-muted">
+            Technical details (raw JSON)
+          </summary>
+          <div className="mt-2 grid gap-4 lg:grid-cols-2">
+            <pre className="max-h-48 overflow-auto rounded-md bg-clin-navy p-3 text-[10px] text-white">
+              {prettyJson(refined) || "—"}
+            </pre>
+            <pre className="max-h-48 overflow-auto rounded-md bg-clin-navy p-3 text-[10px] text-white">
+              {prettyJson(provisional) || "—"}
+            </pre>
           </div>
-        </div>
+          <label className="mt-3 block space-y-1 text-sm">
+            <span className="text-clin-muted">Analysis tier</span>
+            <select
+              value={tier}
+              onChange={(e) =>
+                setTier(e.target.value as "auto" | "provisional" | "refined")
+              }
+              className="clin-input w-full max-w-md"
+            >
+              <option value="auto">Auto</option>
+              <option value="provisional">Provisional (thin data)</option>
+              <option value="refined">Refined (profile + messages)</option>
+            </select>
+          </label>
+        </details>
       </div>
+
+      <details className="clin-card p-5" open={showMessaging}>
+        <summary
+          className="cursor-pointer text-sm font-semibold text-clin-text"
+          onClick={() => setShowMessaging((v) => !v)}
+        >
+          Message thread (optional — for “should I remove?”)
+        </summary>
+        <div className="mt-4 space-y-4">
+          <p className="text-xs text-clin-muted">
+            Extension → Messaging on an open LinkedIn thread, or paste below. Only
+            needed if you want keep vs remove advice.
+          </p>
+          {messagingCaptureMeta ? (
+            <p className="rounded-md border border-emerald-400/40 bg-emerald-50/80 px-3 py-2 text-xs text-emerald-950 dark:bg-emerald-950/40 dark:text-emerald-100">
+              Loaded {messagingCaptureMeta.messageCount} messages (
+              {new Date(messagingCaptureMeta.capturedAt).toLocaleString()}).
+            </p>
+          ) : null}
+          <div className="clin-voice-field">
+            <textarea
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              rows={8}
+              placeholder="Paste DM thread…"
+              className="min-h-0 flex-1 w-full clin-input font-mono text-xs"
+            />
+            <VoiceInputButton
+              size="sm"
+              label="Voice"
+              onAppend={(text) =>
+                setMessage((m) => appendTranscriptToText(m, text))
+              }
+            />
+          </div>
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-clin-muted">
+            <input
+              type="checkbox"
+              checked={persist}
+              onChange={(e) => setPersist(e.target.checked)}
+            />
+            Save thread on this contact
+          </label>
+          {analysis?.stewardship ? (
+            <div
+              className={`rounded-lg border p-4 ${stewardshipPanelClass(analysis.stewardship.recommendation)}`}
+            >
+              <p className="text-sm font-semibold text-clin-text">
+                {analysis.stewardship.recommendation === "consider_removing"
+                  ? "Lean: consider removing"
+                  : analysis.stewardship.recommendation === "keep"
+                    ? "Lean: worth keeping"
+                    : "Unclear from thread"}
+              </p>
+              <p className="mt-2 text-sm">{analysis.stewardship.rationale}</p>
+            </div>
+          ) : null}
+          {analysis?.messageRead ? (
+            <p className="text-sm text-clin-muted">
+              <strong className="text-clin-text">Thread read:</strong>{" "}
+              {analysis.messageRead}
+            </p>
+          ) : null}
+        </div>
+      </details>
     </section>
   );
+}
+
+function prettyJson(raw: string | null): string | null {
+  if (!raw) return null;
+  try {
+    return JSON.stringify(JSON.parse(raw), null, 2);
+  } catch {
+    return raw;
+  }
 }
 
 function tryParseJson(raw: string): unknown {

@@ -3,6 +3,8 @@
   "private": true,
   "scripts": {
     "dev": "npm --prefix web run dev",
+    "dev:stop": "npm --prefix web run dev:stop",
+    "dev:clean": "npm --prefix web run dev:clean",
     "build": "npm --prefix web run build",
     "start": "npm --prefix web run start",
     "lint": "npm --prefix web run lint",

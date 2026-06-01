@@ -1,25 +1,42 @@
 import { eq, inArray } from "drizzle-orm";
 import { getDb, getSqlite } from "@/db";
 import { appSettings } from "@/db/schema";
+import type { AutopilotActionPolicy } from "@/lib/autopilotActions";
 import {
   defaultAutopilotAnalyzeBody,
   executeContactAnalysis,
 } from "@/lib/contactAnalyzeRunner";
-import { getOllamaSettings } from "@/lib/ollamaSettings";
+import { getLlmConfig } from "@/lib/llm/completeChat";
 
 export const AUTOPILOT_KEYS = {
   analyzeAfterProfileCapture: "autopilot.analyze_after_profile_capture",
   batchDefaultLimit: "autopilot.batch_default_limit",
+  campaignDraftOnReachOut: "autopilot.campaign_draft_on_reach_out",
+  campaignTagSkipGhost: "autopilot.campaign_tag_skip_ghost",
+  campaignTagNurtureWarm: "autopilot.campaign_tag_nurture_warm",
 } as const;
 
 export type AutopilotSettings = {
   analyzeAfterProfileCapture: boolean;
   batchDefaultLimit: number;
+  campaignDraftOnReachOut: boolean;
+  campaignTagSkipGhost: boolean;
+  campaignTagNurtureWarm: boolean;
 };
 
+export type AutopilotActionPolicySettings = Pick<
+  AutopilotSettings,
+  | "campaignDraftOnReachOut"
+  | "campaignTagSkipGhost"
+  | "campaignTagNurtureWarm"
+>;
+
 const DEFAULTS: AutopilotSettings = {
-  analyzeAfterProfileCapture: false,
+  analyzeAfterProfileCapture: true,
   batchDefaultLimit: 8,
+  campaignDraftOnReachOut: true,
+  campaignTagSkipGhost: false,
+  campaignTagNurtureWarm: false,
 };
 
 const BATCH_LIMIT_BOUNDS = { min: 1, max: 30 } as const;
@@ -77,12 +94,37 @@ export async function getAutopilotSettings(): Promise<AutopilotSettings> {
         DEFAULTS.batchDefaultLimit,
       ),
     ),
+    campaignDraftOnReachOut: parseBool(
+      map.get(AUTOPILOT_KEYS.campaignDraftOnReachOut),
+      DEFAULTS.campaignDraftOnReachOut,
+    ),
+    campaignTagSkipGhost: parseBool(
+      map.get(AUTOPILOT_KEYS.campaignTagSkipGhost),
+      DEFAULTS.campaignTagSkipGhost,
+    ),
+    campaignTagNurtureWarm: parseBool(
+      map.get(AUTOPILOT_KEYS.campaignTagNurtureWarm),
+      DEFAULTS.campaignTagNurtureWarm,
+    ),
+  };
+}
+
+export function autopilotActionPolicyFromSettings(
+  s: AutopilotSettings,
+): AutopilotActionPolicy {
+  return {
+    draftOnReachOut: s.campaignDraftOnReachOut,
+    tagSkipAsGhost: s.campaignTagSkipGhost,
+    tagNurtureAsWarm: s.campaignTagNurtureWarm,
   };
 }
 
 export type AutopilotSettingsPatch = Partial<{
   analyzeAfterProfileCapture: boolean;
   batchDefaultLimit: number;
+  campaignDraftOnReachOut: boolean;
+  campaignTagSkipGhost: boolean;
+  campaignTagNurtureWarm: boolean;
 }>;
 
 export async function updateAutopilotSettings(
@@ -99,6 +141,15 @@ export async function updateAutopilotSettings(
   ) {
     next.batchDefaultLimit = clampBatch(patch.batchDefaultLimit);
   }
+  if (typeof patch.campaignDraftOnReachOut === "boolean") {
+    next.campaignDraftOnReachOut = patch.campaignDraftOnReachOut;
+  }
+  if (typeof patch.campaignTagSkipGhost === "boolean") {
+    next.campaignTagSkipGhost = patch.campaignTagSkipGhost;
+  }
+  if (typeof patch.campaignTagNurtureWarm === "boolean") {
+    next.campaignTagNurtureWarm = patch.campaignTagNurtureWarm;
+  }
 
   await upsertAppSetting(
     AUTOPILOT_KEYS.analyzeAfterProfileCapture,
@@ -107,6 +158,18 @@ export async function updateAutopilotSettings(
   await upsertAppSetting(
     AUTOPILOT_KEYS.batchDefaultLimit,
     String(next.batchDefaultLimit),
+  );
+  await upsertAppSetting(
+    AUTOPILOT_KEYS.campaignDraftOnReachOut,
+    next.campaignDraftOnReachOut ? "1" : "0",
+  );
+  await upsertAppSetting(
+    AUTOPILOT_KEYS.campaignTagSkipGhost,
+    next.campaignTagSkipGhost ? "1" : "0",
+  );
+  await upsertAppSetting(
+    AUTOPILOT_KEYS.campaignTagNurtureWarm,
+    next.campaignTagNurtureWarm ? "1" : "0",
   );
   return next;
 }
@@ -173,14 +236,14 @@ export async function runLlmAnalysisBatch(opts: {
   limit: number;
 }): Promise<{ results: BatchAnalyzeItemResult[] }> {
   const db = getDb();
-  const ollama = await getOllamaSettings();
+  const llm = await getLlmConfig();
   const ids = await resolvePendingLlmContactIds(opts.limit);
   const results: BatchAnalyzeItemResult[] = [];
   const body = defaultAutopilotAnalyzeBody();
 
   for (const contactId of ids) {
     try {
-      const { tier } = await executeContactAnalysis(db, contactId, body, ollama);
+      const { tier } = await executeContactAnalysis(db, contactId, body, llm);
       results.push({ contactId, ok: true, tier });
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
@@ -192,32 +255,41 @@ export async function runLlmAnalysisBatch(opts: {
 }
 
 /**
- * Fire-and-forget after a successful profile ingest when the setting is on.
+ * Fire-and-forget after profile or messaging ingest when the setting is on.
  */
-export function maybeAutopilotAnalyzeAfterProfileCapture(
+export function maybeAutopilotAnalyzeAfterCapture(
   contactId: string,
   pageType: string,
 ): void {
-  if (pageType !== "profile") return;
+  if (pageType !== "profile" && pageType !== "messaging") return;
 
   void (async () => {
     try {
       const settings = await getAutopilotSettings();
       if (!settings.analyzeAfterProfileCapture) return;
       const db = getDb();
-      const ollama = await getOllamaSettings();
+      const llm = await getLlmConfig();
       await executeContactAnalysis(
         db,
         contactId,
         defaultAutopilotAnalyzeBody(),
-        ollama,
+        llm,
       );
     } catch (err) {
       console.error(
-        "[clin autopilot] analyze after profile capture failed:",
+        "[clin autopilot] analyze after capture failed:",
         contactId,
+        pageType,
         err,
       );
     }
   })();
+}
+
+/** @deprecated Use maybeAutopilotAnalyzeAfterCapture */
+export function maybeAutopilotAnalyzeAfterProfileCapture(
+  contactId: string,
+  pageType: string,
+): void {
+  maybeAutopilotAnalyzeAfterCapture(contactId, pageType);
 }

@@ -10,6 +10,10 @@ ADRs document **significant, stable** choices for Clin. They complement [DESIGN.
 | [0002](./0002-outreach-campaigns.md) | Named outreach campaigns, capture target, Ollama drafts |
 | [0003](./0003-profile-readiness-derived.md) | Derived profile readiness from captures (not a stored member field) |
 | [0004](./0004-linkedin-url-canonicalization.md) | Canonical profile URLs and Unicode normalization |
+| [0005](./0005-unified-llm-inference-layer.md) | Unified `completeChat` LLM layer; Ollama first, cloud-ready |
+| [0006](./0006-local-dev-singleton.md) | Local dev singleton: fixed port, lock file, health contract |
+| [0007](./0007-content-calendar-brand-coach.md) | Content calendar, Brand Coach, extension publish handoff |
+| [0008](./0008-editorial-autopilot-jobs-sources.md) | Editorial autopilot: job queue, sources, market calendar, runners |
 
 ## Conventions
 

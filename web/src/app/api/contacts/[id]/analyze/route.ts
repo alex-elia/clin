@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { executeContactAnalysis } from "@/lib/contactAnalyzeRunner";
-import { getOllamaSettings } from "@/lib/ollamaSettings";
+import { getLlmConfig } from "@/lib/llm/completeChat";
 import { contactAnalyzeBodySchema } from "@/lib/schemas";
 
 export const runtime = "nodejs";
@@ -36,24 +36,32 @@ export async function POST(
   });
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  let ollama;
+  let llm;
   try {
-    ollama = await getOllamaSettings();
+    llm = await getLlmConfig();
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json(
-      { error: `Ollama settings: ${msg}` },
+      { error: `Inference settings: ${msg}` },
       { status: 500 },
     );
   }
 
   let out;
   try {
-    out = await executeContactAnalysis(db, id, parsed.data, ollama);
+    out = await executeContactAnalysis(db, id, parsed.data, llm);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json(
-      { error: msg, ollama: { baseUrl: ollama.baseUrl, model: ollama.model } },
+      {
+        error: msg,
+        llm: {
+          provider: llm.provider,
+          baseUrl: llm.baseUrl,
+          model: llm.model,
+        },
+        ollama: { baseUrl: llm.baseUrl, model: llm.model },
+      },
       { status: 502 },
     );
   }
@@ -63,6 +71,7 @@ export async function POST(
     tier: out.tier,
     envelope: out.envelope,
     contact: out.contact,
-    ollama: { baseUrl: ollama.baseUrl, model: ollama.model },
+    llm: { provider: llm.provider, baseUrl: llm.baseUrl, model: llm.model },
+    ollama: { baseUrl: llm.baseUrl, model: llm.model },
   });
 }

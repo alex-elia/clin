@@ -2,18 +2,23 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "@/db";
 import { contacts, outreachCampaignMembers, outreachCampaigns } from "@/db/schema";
-import {
-  callOllamaJson,
-  extractJsonObjectFromModelText,
-} from "@/lib/llmAnalysis";
-import { getOllamaSettings } from "@/lib/ollamaSettings";
+import { extractJsonObjectFromModelText } from "@/lib/llmAnalysis";
+import { completeChat, getLlmConfig } from "@/lib/llm/completeChat";
 import { getGlobalWriterInstructions } from "@/lib/brand";
 import { getLatestProfileContextForOutreach } from "@/lib/profileCaptureContext";
 import { updateMemberDraft } from "@/lib/outreachCampaigns";
+import {
+  applySenderNameToDraft,
+  buildSenderIdentityPromptBlock,
+  getSenderIdentity,
+} from "@/lib/senderIdentity";
+import { getUserContextForLlm, userContextHasLlmSignal } from "@/lib/userContext";
 
 const outSchema = z.object({ message: z.string() });
 
 const DEFAULT_OUTREACH_SYSTEM = `You write short, personalized LinkedIn connection notes or DMs (keep under 2000 characters). Reply with strictly valid JSON only: {"message":"..."} — no markdown, no code fences, no extra keys.
+
+The user message includes who YOU are (sender) and who the recipient is. Write in the sender's voice. Sign with the sender's real name — never use bracket placeholders like [Your Name] or {{name}}.
 
 If your runtime exposes web search, browsing, or URL fetch tools (e.g. Ollama web_search / web_fetch or an app-integrated browser): use them before you draft when the recipient names a company or organization in Company or Headline. Run a few focused queries—such as "<company> official about products", "<company> news", or the company name plus the person's role from Headline—to ground one concrete, truthful hook (what they build, sector, or a recent public milestone). Do not invent financials, headcount, or non-public facts. If tools are unavailable or results are empty, write using only the Clin-provided fields.
 
@@ -50,15 +55,27 @@ export async function generateOutreachDraftForMember(
     return { ok: false, error: "Missing campaign or contact", stage: "load" };
   }
 
-  const ollama = await getOllamaSettings();
+  const llm = await getLlmConfig();
   const override = campaign.systemPromptOverride?.trim();
   const system =
     override && override.length > 0 ? override : DEFAULT_OUTREACH_SYSTEM;
 
-  let user = `Campaign context (from the Clin user):\n${campaign.contextText}\n\n`;
+  const sender = await getSenderIdentity();
+  const ownerCtx = await getUserContextForLlm();
+
+  let user = `${buildSenderIdentityPromptBlock(sender)}\n\n`;
+  user += `Campaign context (what you are offering in this campaign):\n${campaign.contextText}\n\n`;
+  if (userContextHasLlmSignal(ownerCtx)) {
+    if (ownerCtx.goalsText) {
+      user += `Your networking goals (Clin):\n${ownerCtx.goalsText}\n\n`;
+    }
+    if (ownerCtx.positioningSummary) {
+      user += `Your positioning & offer (what you sell / who you help):\n${ownerCtx.positioningSummary}\n\n`;
+    }
+  }
   const globalWriter = await getGlobalWriterInstructions();
   if (globalWriter) {
-    user += `Your global positioning and voice (from Clin → You & goals):\n${globalWriter}\n\n`;
+    user += `Your global outreach voice (Clin → You & voice):\n${globalWriter}\n\n`;
   }
   const writerNotes = campaign.writerInstructions?.trim();
   if (writerNotes) {
@@ -76,18 +93,21 @@ export async function generateOutreachDraftForMember(
     memberId,
     campaignId: campaign.id,
     contactId: contact.id,
-    model: ollama.model,
-    baseUrl: ollama.baseUrl,
+    model: llm.model,
+    baseUrl: llm.baseUrl,
+    provider: llm.provider,
     systemOverride: Boolean(override),
     hasWriterInstructions: Boolean(writerNotes),
   });
 
   let raw: string;
   try {
-    raw = await callOllamaJson({
-      settings: ollama,
+    raw = await completeChat({
+      config: llm,
+      feature: "outreach_draft",
       system,
       user,
+      jsonMode: true,
       timeoutMs: 180_000,
     });
   } catch (e) {
@@ -95,7 +115,7 @@ export async function generateOutreachDraftForMember(
     logDraft("ollama_http_error", msg);
     return {
       ok: false,
-      error: `Ollama request failed: ${msg}. Is Ollama running and the model installed? (Clin → Settings)`,
+      error: `LLM request failed: ${msg}. Check Settings → Inference.`,
       stage: "ollama",
     };
   }
@@ -139,11 +159,13 @@ export async function generateOutreachDraftForMember(
     };
   }
 
-  const msg = parsed.data.message.trim();
+  let msg = parsed.data.message.trim();
   if (!msg) {
     logDraft("empty_message");
     return { ok: false, error: "Empty message from model.", stage: "empty" };
   }
+
+  msg = applySenderNameToDraft(msg, sender);
 
   await updateMemberDraft(memberId, msg);
   logDraft("saved", { memberId, draftChars: msg.length });

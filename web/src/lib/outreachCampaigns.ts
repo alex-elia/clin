@@ -153,6 +153,38 @@ export type CampaignMemberRow = {
   contact: typeof contacts.$inferSelect;
 };
 
+export type ContactCampaignMembership = {
+  memberId: string;
+  campaignId: string;
+  campaignName: string;
+  status: string;
+  draftOutreach: string | null;
+};
+
+/** Campaigns this contact belongs to (for contact detail actions). */
+export async function listCampaignMembershipsForContact(
+  contactId: string,
+): Promise<ContactCampaignMembership[]> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(outreachCampaignMembers)
+    .innerJoin(
+      outreachCampaigns,
+      eq(outreachCampaignMembers.campaignId, outreachCampaigns.id),
+    )
+    .where(eq(outreachCampaignMembers.contactId, contactId))
+    .orderBy(desc(outreachCampaignMembers.updatedAt));
+
+  return rows.map((r) => ({
+    memberId: r.outreach_campaign_members.id,
+    campaignId: r.outreach_campaigns.id,
+    campaignName: r.outreach_campaigns.name,
+    status: r.outreach_campaign_members.status,
+    draftOutreach: r.outreach_campaign_members.draftOutreach,
+  }));
+}
+
 export async function listCampaignMembers(
   campaignId: string,
 ): Promise<CampaignMemberRow[]> {
