@@ -297,6 +297,7 @@ export async function suggestVoiceSetupFromProfileAction(
 export async function createCampaignAction(formData: FormData) {
   const name = String(formData.get("name") ?? "").trim();
   const contextText = String(formData.get("contextText") ?? "").trim();
+  const icpText = String(formData.get("icpText") ?? "").trim();
   const writerInstructions = String(
     formData.get("writerInstructions") ?? "",
   ).trim();
@@ -307,6 +308,7 @@ export async function createCampaignAction(formData: FormData) {
     redirect("/campaigns/new?err=missing");
   }
   const id = await createOutreachCampaign(name, contextText, {
+    icpText: icpText || null,
     writerInstructions: writerInstructions || null,
     systemPromptOverride: systemPromptOverride || null,
   });
@@ -318,6 +320,7 @@ export async function updateCampaignAction(formData: FormData) {
   const id = String(formData.get("campaignId") ?? "").trim();
   const name = String(formData.get("name") ?? "").trim();
   const contextText = String(formData.get("contextText") ?? "").trim();
+  const icpText = String(formData.get("icpText") ?? "").trim();
   const writerInstructions = String(
     formData.get("writerInstructions") ?? "",
   ).trim();
@@ -328,6 +331,7 @@ export async function updateCampaignAction(formData: FormData) {
   await updateOutreachCampaign(id, {
     name,
     contextText,
+    icpText: icpText || null,
     writerInstructions: writerInstructions || null,
     systemPromptOverride: systemPromptOverride || null,
   });

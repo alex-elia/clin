@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { CoachChatComposer } from "@/components/CoachChatComposer";
+import { CoachChatThread } from "@/components/CoachChatThread";
 import { CoachDebugPanel } from "@/components/CoachDebugPanel";
-import { VoiceInputButton } from "@/components/VoiceInputButton";
 import {
   isAdvisoryCoachReply,
   type BrandCoachTurnDebug,
@@ -12,14 +13,8 @@ import {
   POST_WRITING_QUICK_PROMPTS_POST,
   POST_WRITING_QUICK_PROMPTS_STUDIO,
 } from "@/lib/contentPostWorkflow";
-import { appendTranscriptToText } from "@/lib/speechRecognition";
 import type { CoachAction } from "@/lib/brandCoachTypes";
 import type { PostFormPatch } from "@/components/ContentPostWorkspace";
-
-type Message = {
-  role: "user" | "assistant";
-  content: string;
-};
 
 export type CoachDraftPayload = {
   title?: string;
@@ -52,7 +47,9 @@ export function PostWritingAssistant({
   brandLanguage,
 }: PostWritingAssistantProps) {
   const [threadId, setThreadId] = useState<string | undefined>();
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<
+    { role: "user" | "assistant"; content: string }[]
+  >([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,17 +106,21 @@ export function PostWritingAssistant({
         setStatusLine(
           "Ideas in the reply above. To add calendar slots, say e.g. “Add these to my calendar for Tue/Thu” or use a quick prompt that mentions create_post.",
         );
-      } else if (planningOnly && data.reply?.trim() && !data.debug?.parse.hasCoachActionsBlock) {
+      } else if (
+        planningOnly &&
+        data.reply?.trim() &&
+        !data.debug?.parse.hasCoachActionsBlock
+      ) {
         setCoachDebug(null);
         setStatusLine(
           "Reply above. When you want calendar changes, ask to add or reschedule posts — the coach will send Apply-able actions.",
         );
-      } else if (data.debug) {
+      } else if (data.debug && !isAdvisoryCoachReply(data.debug)) {
         setCoachDebug(data.debug);
         setError(
           planningOnly
-            ? "Could not apply calendar changes. Try asking to “add Tue/Thu slots with create_post” or check debug / AI call logs."
-            : "Coach replied but sent no form updates (missing or invalid coach-actions block). Expand debug below or check Settings → AI call logs.",
+            ? "Could not apply calendar changes. Try asking to add calendar slots with create_post."
+            : "Coach replied but sent no form updates. See debug below or Settings → AI call logs.",
         );
       }
       if (data.resolvedLanguage) {
@@ -214,23 +215,14 @@ export function PostWritingAssistant({
         </p>
       ) : null}
 
-      {messages.length > 0 ? (
-        <div className="mt-4 max-h-56 space-y-2 overflow-y-auto rounded-md bg-[var(--clin-surface-muted)]/50 p-3">
-          {messages.map((m, i) => (
-            <div key={i} className="text-sm">
-              <span className="font-medium text-[var(--clin-accent)]">
-                {m.role === "user" ? "You" : "Assistant"}:
-              </span>{" "}
-              <span className="whitespace-pre-wrap text-[var(--clin-text)]">
-                {m.content}
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : null}
+      <CoachChatThread
+        messages={messages}
+        loading={loading}
+        assistantLabel={planningOnly ? "Planning" : "Assistant"}
+      />
 
       {pendingActions.length > 0 ? (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-[var(--clin-accent)]/30 bg-[var(--clin-accent)]/5 px-3 py-2">
           <button
             type="button"
             className="clin-btn-primary"
@@ -255,43 +247,17 @@ export function PostWritingAssistant({
       {error ? <p className="mt-2 text-sm text-red-700 dark:text-red-300">{error}</p> : null}
       {coachDebug ? <CoachDebugPanel debug={coachDebug} /> : null}
 
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        {quickPrompts.map((q) => (
-          <button
-            key={q}
-            type="button"
-            className="clin-pill text-xs"
-            onClick={() => setInput(q)}
-          >
-            {q.length > 48 ? `${q.slice(0, 48)}…` : q}
-          </button>
-        ))}
-      </div>
-
-      <div className="mt-3 clin-voice-field">
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          rows={3}
-          placeholder="Speak or type: voice note, full post request, or Q&A…"
-          className="clin-input min-h-0 flex-1"
-        />
-        <VoiceInputButton
-          language={speechLanguage ?? coachDraft?.language}
-          disabled={loading}
-          onAppend={(text) =>
-            setInput((prev) => appendTranscriptToText(prev, text))
-          }
-        />
-        <button
-          type="button"
-          className="clin-btn-primary shrink-0 self-end"
-          disabled={loading}
-          onClick={() => void send()}
-        >
-          {loading ? "…" : "Ask"}
-        </button>
-      </div>
+      <CoachChatComposer
+        input={input}
+        onInputChange={setInput}
+        onSend={() => void send()}
+        loading={loading}
+        sendLabel="Ask"
+        placeholder="Speak or type: voice note, full post request, or Q&A…"
+        speechLanguage={speechLanguage ?? coachDraft?.language}
+        quickPrompts={messages.length === 0 ? quickPrompts : undefined}
+        onQuickPrompt={setInput}
+      />
     </section>
   );
 }

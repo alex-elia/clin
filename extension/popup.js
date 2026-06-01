@@ -514,21 +514,30 @@ document.getElementById("pipeline-run")?.addEventListener("click", async () => {
     Math.max(800, Number.isFinite(rawP) ? rawP : 2800),
   );
 
-  let tabList;
+  let tab;
   try {
-    tabList = await chrome.tabs.query({ active: true, currentWindow: true });
+    tab = await resolvePipelineLinkedInTab();
   } catch (e) {
     setStatus(String(e), "err");
     return;
   }
-  const tab = tabList[0];
   if (!tab?.id) {
-    setStatus("No active tab.", "err");
+    setStatus(
+      "Open LinkedIn people search or Connections in a tab, then try again.",
+      "err",
+    );
+    return;
+  }
+  if (!tab.url || !isConnectionsListPageUrl(tab.url)) {
+    setStatus(
+      "Switch to a people search or Connections list tab (not a single profile), then run Import & enrich.",
+      "err",
+    );
     return;
   }
 
   setStatus(
-    `Pipeline: ${listRounds} list round(s), then profile capture… Keep this popup and LinkedIn tab open.`,
+    `Pipeline: ${listRounds} list round(s) with auto-scroll, then profiles… Clin will focus the LinkedIn tab.`,
     "",
   );
 
@@ -589,6 +598,46 @@ function isLinkedInProfilePageUrl(url) {
   } catch {
     return false;
   }
+}
+
+function isConnectionsListPageUrl(url) {
+  try {
+    const u = new URL(url);
+    if (!u.hostname.toLowerCase().endsWith("linkedin.com")) return false;
+    const p = u.pathname.toLowerCase();
+    if (p.includes("/mynetwork/invite-connect/connections")) return true;
+    if (p.includes("/mynetwork/connection-manager")) return true;
+    if (p.includes("/search/results/people")) return true;
+    if (p.includes("/search/results/all") && /people/i.test(u.search)) return true;
+    if (p.includes("/sales/search/people")) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/** Prefer active LinkedIn list tab; else any open people-search / connections tab. */
+async function resolvePipelineLinkedInTab() {
+  const activeList = await chrome.tabs.query({
+    active: true,
+    currentWindow: true,
+  });
+  const active = activeList[0];
+  if (
+    active?.id &&
+    active.url?.includes("linkedin.com") &&
+    isConnectionsListPageUrl(active.url)
+  ) {
+    return active;
+  }
+  const linkedInTabs = await chrome.tabs.query({
+    url: "*://*.linkedin.com/*",
+  });
+  for (const t of linkedInTabs) {
+    if (t.id && t.url && isConnectionsListPageUrl(t.url)) return t;
+  }
+  if (active?.id && active.url?.includes("linkedin.com")) return active;
+  return linkedInTabs.find((t) => t.id) ?? active ?? null;
 }
 
 function formatHygieneUrlWaitProgress({ url, status, elapsedMs }) {

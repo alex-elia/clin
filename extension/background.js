@@ -2706,6 +2706,7 @@ function scrapeVisibleProfile() {
 
 /** Wait for LinkedIn top card, then scrape profile fields from a tab. */
 async function scrapeProfileFromTab(tabId) {
+  await focusAutomationTab(tabId);
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
@@ -2764,8 +2765,11 @@ async function scrapeProfileFromTab(tabId) {
 
 /**
  * Page world — scroll the connections / people-search list to load more rows.
+ * Multiple passes so lazy-loaded cards appear (background tabs often need focus too).
  */
-function scrollConnectionsListViewport() {
+async function scrollConnectionsListViewport() {
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
   function tryScroll(el, dy) {
     if (!el) return false;
     const sh = el.scrollHeight;
@@ -2776,6 +2780,7 @@ function scrollConnectionsListViewport() {
     }
     return false;
   }
+
   const main =
     document.querySelector("main.scaffold-layout__main") ||
     document.querySelector('main[role="main"]') ||
@@ -2786,16 +2791,66 @@ function scrollConnectionsListViewport() {
     ".search-results-container",
     ".mn-connections__list-container",
     ".artdeco-list",
+    ".reusable-search__entity-result-list",
   ];
+  const targets = [];
   for (const sel of innerSelectors) {
     const el = (main && main.querySelector(sel)) || document.querySelector(sel);
-    if (tryScroll(el, Math.min(950, Math.floor((el?.scrollHeight || 800) * 0.4)))) {
-      return { scrolled: true };
-    }
+    if (el && !targets.includes(el)) targets.push(el);
   }
-  if (tryScroll(main, 720)) return { scrolled: true };
-  window.scrollBy({ top: 680, behavior: "instant" });
-  return { scrolled: true, fallback: "window" };
+  if (main && !targets.includes(main)) targets.push(main);
+
+  let usedFallback = false;
+  for (let pass = 0; pass < 5; pass++) {
+    let moved = false;
+    for (const el of targets) {
+      const dy = Math.min(950, Math.floor((el.scrollHeight || 800) * 0.35));
+      if (tryScroll(el, dy)) moved = true;
+    }
+    if (!moved) {
+      window.scrollBy({ top: 680, behavior: "instant" });
+      usedFallback = true;
+    }
+    await pause(380);
+  }
+  return { scrolled: true, passes: 5, fallback: usedFallback };
+}
+
+/** Bring the LinkedIn automation tab to the foreground (required for lazy-load / scroll). */
+async function focusAutomationTab(tabId) {
+  if (typeof tabId !== "number") return;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab?.id) return;
+    await chrome.tabs.update(tabId, { active: true });
+    if (tab.windowId != null) {
+      try {
+        await chrome.windows.update(tab.windowId, { focused: true });
+      } catch {
+        /* ignore */
+      }
+    }
+    await sleep(400);
+  } catch {
+    /* tab closed */
+  }
+}
+
+/** Focus tab, auto-scroll list, wait for new rows to render. */
+async function prepareListPageForScrape(tabId, postScrollMs) {
+  await focusAutomationTab(tabId);
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: scrollConnectionsListViewport,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `Could not scroll the list (is the LinkedIn tab still open?). ${msg}`,
+    );
+  }
+  await sleep(postScrollMs);
 }
 
 /**
@@ -3403,12 +3458,14 @@ async function importConnectionsListRound(tabId, base, round, postScrollMs) {
       stop: true,
     };
   }
-  if (round > 0) {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      func: scrollConnectionsListViewport,
-    });
-    await sleep(postScrollMs);
+  try {
+    await prepareListPageForScrape(tabId, postScrollMs);
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+      stop: true,
+    };
   }
   let pruned;
   try {
@@ -3429,8 +3486,8 @@ async function importConnectionsListRound(tabId, base, round, postScrollMs) {
       ok: false,
       error:
         round === 0
-          ? "No people visible — scroll the list, then try again."
-          : "No new rows after scroll.",
+          ? "No people visible after auto-scroll — open a people search or Connections list with rows on screen."
+          : "No new rows after scroll — end of list or layout changed.",
       stop: round > 0,
       imported: 0,
     };
@@ -3524,6 +3581,7 @@ async function enrichOneProfileStep(tabId, base, firstOpen) {
     await sleep(next.waitBeforeMs);
   }
   try {
+    await focusAutomationTab(tabId);
     await chrome.tabs.update(tabId, { url: next.contact.linkedinUrl });
     await waitForLinkedInProfileTab(tabId);
   } catch (e) {
@@ -3600,6 +3658,11 @@ async function runClinPipeline(opts) {
       ok: false,
       error: "Turn on Background enrich in Clin → Settings.",
     };
+  }
+  try {
+    await focusAutomationTab(tabId);
+  } catch {
+    return { ok: false, error: "LinkedIn tab was closed." };
   }
   const summary = {
     listImported: 0,
@@ -4228,12 +4291,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
       }
 
-      if (round > 0) {
-        await chrome.scripting.executeScript({
-          target: { tabId },
-          func: scrollConnectionsListViewport,
-        });
-        await sleep(postScrollMs);
+      try {
+        await prepareListPageForScrape(tabId, postScrollMs);
+      } catch (e) {
+        const err = e instanceof Error ? e.message : String(e);
+        await chrome.storage.local.set({ [LAST_ERROR_KEY]: err });
+        sendResponse({ ok: false, error: err, stopSprint: true });
+        return;
       }
 
       let pruned;
@@ -4255,7 +4319,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           ok: false,
           error:
             round === 0
-              ? "No profile links on screen. Scroll until rows load, then run sprint again."
+              ? "No profile links after auto-scroll — open people search or Connections with visible rows."
               : "No rows after scroll — end of list or layout changed.",
           stopSprint: round > 0,
         });

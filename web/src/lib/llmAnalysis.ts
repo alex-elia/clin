@@ -50,6 +50,23 @@ export const llmAnalysisOutputSchema = z.object({
       icp_signals: z.array(z.string()).nullish(),
     })
     .nullish(),
+  /** Primary cleaning bucket for Clin's review board (always include when scoring). */
+  cleaning_plan: z
+    .object({
+      bucket: z.enum([
+        "enrich_first",
+        "needs_review",
+        "review_remove",
+        "reach_out_dm",
+        "engage_comment",
+        "nurture_light",
+        "keep_passive",
+      ]),
+      confidence: z.enum(["low", "medium", "high"]),
+      rationale: z.string(),
+      playbook: z.string().nullish(),
+    })
+    .nullish(),
 });
 
 export type LlmAnalysisOutput = z.infer<typeof llmAnalysisOutputSchema>;
@@ -129,11 +146,12 @@ Respond with a single JSON object (no markdown) matching this shape:
 {
   "scores": { "r": 0-100, "b": 0-100, "c": 0-100 },
   "rationale": { "relationship": "string", "business": "string", "cleanup": "string" },
-  "suggested_actions": ["write" | "visit_profile" | "stay_connected" | "consider_removing" | "none"],
+  "suggested_actions": ["write" | "visit_profile" | "stay_connected" | "consider_removing" | "comment_on_post" | "none"],
   "data_gaps": ["optional short strings: what is missing for confidence"],
   "message_read": "optional: brief read on tone/recency if messages were provided",
   "connection_stewardship": { "recommendation": "keep" | "consider_removing" | "unclear", "rationale": "string" },
-  "outreach_fit": { "recommendation": "reach_out" | "nurture" | "skip" | "unclear", "rationale": "string", "icp_signals": ["short strings"] }
+  "outreach_fit": { "recommendation": "reach_out" | "nurture" | "skip" | "unclear", "rationale": "string", "icp_signals": ["short strings"] },
+  "cleaning_plan": { "bucket": "enrich_first" | "needs_review" | "review_remove" | "reach_out_dm" | "engage_comment" | "nurture_light" | "keep_passive", "confidence": "low" | "medium" | "high", "rationale": "string", "playbook": "one short next step for the user" }
 }
 
 Definitions (align with user's app):
@@ -158,6 +176,18 @@ When "owner_context" includes goals or positioning_and_offer, you MUST include "
 - icp_signals: 0–4 short bullets (e.g. "VP Engineering", "B2B SaaS", "no overlap with owner's offer").
 
 If owner_context is absent or empty, omit "outreach_fit".
+
+You MUST include "cleaning_plan" on every response:
+- Pick exactly one bucket that best matches the user's next step.
+- enrich_first: list-only or missing About/Experience — user should capture more on LinkedIn first.
+- review_remove: stewardship or cleanup suggests pruning the connection.
+- reach_out_dm: strong outreach_fit reach_out with enough profile context for a DM.
+- engage_comment: nurture fit OR weak timing for DM but relationship worth a public comment/react first.
+- nurture_light: keep warm, revisit later; no pitch now.
+- keep_passive: skip outreach but keep connection; or clearly low priority.
+- needs_review: contradictory signals or very thin data despite a profile row.
+- playbook: one imperative sentence (e.g. "Comment on their latest post, then DM in a week.").
+- Align bucket with outreach_fit and connection_stewardship when those are present.
 
 If data is thin (list-only capture, missing headline), give **provisional** scores and say so in data_gaps.
 If richer profile + optional messages exist, be more confident (refined). Never claim certainty you lack.

@@ -7,6 +7,43 @@ export type ContactLlmExtension = {
 };
 
 /** Optional SQLite columns — SELECT may fail if `npm run db:repair` was never run. */
+export function listContactLlmExtensionsMap(
+  contactIds: string[],
+): Map<string, ContactLlmExtension> {
+  const map = new Map<string, ContactLlmExtension>();
+  if (contactIds.length === 0) return map;
+  const placeholders = contactIds.map(() => "?").join(",");
+  try {
+    const rows = getSqlite()
+      .prepare(
+        `SELECT id, llm_message_context AS m, llm_provisional_json AS p, llm_refined_json AS r
+         FROM contacts WHERE id IN (${placeholders})`,
+      )
+      .all(...contactIds) as {
+      id: string;
+      m: string | null;
+      p: string | null;
+      r: string | null;
+    }[];
+    for (const row of rows) {
+      map.set(row.id, {
+        llmMessageContext: row.m,
+        llmProvisionalJson: row.p,
+        llmRefinedJson: row.r,
+      });
+    }
+  } catch {
+    for (const id of contactIds) {
+      map.set(id, {
+        llmMessageContext: null,
+        llmProvisionalJson: null,
+        llmRefinedJson: null,
+      });
+    }
+  }
+  return map;
+}
+
 export function selectContactLlmExtension(
   contactId: string,
 ): ContactLlmExtension | null {

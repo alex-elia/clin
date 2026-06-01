@@ -1,13 +1,9 @@
-"use client";
-
-import Link from "next/link";
-import { CopyFieldAssistant } from "@/components/CopyFieldAssistant";
-
 type CampaignFormFieldsProps = {
   submitLabel: string;
   err?: boolean;
   defaultName?: string;
   defaultContext?: string;
+  defaultIcp?: string;
   defaultWriter?: string;
   defaultSystemOverride?: string;
   hiddenCampaignId?: string;
@@ -18,6 +14,7 @@ export function CampaignFormFields({
   err,
   defaultName = "",
   defaultContext = "",
+  defaultIcp = "",
   defaultWriter = "",
   defaultSystemOverride = "",
   hiddenCampaignId,
@@ -31,24 +28,15 @@ export function CampaignFormFields({
       ) : null}
 
       <p className="text-sm text-[var(--clin-muted)]">
-        Use the <strong className="text-[var(--clin-text)]">copy assistant</strong> on
-        each field: pick B2B, B2C, or Growth, add a short brief, then generate. Configure
-        inference in{" "}
-        <Link href="/settings" className="clin-link">
-          Settings
-        </Link>
-        .
+        Use <strong className="text-[var(--clin-text)]">Prepare this campaign</strong>{" "}
+        above for a short voice or text brief — Clin will draft ICP, context, and
+        contact suggestions. Edit fields here anytime.
       </p>
 
       <label className="block">
         <span className="text-xs font-medium uppercase tracking-wide text-[var(--clin-muted)]">
           Name
         </span>
-        <CopyFieldAssistant
-          field="campaign_name"
-          textareaId="campaign-name"
-          compact
-        />
         <input
           id="campaign-name"
           name="name"
@@ -61,13 +49,22 @@ export function CampaignFormFields({
 
       <label className="block">
         <span className="text-xs font-medium uppercase tracking-wide text-[var(--clin-muted)]">
+          ICP (ideal customer profile)
+        </span>
+        <textarea
+          id="campaign-icp"
+          name="icpText"
+          rows={5}
+          defaultValue={defaultIcp}
+          className="mt-1 w-full clin-input text-sm"
+          placeholder="Roles, industries, company size, geography, who to exclude…"
+        />
+      </label>
+
+      <label className="block">
+        <span className="text-xs font-medium uppercase tracking-wide text-[var(--clin-muted)]">
           Campaign context
         </span>
-        <CopyFieldAssistant
-          field="campaign_context"
-          textareaId="campaign-context"
-          contextFieldIds={["campaign-name"]}
-        />
         <textarea
           id="campaign-context"
           name="contextText"
@@ -75,7 +72,7 @@ export function CampaignFormFields({
           rows={8}
           defaultValue={defaultContext}
           className="mt-1 w-full clin-input text-sm"
-          placeholder="What you’re offering, why now, proof points, who you help…"
+          placeholder="What you're offering, why now, proof points, CTA framing for DMs…"
         />
       </label>
 
@@ -83,12 +80,6 @@ export function CampaignFormFields({
         <span className="text-xs font-medium uppercase tracking-wide text-[var(--clin-muted)]">
           Writer instructions (optional)
         </span>
-        <CopyFieldAssistant
-          field="campaign_writer"
-          textareaId="campaign-writer"
-          contextFieldIds={["campaign-name", "campaign-context"]}
-          compact
-        />
         <textarea
           id="campaign-writer"
           name="writerInstructions"
@@ -112,7 +103,7 @@ export function CampaignFormFields({
           rows={6}
           defaultValue={defaultSystemOverride}
           className="mt-2 w-full clin-input font-mono text-xs"
-          placeholder="Leave empty for Clin’s default outreach system prompt."
+          placeholder="Leave empty for Clin's default outreach system prompt."
         />
       </details>
 

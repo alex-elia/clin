@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { VoiceInputButton } from "@/components/VoiceInputButton";
 import {
+  CLEANING_BUCKET_LABELS,
   outreachFitHeadline,
   outreachFitHint,
   pickLatestAnalysisView,
@@ -177,6 +178,33 @@ export function ContactLlmPanel({
                 ))}
               </ul>
             ) : null}
+          </div>
+        ) : null}
+
+        {analysis?.cleaningPlan ? (
+          <div className="mt-4 rounded-lg border border-[var(--clin-border)] bg-[var(--clin-surface-muted)]/60 p-4">
+            <p className="text-sm font-semibold text-[var(--clin-text)]">
+              Cleaning bucket:{" "}
+              {CLEANING_BUCKET_LABELS[analysis.cleaningPlan.bucket]}
+              <span className="ml-2 font-normal text-[var(--clin-muted)]">
+                ({analysis.cleaningPlan.confidence} confidence)
+              </span>
+            </p>
+            <p className="mt-2 text-sm text-[var(--clin-muted)]">
+              {analysis.cleaningPlan.rationale}
+            </p>
+            {analysis.cleaningPlan.playbook ? (
+              <p className="mt-2 text-sm text-[var(--clin-text)]">
+                <strong className="font-medium">Next step:</strong>{" "}
+                {analysis.cleaningPlan.playbook}
+              </p>
+            ) : null}
+            <Link
+              href="/cleaning"
+              className="mt-2 inline-block text-sm text-[var(--clin-accent)] hover:underline"
+            >
+              View all buckets →
+            </Link>
           </div>
         ) : null}
 

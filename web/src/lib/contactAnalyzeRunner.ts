@@ -16,6 +16,7 @@ import {
   resolveMessageContextForAnalysis,
 } from "@/lib/messagingContext";
 import type { LlmConfig } from "@/lib/llm/types";
+import { syncCleaningQueueFromAnalysis } from "@/lib/cleaningQueue";
 import { contactAnalyzeBodySchema } from "@/lib/schemas";
 
 type Db = ReturnType<typeof getDb>;
@@ -68,6 +69,12 @@ export async function executeContactAnalysis(
 
   const jsonStr = JSON.stringify(result.envelope);
   persistLlmAnalysis(contactId, result.tier, jsonStr, llm.model);
+
+  await syncCleaningQueueFromAnalysis(
+    contactId,
+    result.envelope,
+    row.segment,
+  );
 
   const updated = await db.query.contacts.findFirst({
     where: eq(contacts.id, contactId),

@@ -3,7 +3,7 @@ import { getDb } from "@/db";
 import { contentAiMessages, contentAiThreads } from "@/db/schema";
 import type { CoachAction } from "@/lib/brandCoachTypes";
 
-export type CoachThreadScope = "studio" | "post";
+export type CoachThreadScope = "studio" | "post" | "home";
 
 export async function getOrCreateThread(options: {
   threadId?: string;

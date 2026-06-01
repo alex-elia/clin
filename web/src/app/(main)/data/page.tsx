@@ -27,10 +27,16 @@ export default function DataHubPage() {
             "Review queue for contacts that need attention, defer, or dismiss.",
         },
         {
-          href: "/autopilot",
-          title: "AI analysis",
+          href: "/cleaning",
+          title: "Cleaning",
           description:
-            "Automatic or batch LLM scoring after full profile captures (ICP fit, reach out / skip).",
+            "Extraction readiness, AI buckets (remove, nurture, comment, DM), and batch analysis.",
+        },
+        {
+          href: "/autopilot",
+          title: "Autopilot",
+          description:
+            "Campaign autopilot and batch analysis settings.",
         },
       ]}
     />

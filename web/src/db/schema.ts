@@ -222,6 +222,8 @@ export const outreachCampaigns = sqliteTable("outreach_campaigns", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   contextText: text("context_text").notNull(),
+  /** Ideal customer profile for this campaign — used to score and suggest contacts. */
+  icpText: text("icp_text"),
   /** Extra instructions merged into the user prompt (tone, must-mention, avoid, CTA). */
   writerInstructions: text("writer_instructions"),
   /** When set, replaces the default JSON system prompt for this campaign only. */
@@ -249,6 +251,10 @@ export const outreachCampaignMembers = sqliteTable(
       .references(() => contacts.id, { onDelete: "cascade" }),
     draftOutreach: text("draft_outreach"),
     status: text("status").notNull().default("draft"),
+    icpMatch: text("icp_match"),
+    icpRationale: text("icp_rationale"),
+    icpRecommendedAction: text("icp_recommended_action"),
+    icpCheckedAt: integer("icp_checked_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
       .$defaultFn(() => new Date()),
