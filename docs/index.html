@@ -90,7 +90,6 @@
       margin-inline: auto;
     }
 
-    /* Header */
     .site-header {
       position: sticky;
       top: 0;
@@ -105,6 +104,7 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 0.75rem;
       min-height: var(--touch);
       padding-block: 0.5rem;
     }
@@ -116,9 +116,47 @@
       color: var(--text);
       text-decoration: none;
       letter-spacing: -0.03em;
+      flex-shrink: 0;
     }
 
     .logo span { color: var(--accent); }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .lang-switch {
+      display: flex;
+      padding: 0.2rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-raised);
+    }
+
+    .lang-switch button {
+      min-width: 2.5rem;
+      min-height: 2rem;
+      padding: 0.25rem 0.5rem;
+      border: none;
+      border-radius: calc(var(--radius) - 0.15rem);
+      background: transparent;
+      color: var(--text-muted);
+      font-family: var(--font-body);
+      font-size: 0.8125rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .lang-switch button:hover { color: var(--text); }
+
+    .lang-switch button[aria-pressed="true"] {
+      background: var(--accent);
+      color: #fff;
+    }
 
     .nav-toggle {
       display: flex;
@@ -135,9 +173,7 @@
     }
 
     .nav-toggle svg { display: block; }
-
     .nav-toggle .icon-close { display: none; }
-
     .nav-toggle[aria-expanded="true"] .icon-menu { display: none; }
     .nav-toggle[aria-expanded="true"] .icon-close { display: block; }
 
@@ -189,6 +225,7 @@
 
       .site-nav ul {
         display: flex;
+        align-items: center;
         gap: 0.25rem;
       }
 
@@ -198,12 +235,9 @@
         border-radius: var(--radius);
       }
 
-      .site-nav a:hover {
-        background: var(--bg-raised);
-      }
+      .site-nav a:hover { background: var(--bg-raised); }
     }
 
-    /* Hero */
     .hero {
       padding: clamp(3rem, 10vw, 6rem) 0 clamp(2.5rem, 8vw, 4.5rem);
     }
@@ -236,7 +270,6 @@
       align-items: center;
     }
 
-    /* Buttons */
     .btn {
       display: inline-flex;
       align-items: center;
@@ -266,17 +299,6 @@
       color: #fff;
     }
 
-    .btn-ghost {
-      background: transparent;
-      color: var(--text);
-      border-color: var(--border-strong);
-    }
-
-    .btn-ghost:hover {
-      background: var(--bg-raised);
-      color: var(--text);
-    }
-
     .link-arrow {
       display: inline-flex;
       align-items: center;
@@ -288,7 +310,6 @@
 
     .link-arrow:hover { text-decoration: underline; }
 
-    /* Sections */
     section {
       padding-block: clamp(2.5rem, 7vw, 4rem);
     }
@@ -313,7 +334,6 @@
       margin-bottom: 2.5rem;
     }
 
-    /* Feature grid */
     .feature-grid {
       display: grid;
       gap: 1rem;
@@ -343,7 +363,6 @@
       font-size: 0.9375rem;
     }
 
-    /* Audience columns */
     .audience-grid {
       display: grid;
       gap: 1rem;
@@ -369,20 +388,15 @@
     }
 
     .audience-card li + li { margin-top: 0.5rem; }
-
     .audience-card li::marker { color: var(--accent); }
 
-    /* Prose block */
     .prose-block {
       max-width: 40rem;
       color: var(--text-muted);
       font-size: 1.0625rem;
     }
 
-    /* Beta CTA */
-    .beta-section {
-      text-align: center;
-    }
+    .beta-section { text-align: center; }
 
     .beta-section .prose-block {
       margin-inline: auto;
@@ -396,7 +410,6 @@
       gap: 1rem;
     }
 
-    /* Footer */
     .site-footer {
       padding: 2rem 0 2.5rem;
       border-top: 1px solid var(--border);
@@ -422,63 +435,69 @@
   <header class="site-header">
     <div class="wrap header-inner">
       <a class="logo" href="#">Clin<span>.</span></a>
-      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Menu">
-        <svg class="icon-menu" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-          <line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>
-        </svg>
-        <svg class="icon-close" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-          <line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>
-        </svg>
-      </button>
-      <nav class="site-nav" id="site-nav" aria-label="Navigation principale">
-        <ul>
-          <li><a href="#fonctionnalites">Fonctionnalités</a></li>
-          <li><a href="#pour-qui">Pour qui ?</a></li>
-          <li><a href="#beta">Rejoindre la bêta</a></li>
-          <li><a href="https://github.com/alex-elia/clin" target="_blank" rel="noopener noreferrer">GitHub</a></li>
-        </ul>
-      </nav>
+      <div class="header-actions">
+        <div class="lang-switch" role="group" id="lang-switch" aria-label="Language">
+          <button type="button" data-lang="fr" aria-pressed="true">FR</button>
+          <button type="button" data-lang="en" aria-pressed="false">EN</button>
+        </div>
+        <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" data-i18n-aria="nav.menu">
+          <svg class="icon-menu" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>
+          </svg>
+          <svg class="icon-close" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>
+          </svg>
+        </button>
+        <nav class="site-nav" id="site-nav" data-i18n-aria="nav.main">
+          <ul>
+            <li><a href="#fonctionnalites" data-i18n="nav.features">Fonctionnalités</a></li>
+            <li><a href="#pour-qui" data-i18n="nav.audience">Pour qui ?</a></li>
+            <li><a href="#beta" data-i18n="nav.beta">Rejoindre la bêta</a></li>
+            <li><a href="https://github.com/alex-elia/clin" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+          </ul>
+        </nav>
+      </div>
     </div>
   </header>
 
   <main>
     <section class="hero">
       <div class="wrap">
-        <span class="hero-badge">Open source · Local-first</span>
-        <h1>Ton assistant LinkedIn local, piloté par l'IA — que tu contrôles.</h1>
-        <p class="hero-lead">Clin capture tes contacts LinkedIn, nettoie ta base, prépare tes messages et génère tes posts. Il tourne sur ta machine. Tes données restent chez toi.</p>
+        <span class="hero-badge" data-i18n="hero.badge">Open source · Local-first</span>
+        <h1 data-i18n="hero.title">Ton assistant LinkedIn local, piloté par l'IA — que tu contrôles.</h1>
+        <p class="hero-lead" data-i18n="hero.lead">Clin capture tes contacts LinkedIn, nettoie ta base, prépare tes messages et génère tes posts. Il tourne sur ta machine. Tes données restent chez toi.</p>
         <div class="hero-actions">
-          <a class="btn btn-primary" id="cta-hero" href="#">👋 Je veux tester Clin</a>
-          <a class="link-arrow" href="https://github.com/alex-elia/clin" target="_blank" rel="noopener noreferrer">Voir le code sur GitHub →</a>
+          <a class="btn btn-primary" id="cta-hero" href="#" data-i18n="cta.test">👋 Je veux tester Clin</a>
+          <a class="link-arrow" href="https://github.com/alex-elia/clin" target="_blank" rel="noopener noreferrer" data-i18n="cta.github">Voir le code sur GitHub →</a>
         </div>
       </div>
     </section>
 
     <section id="fonctionnalites">
       <div class="wrap">
-        <span class="section-label">Fonctionnalités</span>
-        <h2>Ce que Clin fait concrètement</h2>
-        <p class="section-intro">Quatre piliers pour reprendre la main sur ton réseau LinkedIn, sans abonnement cloud ni copier-coller interminable.</p>
+        <span class="section-label" data-i18n="features.label">Fonctionnalités</span>
+        <h2 data-i18n="features.title">Ce que Clin fait concrètement</h2>
+        <p class="section-intro" data-i18n="features.intro">Quatre piliers pour reprendre la main sur ton réseau LinkedIn, sans abonnement cloud ni copier-coller interminable.</p>
         <div class="feature-grid">
           <article class="card">
             <span class="card-icon" aria-hidden="true">📥</span>
-            <h3>Capture</h3>
-            <p>Sauvegarde automatiquement les profils et listes LinkedIn dans une base locale. Plus besoin de copier-coller manuellement.</p>
+            <h3 data-i18n="features.capture.title">Capture</h3>
+            <p data-i18n="features.capture.body">Sauvegarde automatiquement les profils et listes LinkedIn dans une base locale. Plus besoin de copier-coller manuellement.</p>
           </article>
           <article class="card">
             <span class="card-icon" aria-hidden="true">🧹</span>
-            <h3>Nettoyage</h3>
-            <p>Score tes contacts, identifie les relations froides, les profils obsolètes. Reprends le contrôle de ta base de 500 à 16&nbsp;000 relations.</p>
+            <h3 data-i18n="features.clean.title">Nettoyage</h3>
+            <p data-i18n="features.clean.body">Score tes contacts, identifie les relations froides, les profils obsolètes. Reprends le contrôle de ta base de 500 à 16&nbsp;000 relations.</p>
           </article>
           <article class="card">
             <span class="card-icon" aria-hidden="true">✍️</span>
-            <h3>Rédaction par lot</h3>
-            <p>Prépare des séries de posts LinkedIn et des messages d'approche via un modèle d'IA de ton choix. Génère, révise, approuve — puis envoie toi-même.</p>
+            <h3 data-i18n="features.write.title">Rédaction par lot</h3>
+            <p data-i18n="features.write.body">Prépare des séries de posts LinkedIn et des messages d'approche via un modèle d'IA de ton choix. Génère, révise, approuve — puis envoie toi-même.</p>
           </article>
           <article class="card">
             <span class="card-icon" aria-hidden="true">⚙️</span>
-            <h3>Automatisation optionnelle</h3>
-            <p>Active l'autopilote uniquement si tu le choisis. Vitesse, caps, limites&nbsp;: tout est paramétrable. Tu restes aux commandes.</p>
+            <h3 data-i18n="features.auto.title">Automatisation optionnelle</h3>
+            <p data-i18n="features.auto.body">Active l'autopilote uniquement si tu le choisis. Vitesse, caps, limites&nbsp;: tout est paramétrable. Tu restes aux commandes.</p>
           </article>
         </div>
       </div>
@@ -486,23 +505,23 @@
 
     <section id="pour-qui">
       <div class="wrap">
-        <span class="section-label">Public</span>
-        <h2>Pour qui ?</h2>
+        <span class="section-label" data-i18n="audience.label">Public</span>
+        <h2 data-i18n="audience.title">Pour qui ?</h2>
         <div class="audience-grid">
           <article class="card audience-card">
-            <h3><span aria-hidden="true">✅</span> Clin est fait pour toi si&nbsp;:</h3>
+            <h3><span aria-hidden="true">✅</span> <span data-i18n="audience.yes.title">Clin est fait pour toi si&nbsp;:</span></h3>
             <ul>
-              <li>Tu as une base LinkedIn de plusieurs centaines ou milliers de contacts</li>
-              <li>Tu veux reprendre la main sur ta gestion réseau sans payer un SaaS mensuel</li>
-              <li>Tu es à l'aise avec un terminal et Node.js (ou tu as quelqu'un pour t'aider à installer)</li>
-              <li>Tu as accès à une API d'IA (OpenAI, Mistral, Ollama local…)</li>
+              <li data-i18n="audience.yes.0">Tu as une base LinkedIn de plusieurs centaines ou milliers de contacts</li>
+              <li data-i18n="audience.yes.1">Tu veux reprendre la main sur ta gestion réseau sans payer un SaaS mensuel</li>
+              <li data-i18n="audience.yes.2">Tu es à l'aise avec un terminal et Node.js (ou tu as quelqu'un pour t'aider à installer)</li>
+              <li data-i18n="audience.yes.3">Tu as accès à une API d'IA (OpenAI, Mistral, Ollama local…)</li>
             </ul>
           </article>
           <article class="card audience-card">
-            <h3><span aria-hidden="true">❌</span> Clin n'est pas encore pour toi si&nbsp;:</h3>
+            <h3><span aria-hidden="true">❌</span> <span data-i18n="audience.no.title">Clin n'est pas encore pour toi si&nbsp;:</span></h3>
             <ul>
-              <li>Tu veux un outil clé en main sans installation</li>
-              <li>Tu n'as pas de clé API IA</li>
+              <li data-i18n="audience.no.0">Tu veux un outil clé en main sans installation</li>
+              <li data-i18n="audience.no.1">Tu n'as pas de clé API IA</li>
             </ul>
           </article>
         </div>
@@ -511,20 +530,20 @@
 
     <section id="open-source">
       <div class="wrap">
-        <span class="section-label">Transparence</span>
-        <h2>C'est open source</h2>
-        <p class="prose-block">Clin est publié en open source sous licence MIT. Tu peux lire le code, le forker, l'adapter. C'est un terrain d'expérimentation partagé, pas un produit à vendre.</p>
+        <span class="section-label" data-i18n="opensource.label">Transparence</span>
+        <h2 data-i18n="opensource.title">C'est open source</h2>
+        <p class="prose-block" data-i18n="opensource.body">Clin est publié en open source sous licence MIT. Tu peux lire le code, le forker, l'adapter. C'est un terrain d'expérimentation partagé, pas un produit à vendre.</p>
       </div>
     </section>
 
     <section id="beta" class="beta-section">
       <div class="wrap">
-        <span class="section-label">Bêta</span>
-        <h2>Rejoindre la bêta</h2>
-        <p class="prose-block">Je cherche quelques dirigeants qui veulent tester Clin et me faire des retours. Si tu es curieux·se, envoie-moi un message WhatsApp.</p>
+        <span class="section-label" data-i18n="beta.label">Bêta</span>
+        <h2 data-i18n="beta.title">Rejoindre la bêta</h2>
+        <p class="prose-block" data-i18n="beta.body">Je cherche quelques dirigeants qui veulent tester Clin et me faire des retours. Si tu es curieux·se, envoie-moi un message WhatsApp.</p>
         <div class="beta-actions">
-          <a class="btn btn-primary" id="cta-beta" href="#">👋 Je veux tester Clin</a>
-          <a class="link-arrow" href="https://github.com/alex-elia/clin" target="_blank" rel="noopener noreferrer">Voir le code sur GitHub →</a>
+          <a class="btn btn-primary" id="cta-beta" href="#" data-i18n="cta.test">👋 Je veux tester Clin</a>
+          <a class="link-arrow" href="https://github.com/alex-elia/clin" target="_blank" rel="noopener noreferrer" data-i18n="cta.github">Voir le code sur GitHub →</a>
         </div>
       </div>
     </section>
@@ -533,24 +552,239 @@
   <footer class="site-footer">
     <div class="wrap">
       <p>
-        Construit par <a href="https://github.com/alex-elia" target="_blank" rel="noopener noreferrer">alex-elia</a>
+        <span data-i18n="footer.built">Construit par</span>
+        <a href="https://github.com/alex-elia" target="_blank" rel="noopener noreferrer">alex-elia</a>
         <span class="footer-sep">·</span>
-        Open source MIT
+        <span data-i18n="footer.mit">Open source MIT</span>
         <span class="footer-sep">·</span>
-        Pas affilié à LinkedIn
+        <span data-i18n="footer.linkedin">Pas affilié à LinkedIn</span>
       </p>
     </div>
   </footer>
 
   <script>
     (function () {
-      /* Remplacer par ton numéro WhatsApp au format international (ex. 33612345678) */
       var WHATSAPP_NUMBER = "33757917064";
-      var WHATSAPP_TEXT = encodeURIComponent("Clin - je veux tester");
-      var whatsappUrl = "https://wa.me/" + WHATSAPP_NUMBER + "?text=" + WHATSAPP_TEXT;
+      var STORAGE_KEY = "clin-lang";
 
-      document.getElementById("cta-hero").href = whatsappUrl;
-      document.getElementById("cta-beta").href = whatsappUrl;
+      var I18N = {
+        fr: {
+          meta: {
+            title: "Clin — Assistant LinkedIn local",
+            description: "Clin — ton assistant LinkedIn local, piloté par l'IA. Capture, nettoie et prépare tes messages. Tes données restent chez toi."
+          },
+          nav: {
+            menu: "Menu",
+            main: "Navigation principale",
+            features: "Fonctionnalités",
+            audience: "Pour qui ?",
+            beta: "Rejoindre la bêta"
+          },
+          hero: {
+            badge: "Open source · Local-first",
+            title: "Ton assistant LinkedIn local, piloté par l'IA — que tu contrôles.",
+            lead: "Clin capture tes contacts LinkedIn, nettoie ta base, prépare tes messages et génère tes posts. Il tourne sur ta machine. Tes données restent chez toi."
+          },
+          features: {
+            label: "Fonctionnalités",
+            title: "Ce que Clin fait concrètement",
+            intro: "Quatre piliers pour reprendre la main sur ton réseau LinkedIn, sans abonnement cloud ni copier-coller interminable.",
+            capture: {
+              title: "Capture",
+              body: "Sauvegarde automatiquement les profils et listes LinkedIn dans une base locale. Plus besoin de copier-coller manuellement."
+            },
+            clean: {
+              title: "Nettoyage",
+              body: "Score tes contacts, identifie les relations froides, les profils obsolètes. Reprends le contrôle de ta base de 500 à 16\u00a0000 relations."
+            },
+            write: {
+              title: "Rédaction par lot",
+              body: "Prépare des séries de posts LinkedIn et des messages d'approche via un modèle d'IA de ton choix. Génère, révise, approuve — puis envoie toi-même."
+            },
+            auto: {
+              title: "Automatisation optionnelle",
+              body: "Active l'autopilote uniquement si tu le choisis. Vitesse, caps, limites\u00a0: tout est paramétrable. Tu restes aux commandes."
+            }
+          },
+          audience: {
+            label: "Public",
+            title: "Pour qui ?",
+            yes: {
+              title: "Clin est fait pour toi si\u00a0:",
+              0: "Tu as une base LinkedIn de plusieurs centaines ou milliers de contacts",
+              1: "Tu veux reprendre la main sur ta gestion réseau sans payer un SaaS mensuel",
+              2: "Tu es à l'aise avec un terminal et Node.js (ou tu as quelqu'un pour t'aider à installer)",
+              3: "Tu as accès à une API d'IA (OpenAI, Mistral, Ollama local…)"
+            },
+            no: {
+              title: "Clin n'est pas encore pour toi si\u00a0:",
+              0: "Tu veux un outil clé en main sans installation",
+              1: "Tu n'as pas de clé API IA"
+            }
+          },
+          opensource: {
+            label: "Transparence",
+            title: "C'est open source",
+            body: "Clin est publié en open source sous licence MIT. Tu peux lire le code, le forker, l'adapter. C'est un terrain d'expérimentation partagé, pas un produit à vendre."
+          },
+          beta: {
+            label: "Bêta",
+            title: "Rejoindre la bêta",
+            body: "Je cherche quelques dirigeants qui veulent tester Clin et me faire des retours. Si tu es curieux·se, envoie-moi un message WhatsApp."
+          },
+          cta: {
+            test: "👋 Je veux tester Clin",
+            github: "Voir le code sur GitHub →"
+          },
+          footer: {
+            built: "Construit par",
+            mit: "Open source MIT",
+            linkedin: "Pas affilié à LinkedIn"
+          },
+          whatsapp: "Clin - je veux tester",
+          langGroup: "Langue"
+        },
+        en: {
+          meta: {
+            title: "Clin — Local LinkedIn assistant",
+            description: "Clin — your local AI-powered LinkedIn assistant. Capture, clean, and draft your outreach. Your data stays on your machine."
+          },
+          nav: {
+            menu: "Menu",
+            main: "Main navigation",
+            features: "Features",
+            audience: "Who is it for?",
+            beta: "Join the beta"
+          },
+          hero: {
+            badge: "Open source · Local-first",
+            title: "Your local LinkedIn assistant, AI-powered — under your control.",
+            lead: "Clin captures your LinkedIn contacts, cleans your database, drafts your messages, and generates your posts. It runs on your machine. Your data stays with you."
+          },
+          features: {
+            label: "Features",
+            title: "What Clin actually does",
+            intro: "Four pillars to take back control of your LinkedIn network — no cloud subscription, no endless copy-paste.",
+            capture: {
+              title: "Capture",
+              body: "Automatically saves LinkedIn profiles and lists to a local database. No more manual copy-paste."
+            },
+            clean: {
+              title: "Cleanup",
+              body: "Scores your contacts, flags cold relationships and stale profiles. Take back control of a network from 500 to 16,000 connections."
+            },
+            write: {
+              title: "Batch writing",
+              body: "Prepare LinkedIn post series and outreach messages using an AI model of your choice. Generate, review, approve — then send yourself."
+            },
+            auto: {
+              title: "Optional automation",
+              body: "Turn on autopilot only if you choose to. Speed, caps, limits: everything is configurable. You stay in charge."
+            }
+          },
+          audience: {
+            label: "Audience",
+            title: "Who is it for?",
+            yes: {
+              title: "Clin is for you if:",
+              0: "You have a LinkedIn network of several hundred or thousand contacts",
+              1: "You want to own your network management without a monthly SaaS bill",
+              2: "You're comfortable with a terminal and Node.js (or have someone to help you install)",
+              3: "You have access to an AI API (OpenAI, Mistral, local Ollama…)"
+            },
+            no: {
+              title: "Clin is not for you yet if:",
+              0: "You want a turnkey tool with no installation",
+              1: "You don't have an AI API key"
+            }
+          },
+          opensource: {
+            label: "Transparency",
+            title: "It's open source",
+            body: "Clin is published under the MIT license. Read the code, fork it, adapt it. It's a shared experiment — not a product for sale."
+          },
+          beta: {
+            label: "Beta",
+            title: "Join the beta",
+            body: "I'm looking for a few leaders willing to test Clin and share feedback. If you're curious, send me a WhatsApp message."
+          },
+          cta: {
+            test: "👋 I want to try Clin",
+            github: "View the code on GitHub →"
+          },
+          footer: {
+            built: "Built by",
+            mit: "Open source MIT",
+            linkedin: "Not affiliated with LinkedIn"
+          },
+          whatsapp: "Clin - I want to try the beta",
+          langGroup: "Language"
+        }
+      };
+
+      function getNested(obj, path) {
+        return path.split(".").reduce(function (acc, key) {
+          return acc && acc[key] !== undefined ? acc[key] : null;
+        }, obj);
+      }
+
+      function detectLang() {
+        try {
+          var saved = localStorage.getItem(STORAGE_KEY);
+          if (saved === "fr" || saved === "en") return saved;
+        } catch (e) {}
+        var browser = (navigator.language || "fr").slice(0, 2).toLowerCase();
+        return browser === "en" ? "en" : "fr";
+      }
+
+      function buildWhatsAppUrl(lang) {
+        var text = encodeURIComponent(I18N[lang].whatsapp);
+        return "https://wa.me/" + WHATSAPP_NUMBER + "?text=" + text;
+      }
+
+      function applyLang(lang) {
+        var strings = I18N[lang];
+        if (!strings) return;
+
+        document.documentElement.lang = lang;
+        document.title = strings.meta.title;
+        document.querySelector('meta[name="description"]').setAttribute("content", strings.meta.description);
+
+        document.querySelectorAll("[data-i18n]").forEach(function (el) {
+          var value = getNested(strings, el.getAttribute("data-i18n"));
+          if (value !== null) el.innerHTML = value;
+        });
+
+        document.querySelectorAll("[data-i18n-aria]").forEach(function (el) {
+          var value = getNested(strings, el.getAttribute("data-i18n-aria"));
+          if (value !== null) el.setAttribute("aria-label", value);
+        });
+
+        document.getElementById("lang-switch").setAttribute("aria-label", strings.langGroup);
+
+        document.querySelectorAll(".lang-switch button").forEach(function (btn) {
+          btn.setAttribute("aria-pressed", String(btn.getAttribute("data-lang") === lang));
+        });
+
+        var whatsappUrl = buildWhatsAppUrl(lang);
+        document.getElementById("cta-hero").href = whatsappUrl;
+        document.getElementById("cta-beta").href = whatsappUrl;
+
+        try { localStorage.setItem(STORAGE_KEY, lang); } catch (e) {}
+      }
+
+      var currentLang = detectLang();
+      applyLang(currentLang);
+
+      document.querySelectorAll(".lang-switch button").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var lang = btn.getAttribute("data-lang");
+          if (lang !== currentLang) {
+            currentLang = lang;
+            applyLang(lang);
+          }
+        });
+      });
 
       var toggle = document.querySelector(".nav-toggle");
       var nav = document.getElementById("site-nav");
