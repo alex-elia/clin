@@ -47,6 +47,21 @@ function LogRow({ entry }: { entry: LlmCallLogEntry }) {
           <dd className="inline">
             system {entry.systemChars} + user {entry.userChars} → response{" "}
             {entry.responseChars} chars
+            {entry.inputTokens != null ? (
+              <>
+                {" "}
+                · tokens {entry.inputTokens}+{entry.outputTokens ?? 0}
+              </>
+            ) : null}
+            {entry.estimatedCostEur != null ? (
+              <>
+                {" "}
+                · est. €{entry.estimatedCostEur.toFixed(4)}
+              </>
+            ) : null}
+            {entry.creditsUsed != null ? (
+              <> · {entry.creditsUsed} Tavily credit(s)</>
+            ) : null}
           </dd>
         </div>
         {entry.error ? (

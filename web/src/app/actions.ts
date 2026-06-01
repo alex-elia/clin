@@ -708,12 +708,13 @@ export async function saveContentPostAction(formData: FormData) {
   const title = formData.get("title");
   const statusRaw = formData.get("status");
   const formatRaw = formData.get("format");
+  const status =
+    typeof statusRaw === "string"
+      ? (statusRaw as import("@/lib/contentPostsShared").ContentPostStatus)
+      : "idea";
   await updateContentPost(id, {
     title: typeof title === "string" && title.trim() ? title.trim() : "Untitled",
-    status:
-      typeof statusRaw === "string"
-        ? (statusRaw as import("@/lib/contentPostsShared").ContentPostStatus)
-        : "idea",
+    status,
     format:
       typeof formatRaw === "string"
         ? (formatRaw as import("@/lib/contentPostsShared").ContentPostFormat)
@@ -727,6 +728,12 @@ export async function saveContentPostAction(formData: FormData) {
     mediaJson: parseMediaJsonField(formData.get("mediaJson")),
     language: parsePostLanguageForSave(formData.get("language")),
   });
+  if (status === "drafting") {
+    const { maybeTriggerEditorialDraftForPost } = await import(
+      "@/lib/editorial/editorialJobRunner"
+    );
+    void maybeTriggerEditorialDraftForPost(id);
+  }
   revalidateBranding();
   revalidatePath(`/branding/posts/${id}`);
 }
@@ -770,7 +777,14 @@ export async function updateContentPostStatusAction(formData: FormData) {
   const id = formData.get("id");
   const status = formData.get("status");
   if (typeof id !== "string" || typeof status !== "string") return;
-  await updateContentPost(id, { status: status as import("@/lib/contentPostsShared").ContentPostStatus });
+  const nextStatus = status as import("@/lib/contentPostsShared").ContentPostStatus;
+  await updateContentPost(id, { status: nextStatus });
+  if (nextStatus === "drafting") {
+    const { maybeTriggerEditorialDraftForPost } = await import(
+      "@/lib/editorial/editorialJobRunner"
+    );
+    void maybeTriggerEditorialDraftForPost(id);
+  }
   revalidateBranding();
 }
 
@@ -838,7 +852,34 @@ export async function applyCoachActionsAction(
   actions: unknown[],
 ): Promise<{ applied: number; errors: string[]; createdPostIds: string[] }> {
   const { applyCoachActions } = await import("@/lib/brandCoachApply");
+  const { coachActionSchema } = await import("@/lib/brandCoachTypes");
   const result = await applyCoachActions(actions);
+
+  const draftingIds = new Set<string>();
+  for (const raw of actions) {
+    const parsed = coachActionSchema.safeParse(raw);
+    if (
+      parsed.success &&
+      parsed.data.type === "update_post" &&
+      parsed.data.patch?.status === "drafting"
+    ) {
+      draftingIds.add(parsed.data.postId);
+    }
+  }
+  if (draftingIds.size > 0 || result.createdPostIds.length > 0) {
+    const { getContentPostById } = await import("@/lib/contentPosts");
+    const { maybeTriggerEditorialDraftForPost } = await import(
+      "@/lib/editorial/editorialJobRunner"
+    );
+    for (const id of result.createdPostIds) {
+      const post = await getContentPostById(id);
+      if (post?.status === "drafting") draftingIds.add(id);
+    }
+    for (const id of draftingIds) {
+      void maybeTriggerEditorialDraftForPost(id);
+    }
+  }
+
   revalidateBranding();
   return result;
 }
@@ -923,6 +964,12 @@ export async function saveEditorialAutopilotAction(formData: FormData) {
       ? Math.min(10, Math.max(1, parseInt(maxPostsRaw, 10) || 3))
       : existing.maxPostsPerRun ?? 3;
 
+  const maxWritingRaw = formData.get("maxWritingDraftsPerTick");
+  const maxWritingDraftsPerTick =
+    typeof maxWritingRaw === "string" && maxWritingRaw
+      ? Math.min(25, Math.max(1, parseInt(maxWritingRaw, 10) || 10))
+      : existing.maxWritingDraftsPerTick ?? 10;
+
   const horizonRaw = formData.get("planningHorizonDays");
   const planningHorizonDays =
     typeof horizonRaw === "string"
@@ -940,6 +987,8 @@ export async function saveEditorialAutopilotAction(formData: FormData) {
       ...existing,
       trendQueries,
       maxPostsPerRun,
+      maxWritingDraftsPerTick,
+      runDraftWhenWriting: formData.get("runDraftWhenWriting") === "on",
       runDraftWhenDue: formData.get("runDraftWhenDue") === "on",
       includeImage: formData.get("includeImage") === "on",
       autoMarkReady: formData.get("autoMarkReady") === "on",

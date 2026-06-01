@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, ne } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNotNull, isNull, lte, ne } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contentPosts, type ContentMediaJson } from "@/db/schema";
 import type {
@@ -62,18 +62,45 @@ export function isInLocalCalendarMonth(
   return d.getFullYear() === year && d.getMonth() === month;
 }
 
-export async function listPostsInMonth(year: number, month: number) {
-  const posts = await listContentPosts({ excludeArchived: true, limit: 300 });
-  return posts
-    .filter(
-      (p) =>
-        p.scheduledAt != null &&
-        isInLocalCalendarMonth(p.scheduledAt, year, month),
+/** Posts with scheduledAt in local calendar month (SQL range — not limited by global list cap). */
+export async function listScheduledPostsInCalendarMonth(
+  year: number,
+  month: number,
+): Promise<ContentPostRow[]> {
+  const start = new Date(year, month, 1, 0, 0, 0, 0);
+  const end = new Date(year, month + 1, 0, 23, 59, 59, 999);
+  const db = getDb();
+  return db
+    .select()
+    .from(contentPosts)
+    .where(
+      and(
+        ne(contentPosts.status, "archived"),
+        isNotNull(contentPosts.scheduledAt),
+        gte(contentPosts.scheduledAt, start),
+        lte(contentPosts.scheduledAt, end),
+      ),
     )
-    .sort(
-      (a, b) =>
-        (a.scheduledAt?.getTime() ?? 0) - (b.scheduledAt?.getTime() ?? 0),
+    .orderBy(asc(contentPosts.scheduledAt), desc(contentPosts.updatedAt));
+}
+
+export async function countScheduledPosts(): Promise<number> {
+  const db = getDb();
+  const [row] = await db
+    .select({ n: count() })
+    .from(contentPosts)
+    .where(
+      and(
+        ne(contentPosts.status, "archived"),
+        isNotNull(contentPosts.scheduledAt),
+      ),
     );
+  return row?.n ?? 0;
+}
+
+/** @deprecated Prefer listScheduledPostsInCalendarMonth */
+export async function listPostsInMonth(year: number, month: number) {
+  return listScheduledPostsInCalendarMonth(year, month);
 }
 
 export async function listReadyPostsForExtension(limit = 30) {

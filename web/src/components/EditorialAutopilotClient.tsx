@@ -47,7 +47,7 @@ export function EditorialAutopilotClient({
             name="editorialAutopilotEnabled"
             defaultChecked={Boolean(brand.editorialAutopilotEnabled)}
           />
-          Enable editorial autopilot (draft due posts on tick)
+          Enable editorial autopilot
         </label>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -88,13 +88,21 @@ export function EditorialAutopilotClient({
         </label>
 
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="flex items-center gap-2 text-sm">
+          <label className="flex items-center gap-2 text-sm sm:col-span-2">
+            <input
+              type="checkbox"
+              name="runDraftWhenWriting"
+              defaultChecked={policy.runDraftWhenWriting !== false}
+            />
+            Auto-draft all posts in Writing (any scheduled date)
+          </label>
+          <label className="flex items-center gap-2 text-sm sm:col-span-2">
             <input
               type="checkbox"
               name="runDraftWhenDue"
               defaultChecked={policy.runDraftWhenDue !== false}
             />
-            Draft posts scheduled today
+            Also auto-draft Ideas scheduled for today
           </label>
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -131,17 +139,30 @@ export function EditorialAutopilotClient({
           </label>
         </div>
 
-        <label className="block text-sm">
-          <span className="font-medium">Max posts per tick</span>
-          <input
-            type="number"
-            name="maxPostsPerRun"
-            min={1}
-            max={10}
-            defaultValue={policy.maxPostsPerRun ?? 3}
-            className="mt-1 w-24 rounded border border-[var(--clin-border)] bg-[var(--clin-bg)] px-2 py-1"
-          />
-        </label>
+        <div className="flex flex-wrap gap-6">
+          <label className="block text-sm">
+            <span className="font-medium">Max Writing posts per tick</span>
+            <input
+              type="number"
+              name="maxWritingDraftsPerTick"
+              min={1}
+              max={25}
+              defaultValue={policy.maxWritingDraftsPerTick ?? 10}
+              className="mt-1 w-24 rounded border border-[var(--clin-border)] bg-[var(--clin-bg)] px-2 py-1"
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="font-medium">Max Ideas (due today) per tick</span>
+            <input
+              type="number"
+              name="maxPostsPerRun"
+              min={1}
+              max={10}
+              defaultValue={policy.maxPostsPerRun ?? 3}
+              className="mt-1 w-24 rounded border border-[var(--clin-border)] bg-[var(--clin-bg)] px-2 py-1"
+            />
+          </label>
+        </div>
 
         <button type="submit" className="clin-btn-primary">
           Save editorial settings

@@ -2,7 +2,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { updateContentPostStatusAction } from "@/app/actions";
 import {
+  countScheduledPosts,
   listContentPosts,
+  listScheduledPostsInCalendarMonth,
   listUnscheduledBacklog,
   postsByLocalDay,
 } from "@/lib/contentPosts";
@@ -57,16 +59,19 @@ export default async function ContentCalendarPage({
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const firstDow = new Date(year, month, 1).getDay();
 
-  const [backlog, allPosts] = await Promise.all([
-    listUnscheduledBacklog(),
-    listContentPosts({ limit: 200 }),
-  ]);
-  const scheduledPosts = allPosts.filter(
-    (p) => p.scheduledAt != null && p.status !== "archived",
-  );
-  const byDay = postsByLocalDay(scheduledPosts, year, month);
+  const [backlog, postsThisMonthList, allPosts, scheduledTotal] =
+    await Promise.all([
+      listUnscheduledBacklog(),
+      listScheduledPostsInCalendarMonth(year, month),
+      listContentPosts({ limit: 200 }),
+      countScheduledPosts(),
+    ]);
+  const byDay = postsByLocalDay(postsThisMonthList, year, month);
   const postsThisMonth = [...byDay.values()].flat();
-  const scheduledElsewhere = scheduledPosts.length - postsThisMonth.length;
+  const scheduledElsewhere = Math.max(
+    0,
+    scheduledTotal - postsThisMonthList.length,
+  );
 
   const monthLabel = new Date(year, month, 1).toLocaleString(undefined, {
     month: "long",

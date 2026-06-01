@@ -108,6 +108,7 @@ If capture is thin, state uncertainty in goals/positioning and keep doctrine gen
 
   const rawText = await completeChat({
     config: opts.settings,
+    feature: "voice_setup",
     system,
     user,
     jsonMode: true,

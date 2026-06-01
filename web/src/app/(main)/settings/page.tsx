@@ -378,6 +378,19 @@ export default async function SettingsPage() {
         </form>
         </div>
 
+        <div className="clin-card flex flex-wrap items-center justify-between gap-3 p-4">
+          <div>
+            <h3 className="text-sm font-semibold text-[var(--clin-text)]">AI FinOps</h3>
+            <p className="mt-1 text-sm text-[var(--clin-muted)]">
+              Cloud LLM and Tavily spend estimates from your call log — depends on which
+              provider you selected above.
+            </p>
+          </div>
+          <a href="/settings/finops" className="clin-btn-primary text-sm">
+            Open FinOps dashboard
+          </a>
+        </div>
+
         <LlmCallLogPanel />
       </section>
 

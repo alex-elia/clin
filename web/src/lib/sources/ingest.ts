@@ -118,12 +118,35 @@ export async function ingestContentSources(options?: {
           ...source,
           configJson: { ...source.configJson, queries },
         };
-        const { items: tItems, usage } = await fetchTavilySearch(withQueries, {
-          budgetRemaining: tavilyBudget,
-        });
-        items = tItems;
-        result.tavilyCreditsUsed += usage.creditsUsed;
-        tavilyBudget -= usage.creditsUsed;
+        const t0 = Date.now();
+        const queryChars = queries.join(" ").length;
+        try {
+          const { items: tItems, usage } = await fetchTavilySearch(withQueries, {
+            budgetRemaining: tavilyBudget,
+          });
+          items = tItems;
+          result.tavilyCreditsUsed += usage.creditsUsed;
+          tavilyBudget -= usage.creditsUsed;
+          const { logTavilySearchUsage } = await import("@/lib/llm/logExternalUsage");
+          await logTavilySearchUsage({
+            feature: mode === "trends" ? "ingest_trends" : "ingest_sources",
+            creditsUsed: usage.creditsUsed,
+            durationMs: Date.now() - t0,
+            queryChars,
+            ok: true,
+          });
+        } catch (e) {
+          const { logTavilySearchUsage } = await import("@/lib/llm/logExternalUsage");
+          await logTavilySearchUsage({
+            feature: mode === "trends" ? "ingest_trends" : "ingest_sources",
+            creditsUsed: 0,
+            durationMs: Date.now() - t0,
+            queryChars,
+            ok: false,
+            error: e instanceof Error ? e.message : String(e),
+          });
+          throw e;
+        }
       } else {
         items = await fetchSourceItems(source, {
           tavilyBudgetRemaining: tavilyBudget,

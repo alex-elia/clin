@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, lte, or, isNull, lt } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lte, or, isNull, lt } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   editorialJobs,
@@ -30,6 +30,24 @@ export async function enqueueEditorialJob(input: {
     createdAt: new Date(),
   });
   return id;
+}
+
+export async function hasPendingDraftJobForPost(
+  postId: string,
+): Promise<boolean> {
+  const db = getDb();
+  const rows = await db
+    .select({ id: editorialJobs.id })
+    .from(editorialJobs)
+    .where(
+      and(
+        eq(editorialJobs.postId, postId),
+        eq(editorialJobs.type, "draft_post"),
+        inArray(editorialJobs.status, ["pending", "running"]),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
 }
 
 export async function listDueEditorialJobs(limit = 5): Promise<EditorialJobRow[]> {

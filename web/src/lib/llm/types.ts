@@ -7,6 +7,17 @@ export type LlmConfig = {
   apiKey?: string;
 };
 
+export type LlmUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+};
+
+export type ChatCompletionResult = {
+  text: string;
+  usage?: LlmUsage;
+};
+
 export type CompleteChatParams = {
   config: LlmConfig;
   system: string;

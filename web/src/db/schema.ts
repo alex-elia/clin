@@ -379,7 +379,12 @@ export type PublishingRhythmJson = {
 };
 
 export type EditorialAutopilotPolicyJson = {
+  /** Auto-draft every post in Writing (drafting), any scheduled date. Default on. */
+  runDraftWhenWriting?: boolean;
+  /** Auto-draft ideas scheduled for today only. */
   runDraftWhenDue?: boolean;
+  /** Max Writing posts to queue per tick (default 10). */
+  maxWritingDraftsPerTick?: number;
   autoMarkReady?: boolean;
   includeImage?: boolean;
   maxPostsPerRun?: number;

@@ -1,6 +1,7 @@
 import { completeChatOllama } from "@/lib/llm/adapters/ollama";
 import { completeChatOpenAiCompatible } from "@/lib/llm/adapters/openaiCompatible";
 import { appendLlmCallLog } from "@/lib/llm/llmCallLog";
+import { estimateCloudCostEur, resolveUsageTokens } from "@/lib/llm/llmPricing";
 import type { CompleteChatParams } from "@/lib/llm/types";
 
 export type { CompleteChatParams, LlmConfig, LlmProvider } from "@/lib/llm/types";
@@ -33,25 +34,49 @@ export async function completeChat(params: CompleteChatParams): Promise<string> 
   };
 
   try {
-    let text: string;
+    let result: Awaited<ReturnType<typeof completeChatOllama>>;
     switch (params.config.provider) {
       case "ollama":
-        text = await completeChatOllama(params);
+        result = await completeChatOllama(params);
         break;
       case "openai_compatible":
-        text = await completeChatOpenAiCompatible(params);
+        result = await completeChatOpenAiCompatible(params);
         break;
       default: {
         const _exhaustive: never = params.config.provider;
         throw new Error(`Unknown provider: ${_exhaustive}`);
       }
     }
+    const { text, usage } = result;
+    const tokenRow = resolveUsageTokens({
+      provider: params.config.provider,
+      systemChars: base.systemChars,
+      userChars: base.userChars,
+      responseChars: text.length,
+      inputTokens: usage?.inputTokens,
+      outputTokens: usage?.outputTokens,
+      totalTokens: usage?.totalTokens,
+    });
+    const estimatedCostEur =
+      params.config.provider === "openai_compatible"
+        ? estimateCloudCostEur({
+            provider: params.config.provider,
+            model: params.config.model,
+            inputTokens: tokenRow.inputTokens,
+            outputTokens: tokenRow.outputTokens,
+          })
+        : null;
     await appendLlmCallLog({
       ...base,
       durationMs: Date.now() - started,
       ok: true,
       responseChars: text.length,
       responseText: text,
+      inputTokens: tokenRow.inputTokens,
+      outputTokens: tokenRow.outputTokens,
+      totalTokens: tokenRow.totalTokens,
+      estimatedCostEur: estimatedCostEur ?? undefined,
+      billable: params.config.provider === "openai_compatible",
     });
     return text;
   } catch (e) {

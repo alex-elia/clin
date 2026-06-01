@@ -4,7 +4,11 @@ import {
   parseHttpErrorBody,
 } from "@/lib/llm/errors";
 import { resolveOvhChatCompletionsUrl } from "@/lib/llm/ovhEnv";
-import type { CompleteChatParams, LlmConfig } from "@/lib/llm/types";
+import type {
+  ChatCompletionResult,
+  CompleteChatParams,
+  LlmConfig,
+} from "@/lib/llm/types";
 
 /** Resolve OpenAI-style chat completions URL from a configured API root. */
 export function resolveChatCompletionsUrl(baseUrl: string): string {
@@ -52,7 +56,7 @@ function assertApiKey(config: LlmConfig): string {
 
 export async function completeChatOpenAiCompatible(
   params: CompleteChatParams,
-): Promise<string> {
+): Promise<ChatCompletionResult> {
   const { config, system, user, jsonMode, temperature, timeoutMs } = params;
   const apiKey = assertApiKey(config);
   const url = resolveOvhChatCompletionsUrl({ baseUrl: config.baseUrl });
@@ -89,6 +93,11 @@ export async function completeChatOpenAiCompatible(
     }
     const data = (await res.json()) as {
       choices?: { message?: Record<string, unknown> }[];
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+      };
       error?: { message?: string };
     };
     if (data.error?.message) {
@@ -104,7 +113,15 @@ export async function completeChatOpenAiCompatible(
     if (!content.trim()) {
       throw new Error(emptyResponseError(config));
     }
-    return jsonMode ? content : content.trim();
+    const text = jsonMode ? content : content.trim();
+    const usage = data.usage
+      ? {
+          inputTokens: data.usage.prompt_tokens,
+          outputTokens: data.usage.completion_tokens,
+          totalTokens: data.usage.total_tokens,
+        }
+      : undefined;
+    return { text, usage };
   } catch (e) {
     if (e instanceof Error && e.name === "AbortError") {
       throw new Error(

@@ -249,6 +249,7 @@ export async function runContactLlmAnalysis(
 
   const rawText = await completeChat({
     config: input.settings,
+    feature: "contact_analyze",
     system: buildSystemPrompt(includeOwner),
     user: buildUserPayload({
       tier: input.tier,

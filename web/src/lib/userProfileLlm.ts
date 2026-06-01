@@ -120,6 +120,7 @@ If data is thin, say so in both fields and suggest what to capture next on Linke
 
   const rawText = await completeChat({
     config: opts.settings,
+    feature: "user_profile",
     system,
     user,
     jsonMode: true,

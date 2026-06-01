@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Clin — ton assistant LinkedIn local, piloté par l'IA. Capture, nettoie et prépare tes messages. Tes données restent chez toi.">
+  <title>Clin — Assistant LinkedIn local</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://api.fontshare.com/v2/css?f[]=satoshi@700,500,400&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0f0e0d;
+      --bg-raised: #1c1b19;
+      --text: #d4d2ce;
+      --text-muted: oklch(0.78 0.01 80 / 0.72);
+      --accent: #4f98a3;
+      --accent-hover: #5aabb7;
+      --border: oklch(0.55 0.01 80 / 0.12);
+      --border-strong: oklch(0.55 0.01 80 / 0.2);
+      --header-bg: oklch(0.08 0.005 80 / 0.85);
+      --shadow: oklch(0 0 0 / 0.35);
+      --font-display: "Satoshi", system-ui, -apple-system, "Segoe UI", sans-serif;
+      --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+      --max-width: 68rem;
+      --radius: 0.75rem;
+      --touch: 2.75rem;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f5f4f1;
+        --bg-raised: #ffffff;
+        --text: #1a1917;
+        --text-muted: oklch(0.35 0.01 80 / 0.72);
+        --accent: #3d7f89;
+        --accent-hover: #2f6b74;
+        --border: oklch(0.45 0.01 80 / 0.14);
+        --border-strong: oklch(0.45 0.01 80 / 0.22);
+        --header-bg: oklch(0.97 0.005 80 / 0.9);
+        --shadow: oklch(0 0 0 / 0.08);
+      }
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+      -webkit-text-size-adjust: 100%;
+    }
+
+    body {
+      margin: 0;
+      font-family: var(--font-body);
+      font-size: 1rem;
+      line-height: 1.65;
+      color: var(--text);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    img { max-width: 100%; height: auto; }
+
+    a {
+      color: var(--accent);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 0.2em;
+    }
+
+    a:hover { color: var(--accent-hover); }
+
+    h1, h2, h3 {
+      font-family: var(--font-display);
+      font-weight: 700;
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+      margin: 0 0 0.75rem;
+    }
+
+    h1 { font-size: clamp(1.75rem, 5vw, 2.75rem); }
+    h2 { font-size: clamp(1.375rem, 3.5vw, 1.875rem); }
+    h3 { font-size: 1.125rem; font-weight: 600; }
+
+    p { margin: 0 0 1rem; }
+    p:last-child { margin-bottom: 0; }
+
+    .wrap {
+      width: min(100% - 2rem, var(--max-width));
+      margin-inline: auto;
+    }
+
+    /* Header */
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--header-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .header-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: var(--touch);
+      padding-block: 0.5rem;
+    }
+
+    .logo {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 1.25rem;
+      color: var(--text);
+      text-decoration: none;
+      letter-spacing: -0.03em;
+    }
+
+    .logo span { color: var(--accent); }
+
+    .nav-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: var(--touch);
+      height: var(--touch);
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-raised);
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    .nav-toggle svg { display: block; }
+
+    .nav-toggle .icon-close { display: none; }
+
+    .nav-toggle[aria-expanded="true"] .icon-menu { display: none; }
+    .nav-toggle[aria-expanded="true"] .icon-close { display: block; }
+
+    .site-nav {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: var(--header-bg);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0.5rem 1rem 1rem;
+    }
+
+    .site-nav.is-open { display: block; }
+
+    .site-nav ul {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+
+    .site-nav a {
+      display: flex;
+      align-items: center;
+      min-height: var(--touch);
+      padding-inline: 0.5rem;
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 500;
+      font-size: 0.9375rem;
+    }
+
+    .site-nav a:hover { color: var(--accent); }
+
+    @media (min-width: 768px) {
+      .nav-toggle { display: none; }
+
+      .site-nav {
+        display: block;
+        position: static;
+        border: none;
+        padding: 0;
+        background: transparent;
+        backdrop-filter: none;
+      }
+
+      .site-nav ul {
+        display: flex;
+        gap: 0.25rem;
+      }
+
+      .site-nav a {
+        min-height: auto;
+        padding: 0.5rem 0.875rem;
+        border-radius: var(--radius);
+      }
+
+      .site-nav a:hover {
+        background: var(--bg-raised);
+      }
+    }
+
+    /* Hero */
+    .hero {
+      padding: clamp(3rem, 10vw, 6rem) 0 clamp(2.5rem, 8vw, 4.5rem);
+    }
+
+    .hero-badge {
+      display: inline-block;
+      margin-bottom: 1.25rem;
+      padding: 0.375rem 0.875rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      color: var(--accent);
+      border: 1px solid var(--border-strong);
+      border-radius: 999px;
+      background: var(--bg-raised);
+    }
+
+    .hero-lead {
+      font-size: clamp(1.0625rem, 2.5vw, 1.25rem);
+      color: var(--text-muted);
+      max-width: 38rem;
+      margin-bottom: 2rem;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem 1rem;
+      align-items: center;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      min-height: var(--touch);
+      padding: 0.625rem 1.375rem;
+      font-family: var(--font-body);
+      font-size: 0.9375rem;
+      font-weight: 600;
+      text-decoration: none;
+      border-radius: var(--radius);
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    .btn-primary:hover {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+      color: #fff;
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text);
+      border-color: var(--border-strong);
+    }
+
+    .btn-ghost:hover {
+      background: var(--bg-raised);
+      color: var(--text);
+    }
+
+    .link-arrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      min-height: var(--touch);
+      font-weight: 500;
+      text-decoration: none;
+    }
+
+    .link-arrow:hover { text-decoration: underline; }
+
+    /* Sections */
+    section {
+      padding-block: clamp(2.5rem, 7vw, 4rem);
+    }
+
+    section + section {
+      border-top: 1px solid var(--border);
+    }
+
+    .section-label {
+      display: block;
+      margin-bottom: 0.75rem;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .section-intro {
+      color: var(--text-muted);
+      max-width: 36rem;
+      margin-bottom: 2.5rem;
+    }
+
+    /* Feature grid */
+    .feature-grid {
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: 1fr;
+    }
+
+    @media (min-width: 640px) {
+      .feature-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    .card {
+      padding: 1.5rem;
+      background: var(--bg-raised);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+
+    .card-icon {
+      display: block;
+      margin-bottom: 0.875rem;
+      font-size: 1.375rem;
+      line-height: 1;
+    }
+
+    .card p {
+      color: var(--text-muted);
+      font-size: 0.9375rem;
+    }
+
+    /* Audience columns */
+    .audience-grid {
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: 1fr;
+    }
+
+    @media (min-width: 768px) {
+      .audience-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    .audience-card h3 {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .audience-card ul {
+      margin: 0;
+      padding-left: 1.25rem;
+      color: var(--text-muted);
+      font-size: 0.9375rem;
+    }
+
+    .audience-card li + li { margin-top: 0.5rem; }
+
+    .audience-card li::marker { color: var(--accent); }
+
+    /* Prose block */
+    .prose-block {
+      max-width: 40rem;
+      color: var(--text-muted);
+      font-size: 1.0625rem;
+    }
+
+    /* Beta CTA */
+    .beta-section {
+      text-align: center;
+    }
+
+    .beta-section .prose-block {
+      margin-inline: auto;
+      margin-bottom: 2rem;
+    }
+
+    .beta-actions {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    /* Footer */
+    .site-footer {
+      padding: 2rem 0 2.5rem;
+      border-top: 1px solid var(--border);
+      text-align: center;
+      font-size: 0.875rem;
+      color: var(--text-muted);
+    }
+
+    .site-footer a {
+      color: var(--text);
+      text-decoration: none;
+    }
+
+    .site-footer a:hover {
+      color: var(--accent);
+      text-decoration: underline;
+    }
+
+    .footer-sep { margin-inline: 0.5rem; opacity: 0.4; }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="logo" href="#">Clin<span>.</span></a>
+      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" aria-label="Menu">
+        <svg class="icon-menu" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/>
+        </svg>
+        <svg class="icon-close" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/>
+        </svg>
+      </button>
+      <nav class="site-nav" id="site-nav" aria-label="Navigation principale">
+        <ul>
+          <li><a href="#fonctionnalites">Fonctionnalités</a></li>
+          <li><a href="#pour-qui">Pour qui ?</a></li>
+          <li><a href="#beta">Rejoindre la bêta</a></li>
+          <li><a href="https://github.com/alex-elia/clin" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="wrap">
+        <span class="hero-badge">Open source · Local-first</span>
+        <h1>Ton assistant LinkedIn local, piloté par l'IA — que tu contrôles.</h1>
+        <p class="hero-lead">Clin capture tes contacts LinkedIn, nettoie ta base, prépare tes messages et génère tes posts. Il tourne sur ta machine. Tes données restent chez toi.</p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" id="cta-hero" href="#">👋 Je veux tester Clin</a>
+          <a class="link-arrow" href="https://github.com/alex-elia/clin" target="_blank" rel="noopener noreferrer">Voir le code sur GitHub →</a>
+        </div>
+      </div>
+    </section>
+
+    <section id="fonctionnalites">
+      <div class="wrap">
+        <span class="section-label">Fonctionnalités</span>
+        <h2>Ce que Clin fait concrètement</h2>
+        <p class="section-intro">Quatre piliers pour reprendre la main sur ton réseau LinkedIn, sans abonnement cloud ni copier-coller interminable.</p>
+        <div class="feature-grid">
+          <article class="card">
+            <span class="card-icon" aria-hidden="true">📥</span>
+            <h3>Capture</h3>
+            <p>Sauvegarde automatiquement les profils et listes LinkedIn dans une base locale. Plus besoin de copier-coller manuellement.</p>
+          </article>
+          <article class="card">
+            <span class="card-icon" aria-hidden="true">🧹</span>
+            <h3>Nettoyage</h3>
+            <p>Score tes contacts, identifie les relations froides, les profils obsolètes. Reprends le contrôle de ta base de 500 à 16&nbsp;000 relations.</p>
+          </article>
+          <article class="card">
+            <span class="card-icon" aria-hidden="true">✍️</span>
+            <h3>Rédaction par lot</h3>
+            <p>Prépare des séries de posts LinkedIn et des messages d'approche via un modèle d'IA de ton choix. Génère, révise, approuve — puis envoie toi-même.</p>
+          </article>
+          <article class="card">
+            <span class="card-icon" aria-hidden="true">⚙️</span>
+            <h3>Automatisation optionnelle</h3>
+            <p>Active l'autopilote uniquement si tu le choisis. Vitesse, caps, limites&nbsp;: tout est paramétrable. Tu restes aux commandes.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="pour-qui">
+      <div class="wrap">
+        <span class="section-label">Public</span>
+        <h2>Pour qui ?</h2>
+        <div class="audience-grid">
+          <article class="card audience-card">
+            <h3><span aria-hidden="true">✅</span> Clin est fait pour toi si&nbsp;:</h3>
+            <ul>
+              <li>Tu as une base LinkedIn de plusieurs centaines ou milliers de contacts</li>
+              <li>Tu veux reprendre la main sur ta gestion réseau sans payer un SaaS mensuel</li>
+              <li>Tu es à l'aise avec un terminal et Node.js (ou tu as quelqu'un pour t'aider à installer)</li>
+              <li>Tu as accès à une API d'IA (OpenAI, Mistral, Ollama local…)</li>
+            </ul>
+          </article>
+          <article class="card audience-card">
+            <h3><span aria-hidden="true">❌</span> Clin n'est pas encore pour toi si&nbsp;:</h3>
+            <ul>
+              <li>Tu veux un outil clé en main sans installation</li>
+              <li>Tu n'as pas de clé API IA</li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="open-source">
+      <div class="wrap">
+        <span class="section-label">Transparence</span>
+        <h2>C'est open source</h2>
+        <p class="prose-block">Clin est publié en open source sous licence MIT. Tu peux lire le code, le forker, l'adapter. C'est un terrain d'expérimentation partagé, pas un produit à vendre.</p>
+      </div>
+    </section>
+
+    <section id="beta" class="beta-section">
+      <div class="wrap">
+        <span class="section-label">Bêta</span>
+        <h2>Rejoindre la bêta</h2>
+        <p class="prose-block">Je cherche quelques dirigeants qui veulent tester Clin et me faire des retours. Si tu es curieux·se, envoie-moi un message WhatsApp.</p>
+        <div class="beta-actions">
+          <a class="btn btn-primary" id="cta-beta" href="#">👋 Je veux tester Clin</a>
+          <a class="link-arrow" href="https://github.com/alex-elia/clin" target="_blank" rel="noopener noreferrer">Voir le code sur GitHub →</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>
+        Construit par <a href="https://github.com/alex-elia" target="_blank" rel="noopener noreferrer">alex-elia</a>
+        <span class="footer-sep">·</span>
+        Open source MIT
+        <span class="footer-sep">·</span>
+        Pas affilié à LinkedIn
+      </p>
+    </div>
+  </footer>
+
+  <script>
+    (function () {
+      /* Remplacer par ton numéro WhatsApp au format international (ex. 33612345678) */
+      var WHATSAPP_NUMBER = "33757917064";
+      var WHATSAPP_TEXT = encodeURIComponent("Clin - je veux tester");
+      var whatsappUrl = "https://wa.me/" + WHATSAPP_NUMBER + "?text=" + WHATSAPP_TEXT;
+
+      document.getElementById("cta-hero").href = whatsappUrl;
+      document.getElementById("cta-beta").href = whatsappUrl;
+
+      var toggle = document.querySelector(".nav-toggle");
+      var nav = document.getElementById("site-nav");
+
+      toggle.addEventListener("click", function () {
+        var open = toggle.getAttribute("aria-expanded") === "true";
+        toggle.setAttribute("aria-expanded", String(!open));
+        nav.classList.toggle("is-open", !open);
+      });
+
+      nav.querySelectorAll("a[href^='#']").forEach(function (link) {
+        link.addEventListener("click", function () {
+          toggle.setAttribute("aria-expanded", "false");
+          nav.classList.remove("is-open");
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

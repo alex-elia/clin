@@ -2,11 +2,11 @@ import {
   emptyResponseError,
   formatOllamaModelError,
 } from "@/lib/llm/errors";
-import type { CompleteChatParams } from "@/lib/llm/types";
+import type { ChatCompletionResult, CompleteChatParams } from "@/lib/llm/types";
 
 export async function completeChatOllama(
   params: CompleteChatParams,
-): Promise<string> {
+): Promise<ChatCompletionResult> {
   const { config, system, user, jsonMode, temperature, timeoutMs } = params;
   const timeout = timeoutMs ?? (jsonMode ? 120_000 : 90_000);
   const controller = new AbortController();
@@ -33,12 +33,27 @@ export async function completeChatOllama(
       const errText = await res.text().catch(() => "");
       throw new Error(formatOllamaModelError(res.status, errText, config.model));
     }
-    const data = (await res.json()) as { message?: { content?: string } };
+    const data = (await res.json()) as {
+      message?: { content?: string };
+      prompt_eval_count?: number;
+      eval_count?: number;
+    };
     const content = data.message?.content;
     if (typeof content !== "string" || !content.trim()) {
       throw new Error(emptyResponseError(config));
     }
-    return jsonMode ? content : content.trim();
+    const text = jsonMode ? content : content.trim();
+    const inputTokens = data.prompt_eval_count;
+    const outputTokens = data.eval_count;
+    const usage =
+      inputTokens != null || outputTokens != null
+        ? {
+            inputTokens: inputTokens ?? 0,
+            outputTokens: outputTokens ?? 0,
+            totalTokens: (inputTokens ?? 0) + (outputTokens ?? 0),
+          }
+        : undefined;
+    return { text, usage };
   } finally {
     clearTimeout(t);
   }

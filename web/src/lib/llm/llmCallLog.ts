@@ -18,6 +18,16 @@ export type LlmCallLogEntry = {
   /** Last ~2k chars of model output (or error text). */
   responsePreview: string;
   meta?: Record<string, string | number | boolean | null>;
+  /** Present when the provider returns token counts (cloud APIs, some Ollama builds). */
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  /** Estimated EUR for cloud LLM / Tavily; omitted for local Ollama. */
+  estimatedCostEur?: number;
+  /** Explicit billable flag for FinOps (cloud chat, Tavily, etc.). */
+  billable?: boolean;
+  /** Non-chat usage (e.g. Tavily search credits). */
+  creditsUsed?: number;
 };
 
 const LOG_FILE = "llm-call-log.jsonl";
@@ -64,6 +74,25 @@ async function trimLlmCallLogFile(): Promise<void> {
     await fs.writeFile(logPath(), `${kept.join("\n")}\n`, "utf8");
   } catch {
     /* ignore */
+  }
+}
+
+/** Read the full retained log (newest first), for FinOps aggregation. */
+export async function listAllLlmCallLogs(): Promise<LlmCallLogEntry[]> {
+  try {
+    const raw = await fs.readFile(logPath(), "utf8");
+    const lines = raw.split("\n").filter((l) => l.trim());
+    const entries: LlmCallLogEntry[] = [];
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      try {
+        entries.push(JSON.parse(lines[i]!) as LlmCallLogEntry);
+      } catch {
+        /* skip */
+      }
+    }
+    return entries;
+  } catch {
+    return [];
   }
 }
 

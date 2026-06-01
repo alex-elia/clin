@@ -104,6 +104,7 @@ export async function generateOutreachDraftForMember(
   try {
     raw = await completeChat({
       config: llm,
+      feature: "outreach_draft",
       system,
       user,
       jsonMode: true,
