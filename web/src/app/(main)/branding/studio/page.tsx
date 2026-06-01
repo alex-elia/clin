@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { PlanningChatPanel } from "@/components/PlanningChatPanel";
+import { TrendsInboxPanel } from "@/components/TrendsInboxPanel";
 import { listContentPosts, listRecentPublished } from "@/lib/contentPosts";
 import { CONTENT_STATUS_LABELS, type ContentPostStatus } from "@/lib/contentPostsShared";
 import { getOrCreateContentBrandContext } from "@/lib/contentBrandContext";
@@ -74,6 +75,8 @@ export default async function BrandStudioPage() {
           )}
         </section>
       </div>
+
+      <TrendsInboxPanel />
 
       <PlanningChatPanel brandLanguage={brand.contentLanguage} />
     </div>

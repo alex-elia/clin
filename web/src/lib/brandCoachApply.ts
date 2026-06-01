@@ -10,6 +10,8 @@ import {
 } from "@/lib/contentPosts";
 import type { CoachAction } from "@/lib/brandCoachTypes";
 import { coachActionSchema } from "@/lib/brandCoachTypes";
+import { getOrCreateContentBrandContext } from "@/lib/contentBrandContext";
+import { enforceMaxPostsPerWeek } from "@/lib/editorial/enforceMaxPosts";
 
 export type ApplyCoachResult = {
   applied: number;
@@ -127,6 +129,14 @@ export async function applyCoachActions(
     } catch (e) {
       result.errors.push(e instanceof Error ? e.message : String(e));
     }
+  }
+
+  if (result.createdPostIds.length > 0) {
+    const brand = await getOrCreateContentBrandContext();
+    await enforceMaxPostsPerWeek(
+      result.createdPostIds,
+      brand.publishingRhythm,
+    );
   }
 
   return result;

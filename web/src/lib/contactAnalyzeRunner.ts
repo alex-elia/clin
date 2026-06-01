@@ -11,6 +11,10 @@ import {
   inferAnalysisTier,
   runContactLlmAnalysis,
 } from "@/lib/llmAnalysis";
+import {
+  getLatestMessagingCaptureForContact,
+  resolveMessageContextForAnalysis,
+} from "@/lib/messagingContext";
 import type { LlmConfig } from "@/lib/llm/types";
 import { contactAnalyzeBodySchema } from "@/lib/schemas";
 
@@ -39,8 +43,12 @@ export async function executeContactAnalysis(
 
   const storedMsg =
     selectContactLlmExtension(contactId)?.llmMessageContext ?? null;
-  const msgCtx =
-    body.messageContext !== undefined ? body.messageContext : storedMsg;
+  const captureMsg = (await getLatestMessagingCaptureForContact(contactId))
+    ?.text;
+  const msgCtx = resolveMessageContextForAnalysis(
+    body.messageContext !== undefined ? body.messageContext : storedMsg,
+    captureMsg,
+  );
 
   if (body.persistMessageContext && body.messageContext !== undefined) {
     tryUpdateLlmMessageContext(contactId, body.messageContext);

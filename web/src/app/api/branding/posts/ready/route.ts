@@ -10,21 +10,23 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   const rows = await listReadyPostsForExtension(30);
-  const items = rows.map((p) => {
-    const images = extensionImagesFromPost(p.mediaJson);
-    const primary = primaryPostImage(p.mediaJson);
-    return {
-      postId: p.id,
-      title: p.title,
-      format: p.format,
-      scheduledAt: p.scheduledAt?.toISOString() ?? null,
-      hook: p.hook,
-      body: p.body,
-      copyText: formatPostForClipboard(p),
-      images,
-      primaryImage: primary,
-    };
-  });
+  const items = await Promise.all(
+    rows.map(async (p) => {
+      const images = extensionImagesFromPost(p.mediaJson);
+      const primary = primaryPostImage(p.mediaJson);
+      return {
+        postId: p.id,
+        title: p.title,
+        format: p.format,
+        scheduledAt: p.scheduledAt?.toISOString() ?? null,
+        hook: p.hook,
+        body: p.body,
+        copyText: await formatPostForClipboard(p),
+        images,
+        primaryImage: primary,
+      };
+    }),
+  );
   return NextResponse.json({
     count: items.length,
     items,

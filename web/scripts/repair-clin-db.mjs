@@ -238,6 +238,102 @@ function repairClinSqliteSchema(db) {
       CREATE INDEX outreach_send_log_contact_idx ON outreach_send_log (contact_id);
     `);
   }
+
+  if (tableExists(db, "content_posts")) {
+    addColumnOrExists(
+      db,
+      "ALTER TABLE content_posts ADD COLUMN source_item_ids text",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE content_posts ADD COLUMN planning_week text",
+    );
+  }
+
+  if (tableExists(db, "content_brand_context")) {
+    addColumnOrExists(
+      db,
+      "ALTER TABLE content_brand_context ADD COLUMN market_region text DEFAULT 'fr'",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE content_brand_context ADD COLUMN planning_horizon_days integer DEFAULT 14",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE content_brand_context ADD COLUMN editorial_autopilot_enabled integer DEFAULT 0",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE content_brand_context ADD COLUMN editorial_autopilot_policy text",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE content_brand_context ADD COLUMN mention_roster text",
+    );
+  }
+
+  if (!tableExists(db, "content_sources")) {
+    db.exec(`
+      CREATE TABLE content_sources (
+        id text PRIMARY KEY NOT NULL,
+        name text NOT NULL,
+        type text NOT NULL,
+        config_json text,
+        enabled integer NOT NULL DEFAULT 1,
+        fetch_interval_hours integer DEFAULT 168,
+        last_fetched_at integer,
+        last_error text,
+        created_at integer NOT NULL,
+        updated_at integer NOT NULL
+      );
+    `);
+  }
+
+  if (!tableExists(db, "content_source_items")) {
+    db.exec(`
+      CREATE TABLE content_source_items (
+        id text PRIMARY KEY NOT NULL,
+        source_id text NOT NULL,
+        fetched_at integer NOT NULL,
+        title text NOT NULL,
+        url text,
+        excerpt text,
+        body_markdown text,
+        content_hash text NOT NULL,
+        item_kind text NOT NULL DEFAULT 'article',
+        trend_score integer,
+        published_at integer,
+        used_at integer,
+        dismissed_at integer,
+        FOREIGN KEY (source_id) REFERENCES content_sources(id) ON DELETE CASCADE
+      );
+      CREATE INDEX content_source_items_source_idx ON content_source_items (source_id);
+      CREATE INDEX content_source_items_hash_idx ON content_source_items (content_hash);
+      CREATE INDEX content_source_items_fetched_idx ON content_source_items (fetched_at);
+    `);
+  }
+
+  if (!tableExists(db, "editorial_jobs")) {
+    db.exec(`
+      CREATE TABLE editorial_jobs (
+        id text PRIMARY KEY NOT NULL,
+        type text NOT NULL,
+        post_id text,
+        payload_json text,
+        run_after integer NOT NULL,
+        status text NOT NULL DEFAULT 'pending',
+        locked_until integer,
+        attempts integer NOT NULL DEFAULT 0,
+        last_error text,
+        created_at integer NOT NULL,
+        finished_at integer,
+        FOREIGN KEY (post_id) REFERENCES content_posts(id) ON DELETE SET NULL
+      );
+      CREATE INDEX editorial_jobs_status_run_idx ON editorial_jobs (status, run_after);
+      CREATE INDEX editorial_jobs_post_idx ON editorial_jobs (post_id);
+    `);
+  }
 }
 
 const file = resolveClinDbPath();

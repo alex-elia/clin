@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Clin Capture",
-  "version": "0.2.25",
+  "version": "0.2.34",
   "description": "Capture LinkedIn data into your local Clin app. White-and-blue Clin UI with optional paced outreach when enabled in Settings.",
   "action": {
     "default_title": "Clin",

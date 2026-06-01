@@ -29,6 +29,9 @@ export default async function ContentPostPage({
       post={post}
       sdEnabled={sd.enabled}
       brandContentLanguage={brand.contentLanguage}
+      unicodeEmphasis={
+        brand.editorialAutopilotPolicy?.useUnicodeEmphasis !== false
+      }
     />
   );
 }

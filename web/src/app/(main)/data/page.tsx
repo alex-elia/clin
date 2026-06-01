@@ -6,7 +6,7 @@ export default function DataHubPage() {
   return (
     <SectionHub
       title="Data & cleaning"
-      lead="Capture profiles from a search or list page, or one profile at a time. Review contacts, scores, and optional batch cleaning on your machine."
+      lead="Use the extension Import & enrich flow on LinkedIn search, then review contacts and AI analysis here."
       links={[
         {
           href: "/contacts",
@@ -28,9 +28,9 @@ export default function DataHubPage() {
         },
         {
           href: "/autopilot",
-          title: "Cleaning",
+          title: "AI analysis",
           description:
-            "Batch LLM analysis on stored profiles, list sprint and hygiene runners (extension + settings).",
+            "Automatic or batch LLM scoring after full profile captures (ICP fit, reach out / skip).",
         },
       ]}
     />

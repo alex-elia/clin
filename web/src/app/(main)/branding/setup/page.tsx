@@ -10,9 +10,14 @@ import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
-export default async function VoiceSetupPage() {
+export default async function VoiceSetupPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ edit?: string }>;
+}) {
   const status = await getVoiceSetupStatus();
-  if (status.complete) {
+  const sp = await searchParams;
+  if (status.complete && sp.edit !== "1") {
     redirect("/branding/calendar");
   }
 

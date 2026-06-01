@@ -16,6 +16,8 @@ import { getLlmConfigPublic, listOllamaModels } from "@/lib/llm/completeChat";
 import { getOutreachSendSettings } from "@/lib/outreachSend";
 import { getPaceSettings } from "@/lib/pace";
 import { getSdSettingsPublic } from "@/lib/sdSettings";
+import { getOrCreateContentBrandContext } from "@/lib/contentBrandContext";
+import { EditorialAutopilotSettings } from "@/components/EditorialAutopilotSettings";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +31,7 @@ export default async function SettingsPage() {
   const lastBackup = await getLastBackupMeta();
   const outreachSend = await getOutreachSendSettings();
   const sd = await getSdSettingsPublic();
+  const brand = await getOrCreateContentBrandContext();
 
   return (
     <div className="mx-auto w-full max-w-6xl space-y-12">
@@ -165,12 +168,12 @@ export default async function SettingsPage() {
 
         <form action={saveAutomationForm} className="clin-card space-y-4 p-6 lg:col-span-2">
           <h3 className="text-sm font-semibold text-[var(--clin-text)]">
-            Hygiene runner (extension)
+            Background enrich (extension)
           </h3>
           <p className="text-sm text-[var(--clin-muted)]">
-            Opens the next contact from your local list, captures visible fields,
-            and logs the visit. Does not send messages or remove connections.
-            LinkedIn may flag unusual activity — use low daily caps.
+            After a people search import, Clin can open each profile in your tab,
+            capture full fields, and run AI analysis (if enabled below). Does not
+            send messages. Use conservative daily caps on LinkedIn.
           </p>
           <label className="flex cursor-pointer items-start gap-3 text-sm">
             <input
@@ -180,7 +183,43 @@ export default async function SettingsPage() {
               className="mt-1"
             />
             <span className="font-medium text-[var(--clin-text)]">
-              Allow hygiene runner
+              Allow background enrich
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              name="automationAutoEnrichAfterList"
+              value="on"
+              defaultChecked={automation.autoEnrichAfterList}
+              className="mt-1"
+            />
+            <span>
+              <span className="font-medium text-[var(--clin-text)]">
+                Auto-open profiles after list capture
+              </span>
+              <span className="mt-1 block text-xs text-[var(--clin-muted)]">
+                When you import a list (Capture or pipeline), continue with profile
+                captures without a second click.
+              </span>
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              name="automationAutoCaptureMessaging"
+              value="on"
+              defaultChecked={automation.autoCaptureMessagingInEnrich}
+              className="mt-1"
+            />
+            <span>
+              <span className="font-medium text-[var(--clin-text)]">
+                Capture messaging during enrich
+              </span>
+              <span className="mt-1 block text-xs text-[var(--clin-muted)]">
+                After each profile in Import &amp; enrich, try to read the LinkedIn
+                thread (overlay or Message link). Improves AI fit and drafts.
+              </span>
             </span>
           </label>
           <label className="flex cursor-pointer items-start gap-3 text-sm">
@@ -193,10 +232,10 @@ export default async function SettingsPage() {
             />
             <span>
               <span className="font-medium text-[var(--clin-text)]">
-                Allow connections list sprint
+                Allow list import in extension
               </span>
               <span className="mt-1 block text-xs text-[var(--clin-muted)]">
-                Side-panel auto-scroll import; capture limits above still apply.
+                Required for Import &amp; enrich. Pacing and hourly caps above still apply.
               </span>
             </span>
           </label>
@@ -224,14 +263,14 @@ export default async function SettingsPage() {
           />
           <Field
             name="automationJitterPercent"
-            label="Hygiene jitter (%)"
+            label="Gap jitter (%)"
             defaultValue={automation.jitterPercent}
             min={0}
             max={100}
           />
           </div>
           <button type="submit" className="clin-btn-primary">
-            Save hygiene settings
+            Save enrich settings
           </button>
         </form>
         </div>
@@ -275,7 +314,7 @@ export default async function SettingsPage() {
             After you capture a profile with the extension, Clin can score and
             summarize the contact in the background. Run larger batches from{" "}
             <a href="/autopilot" className="clin-link">
-              Autopilot
+              AI analysis
             </a>
             .
           </p>
@@ -288,13 +327,43 @@ export default async function SettingsPage() {
             />
             <span>
               <span className="font-medium text-[var(--clin-text)]">
-                Analyze after each profile capture
+                Analyze after profile or messaging capture
               </span>
               <span className="mt-1 block text-xs text-[var(--clin-muted)]">
-                Requires your chosen AI above to be running. Capture still finishes
-                immediately; analysis may take a few seconds.
+                Re-scores the contact when new profile or thread data arrives. Requires
+                your chosen AI above; capture still finishes first.
               </span>
             </span>
+          </label>
+          <p className="text-xs font-medium text-[var(--clin-muted)]">
+            Campaign autopilot defaults (on Autopilot page you can override per run)
+          </p>
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              name="autopilotCampaignDraftOnReachOut"
+              defaultChecked={autopilot.campaignDraftOnReachOut}
+              className="mt-1"
+            />
+            <span>Draft outreach when fit is reach out</span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              name="autopilotCampaignTagSkipGhost"
+              defaultChecked={autopilot.campaignTagSkipGhost}
+              className="mt-1"
+            />
+            <span>Tag skip as ghost</span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              name="autopilotCampaignTagNurtureWarm"
+              defaultChecked={autopilot.campaignTagNurtureWarm}
+              className="mt-1"
+            />
+            <span>Tag nurture as warm</span>
           </label>
           <Field
             name="autopilotBatchDefaultLimit"
@@ -311,6 +380,8 @@ export default async function SettingsPage() {
 
         <LlmCallLogPanel />
       </section>
+
+      <EditorialAutopilotSettings brand={brand} />
 
       <section className="grid gap-5 lg:grid-cols-2">
         <PostImageSettingsSection sd={sd} />

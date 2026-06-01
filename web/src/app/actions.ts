@@ -97,6 +97,10 @@ export async function saveAutomationForm(formData: FormData) {
     enabled: formData.get("automationEnabled") === "on",
     connectionsSprintEnabled:
       formData.get("automationConnectionsSprintEnabled") === "on",
+    autoEnrichAfterList:
+      formData.get("automationAutoEnrichAfterList") === "on",
+    autoCaptureMessagingInEnrich:
+      formData.get("automationAutoCaptureMessaging") === "on",
     maxPerDay: readInt("automationMaxPerDay"),
     minGapSeconds: readInt("automationMinGapSeconds"),
     maxGapSeconds: readInt("automationMaxGapSeconds"),
@@ -239,6 +243,11 @@ export async function saveAutopilotForm(formData: FormData) {
   }
   await updateAutopilotSettings({
     analyzeAfterProfileCapture: analyzeAfter,
+    campaignDraftOnReachOut:
+      formData.get("autopilotCampaignDraftOnReachOut") === "on",
+    campaignTagSkipGhost: formData.get("autopilotCampaignTagSkipGhost") === "on",
+    campaignTagNurtureWarm:
+      formData.get("autopilotCampaignTagNurtureWarm") === "on",
     ...(batchDefaultLimit !== undefined ? { batchDefaultLimit } : {}),
   });
   revalidatePath("/settings");
@@ -386,6 +395,15 @@ export async function addContactIdsToCampaignAction(formData: FormData) {
     .filter(Boolean);
   if (ids.length === 0) return;
   await addContactsToCampaign(campaignId, ids);
+  revalidatePath(`/campaigns/${campaignId}`);
+}
+
+export async function addContactToCampaignFromContactAction(formData: FormData) {
+  const campaignId = String(formData.get("campaignId") ?? "").trim();
+  const contactId = String(formData.get("contactId") ?? "").trim();
+  if (!campaignId || !contactId) return;
+  await addContactsToCampaign(campaignId, [contactId]);
+  revalidatePath(`/contacts/${contactId}`);
   revalidatePath(`/campaigns/${campaignId}`);
 }
 
@@ -670,6 +688,19 @@ export async function saveContentBrandContextAction(formData: FormData) {
   revalidateBranding();
 }
 
+export async function saveMentionRosterAction(formData: FormData) {
+  const { updateContentBrandContext } = await import("@/lib/contentBrandContext");
+  const mentionRoster = formData.get("mentionRoster");
+  await updateContentBrandContext({
+    mentionRoster:
+      typeof mentionRoster === "string" && mentionRoster.trim()
+        ? mentionRoster.trim()
+        : null,
+  });
+  revalidateBranding();
+  revalidatePath("/me");
+}
+
 export async function saveContentPostAction(formData: FormData) {
   const { updateContentPost } = await import("@/lib/contentPosts");
   const id = formData.get("id");
@@ -869,6 +900,84 @@ export async function completeVoiceSetupAction(formData: FormData) {
   revalidateBranding();
   revalidatePath("/me");
   redirect("/branding/calendar");
+}
+
+export async function saveEditorialAutopilotAction(formData: FormData) {
+  const { updateContentBrandContext, getOrCreateContentBrandContext } =
+    await import("@/lib/contentBrandContext");
+  const brand = await getOrCreateContentBrandContext();
+  const existing = brand.editorialAutopilotPolicy ?? {};
+
+  const trendRaw = formData.get("trendQueries");
+  const trendQueries =
+    typeof trendRaw === "string"
+      ? trendRaw
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : existing.trendQueries ?? [];
+
+  const maxPostsRaw = formData.get("maxPostsPerRun");
+  const maxPostsPerRun =
+    typeof maxPostsRaw === "string" && maxPostsRaw
+      ? Math.min(10, Math.max(1, parseInt(maxPostsRaw, 10) || 3))
+      : existing.maxPostsPerRun ?? 3;
+
+  const horizonRaw = formData.get("planningHorizonDays");
+  const planningHorizonDays =
+    typeof horizonRaw === "string"
+      ? parseInt(horizonRaw, 10) || 14
+      : brand.planningHorizonDays ?? 14;
+
+  await updateContentBrandContext({
+    editorialAutopilotEnabled: formData.get("editorialAutopilotEnabled") === "on",
+    marketRegion:
+      typeof formData.get("marketRegion") === "string"
+        ? String(formData.get("marketRegion"))
+        : "fr",
+    planningHorizonDays,
+    editorialAutopilotPolicy: {
+      ...existing,
+      trendQueries,
+      maxPostsPerRun,
+      runDraftWhenDue: formData.get("runDraftWhenDue") === "on",
+      includeImage: formData.get("includeImage") === "on",
+      autoMarkReady: formData.get("autoMarkReady") === "on",
+      tavilyDiscoveryEnabled: formData.get("tavilyDiscoveryEnabled") === "on",
+      useUnicodeEmphasis: formData.get("useUnicodeEmphasis") === "on",
+      maxTavilyCreditsPerTick: existing.maxTavilyCreditsPerTick ?? 5,
+      maxTrendItemsPerWeek: existing.maxTrendItemsPerWeek ?? 15,
+    },
+  });
+  revalidatePath("/settings");
+  revalidateBranding();
+}
+
+export async function enableSourcePackAction(formData: FormData) {
+  const packId = formData.get("packId");
+  if (typeof packId !== "string" || !packId.trim()) return;
+  const { enableSourcePack } = await import("@/lib/sources/sourcePacks");
+  await enableSourcePack(packId.trim());
+  const { enqueueEditorialJob } = await import("@/lib/editorial/editorialJobs");
+  await enqueueEditorialJob({ type: "ingest_trends", runAfter: new Date() });
+  revalidatePath("/settings");
+  revalidateBranding();
+}
+
+export async function enqueueTrendsRefreshAction(_formData?: FormData) {
+  void _formData;
+  const { enqueueEditorialJob } = await import("@/lib/editorial/editorialJobs");
+  await enqueueEditorialJob({ type: "ingest_trends", runAfter: new Date() });
+  revalidatePath("/settings");
+  revalidateBranding();
+}
+
+export async function enqueueSourcesRefreshAction(_formData?: FormData) {
+  void _formData;
+  const { enqueueEditorialJob } = await import("@/lib/editorial/editorialJobs");
+  await enqueueEditorialJob({ type: "ingest_sources", runAfter: new Date() });
+  revalidatePath("/settings");
+  revalidateBranding();
 }
 
 export async function saveSdSettingsAction(formData: FormData) {

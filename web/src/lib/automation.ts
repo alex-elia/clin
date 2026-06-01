@@ -2,13 +2,18 @@ import { randomInt, randomUUID } from "node:crypto";
 import { and, asc, count, desc, eq, gte, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { appSettings, automationLog, contacts } from "@/db/schema";
+import { pickNextEnrichContact } from "@/lib/enrichment";
 import { tryUpdateHygieneVisitAt } from "@/lib/contactSqlExtras";
 import { nextRandomizedGapMs } from "@/lib/pace";
 
 export const AUTOMATION_KEYS = {
   enabled: "automation.enabled",
-  /** When false, extension refuses connections-list sprint (hygiene is separate). */
+  /** When false, extension refuses list import + enrich pipeline. */
   connectionsSprintEnabled: "automation.connections_sprint_enabled",
+  /** After a list import, extension may open profiles automatically (same daily cap). */
+  autoEnrichAfterList: "automation.auto_enrich_after_list",
+  /** After profile capture in enrich pipeline, try messaging thread capture. */
+  autoCaptureMessagingInEnrich: "automation.auto_capture_messaging_in_enrich",
   maxPerDay: "automation.max_per_day",
   minGapSeconds: "automation.min_gap_seconds",
   maxGapSeconds: "automation.max_gap_seconds",
@@ -18,6 +23,8 @@ export const AUTOMATION_KEYS = {
 export type AutomationSettings = {
   enabled: boolean;
   connectionsSprintEnabled: boolean;
+  autoEnrichAfterList: boolean;
+  autoCaptureMessagingInEnrich: boolean;
   maxPerDay: number;
   minGapSeconds: number;
   maxGapSeconds: number;
@@ -25,11 +32,13 @@ export type AutomationSettings = {
 };
 
 const DEFAULTS: AutomationSettings = {
-  enabled: false,
+  enabled: true,
   connectionsSprintEnabled: true,
-  maxPerDay: 12,
-  minGapSeconds: 90,
-  maxGapSeconds: 240,
+  autoEnrichAfterList: true,
+  autoCaptureMessagingInEnrich: true,
+  maxPerDay: 15,
+  minGapSeconds: 75,
+  maxGapSeconds: 180,
   jitterPercent: 35,
 };
 
@@ -104,9 +113,14 @@ export function hygieneBetweenProfileMs(settings: AutomationSettings): number {
 
 const PRIORITY_SEGMENTS = ["remove_candidate", "ghost", "dormant"] as const;
 
-export async function pickNextHygieneContact(): Promise<typeof contacts.$inferSelect | null> {
-  const db = getDb();
+/** Prefer list imports that still need a profile page capture. */
+export async function pickNextHygieneContact(): Promise<
+  typeof contacts.$inferSelect | null
+> {
+  const enrich = await pickNextEnrichContact();
+  if (enrich) return enrich;
 
+  const db = getDb();
   const [fromPriority] = await db
     .select()
     .from(contacts)
@@ -156,6 +170,14 @@ export async function getAutomationSettings(): Promise<AutomationSettings> {
       map.get(AUTOMATION_KEYS.connectionsSprintEnabled),
       DEFAULTS.connectionsSprintEnabled,
     ),
+    autoEnrichAfterList: parseBool(
+      map.get(AUTOMATION_KEYS.autoEnrichAfterList),
+      DEFAULTS.autoEnrichAfterList,
+    ),
+    autoCaptureMessagingInEnrich: parseBool(
+      map.get(AUTOMATION_KEYS.autoCaptureMessagingInEnrich),
+      DEFAULTS.autoCaptureMessagingInEnrich,
+    ),
     maxPerDay,
     minGapSeconds: minGap,
     maxGapSeconds: maxGap,
@@ -170,6 +192,8 @@ export async function getAutomationSettings(): Promise<AutomationSettings> {
 export type AutomationSettingsPatch = Partial<{
   enabled: boolean;
   connectionsSprintEnabled: boolean;
+  autoEnrichAfterList: boolean;
+  autoCaptureMessagingInEnrich: boolean;
   maxPerDay: number;
   minGapSeconds: number;
   maxGapSeconds: number;
@@ -184,6 +208,12 @@ export async function updateAutomationSettings(
   if (typeof patch.enabled === "boolean") next.enabled = patch.enabled;
   if (typeof patch.connectionsSprintEnabled === "boolean") {
     next.connectionsSprintEnabled = patch.connectionsSprintEnabled;
+  }
+  if (typeof patch.autoEnrichAfterList === "boolean") {
+    next.autoEnrichAfterList = patch.autoEnrichAfterList;
+  }
+  if (typeof patch.autoCaptureMessagingInEnrich === "boolean") {
+    next.autoCaptureMessagingInEnrich = patch.autoCaptureMessagingInEnrich;
   }
   if (typeof patch.maxPerDay === "number" && Number.isFinite(patch.maxPerDay)) {
     next.maxPerDay = clamp(patch.maxPerDay, BOUNDS.maxPerDay.min, BOUNDS.maxPerDay.max);
@@ -227,6 +257,14 @@ export async function updateAutomationSettings(
   await upsertAppSetting(
     AUTOMATION_KEYS.connectionsSprintEnabled,
     next.connectionsSprintEnabled ? "1" : "0",
+  );
+  await upsertAppSetting(
+    AUTOMATION_KEYS.autoEnrichAfterList,
+    next.autoEnrichAfterList ? "1" : "0",
+  );
+  await upsertAppSetting(
+    AUTOMATION_KEYS.autoCaptureMessagingInEnrich,
+    next.autoCaptureMessagingInEnrich ? "1" : "0",
   );
   await upsertAppSetting(AUTOMATION_KEYS.maxPerDay, String(next.maxPerDay));
   await upsertAppSetting(

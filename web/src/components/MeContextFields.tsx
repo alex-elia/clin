@@ -46,7 +46,7 @@ export function MeContextFields({
 
         <label className="block space-y-1 text-sm">
           <span className="font-medium text-[var(--clin-text)]">
-            Positioning summary
+            Positioning &amp; offer (what you sell, ICP, proof)
           </span>
           <CopyFieldAssistant
             field="user_positioning"

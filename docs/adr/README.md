@@ -13,6 +13,7 @@ ADRs document **significant, stable** choices for Clin. They complement [DESIGN.
 | [0005](./0005-unified-llm-inference-layer.md) | Unified `completeChat` LLM layer; Ollama first, cloud-ready |
 | [0006](./0006-local-dev-singleton.md) | Local dev singleton: fixed port, lock file, health contract |
 | [0007](./0007-content-calendar-brand-coach.md) | Content calendar, Brand Coach, extension publish handoff |
+| [0008](./0008-editorial-autopilot-jobs-sources.md) | Editorial autopilot: job queue, sources, market calendar, runners |
 
 ## Conventions
 

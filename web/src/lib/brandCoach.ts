@@ -23,12 +23,20 @@ import {
   type ResolvedLanguage,
 } from "@/lib/contentLanguage";
 import { getOrCreateUserContext } from "@/lib/userContext";
+import {
+  formatMarketCalendarBlock,
+  loadMarketCalendarPack,
+} from "@/lib/marketCalendar";
+import { buildTrendInboxContextBlock } from "@/lib/sources/trendsContext";
 
 import {
   COACH_ACTIONS_MARKER,
   parseCoachActionsFromLlm,
 } from "@/lib/coachActionsParse";
-import { LINKEDIN_POST_COPY_RULES } from "@/lib/linkedinPostClipboard";
+import {
+  LINKEDIN_MENTION_COACH_HINT,
+  LINKEDIN_POST_COPY_RULES,
+} from "@/lib/linkedinPostClipboard";
 
 const SYSTEM_PROMPT_BASE = `You are the Brand Coach for Clin, a local-first LinkedIn personal branding assistant.
 
@@ -206,6 +214,18 @@ styleNotes: ${activePost.styleNotes ?? ""}`;
     ? JSON.stringify(brandCtx.publishingRhythm)
     : "not set";
 
+  const horizon = brandCtx.planningHorizonDays ?? 14;
+  const region = brandCtx.marketRegion ?? "fr";
+  let planningExtras = "";
+  if (scope === "studio") {
+    const pack = loadMarketCalendarPack(region);
+    const calendarBlock = pack
+      ? formatMarketCalendarBlock(pack, new Date(), horizon)
+      : "";
+    const trendBlock = await buildTrendInboxContextBlock(7, 10);
+    planningExtras = `\n\n${calendarBlock}\n\n${trendBlock}\n\nPlanning horizon: ${horizon} days.`;
+  }
+
   const contextBlock = `Author context:
 goals: ${userCtx.goalsText ?? "(none)"}
 positioning: ${userCtx.positioningSummary ?? "(none)"}
@@ -213,6 +233,7 @@ global_writer: ${globalWriter ?? "(none)"}
 doctrine: ${brandCtx.contentDoctrine ?? "(none)"}
 expertise: ${brandCtx.expertiseSummary ?? "(none)"}
 stance: ${brandCtx.stanceNotes ?? "(none)"}
+${brandCtx.mentionRoster?.trim() ? `${LINKEDIN_MENTION_COACH_HINT}${brandCtx.mentionRoster.trim()}` : "mention_roster: (none — add people/companies on /me)"}
 content_language_default: ${brandCtx.contentLanguage ?? "auto"}
 language_for_this_turn: ${resolvedLanguage.language} (${languageResolutionHint(resolvedLanguage)})
 publishing_rhythm: ${rhythm}
@@ -223,6 +244,7 @@ ${publishedLines || "(none)"}
 ${pipeline}
 
 ${analytics}
+${planningExtras}
 
 ${postBlock}`;
 

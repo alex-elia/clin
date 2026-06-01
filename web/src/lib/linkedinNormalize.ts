@@ -8,6 +8,7 @@ export type PersonExtract = {
   headline?: string;
   company?: string;
   location?: string;
+  experienceBullets?: string[];
 };
 
 function clean(s: string | undefined): string {
@@ -41,6 +42,12 @@ export function sanitizeScrapedFullName(
   if (t.length > 90 && /\bnotifications?\b/i.test(t)) return undefined;
   return t;
 }
+
+/** Employment duration / contract text mistaken for company name. */
+const EMPLOYMENT_META =
+  /\b(CDI|CDD|freelance|internship|stage|temps plein|full[- ]?time)\b/i;
+const DATE_RANGE_META =
+  /\b(19|20)\d{2}\b.*\b(jan|feb|mar|avr|mai|juin|juil|ao[uû]t|sept|oct|nov|d[eé]c|today|aujourd|present|pr[eé]sent|mois|month|year|ans)\b/i;
 
 /** Title-like fragment starts with these (FR/EN LinkedIn). */
 const TITLE_LEAD =
@@ -111,6 +118,103 @@ function splitConcatenatedNameTitle(blob: string): { name: string; title?: strin
 
   const idx = cuts[cuts.length - 1];
   return { name: t.slice(0, idx).trim(), title: t.slice(idx).trim() };
+}
+
+/**
+ * Drop or reclassify company strings that are really job title + dates (FR/EN LinkedIn DOM).
+ */
+export function sanitizeCompanyField(
+  company: string | undefined,
+  headline: string | undefined,
+): { company?: string; headline?: string } {
+  const co = clean(company);
+  let hl = clean(headline);
+  if (!co) return { company: undefined, headline: hl || undefined };
+
+  const looksLikeTitle =
+    /\b(Chief|Officer|Director|Directeur|Directrice|Manager|Head of|VP|President|CIO|CTO|CEO)\b/i.test(
+      co,
+    );
+  if (
+    (EMPLOYMENT_META.test(co) || DATE_RANGE_META.test(co)) &&
+    (looksLikeTitle || co.length > 55)
+  ) {
+    if (!hl) hl = co;
+    return { company: undefined, headline: hl || undefined };
+  }
+  if (DATE_RANGE_META.test(co) && co.length > 50) {
+    if (!hl) hl = co;
+    return { company: undefined, headline: hl || undefined };
+  }
+  return { company: co, headline: hl || undefined };
+}
+
+const CURRENT_ROLE_MARKER =
+  /\b(present|présent|aujourd'hui|today|actuel|current|cdi|cdd)\b/i;
+
+function parseRoleFromExperienceBullet(
+  bullet: string,
+): { title: string; company?: string } | null {
+  const t = clean(bullet);
+  const dot = t.indexOf(" · ");
+  if (dot > 0) {
+    return {
+      title: t.slice(0, dot).trim(),
+      company: t.slice(dot + 3).trim() || undefined,
+    };
+  }
+  const at = t.match(/^(.+?)\s+at\s+(.+)$/i);
+  if (at?.[1] && at[2]) {
+    return { title: at[1].trim(), company: at[2].trim() };
+  }
+  const chez = t.match(/^(.+?)\s+chez\s+(.+)$/i);
+  if (chez?.[1] && chez[2]) {
+    return { title: chez[1].trim(), company: chez[2].trim() };
+  }
+  return null;
+}
+
+function pickCurrentExperienceBullet(bullets: string[] | undefined): string | undefined {
+  if (!bullets?.length) return undefined;
+  for (const b of bullets) {
+    if (CURRENT_ROLE_MARKER.test(b)) return b;
+  }
+  return bullets[0];
+}
+
+function stringsOverlap(a: string, b: string): boolean {
+  const al = a.toLowerCase();
+  const bl = b.toLowerCase();
+  if (!al || !bl) return false;
+  if (al.includes(bl) || bl.includes(al)) return true;
+  return al.split(/\s+/).some((w) => w.length > 3 && bl.includes(w));
+}
+
+/** Headline/company columns match the current Experience row, not the tagline alone. */
+export function alignCurrentRoleFromExperience(
+  input: PersonExtract,
+): PersonExtract {
+  const bullet = pickCurrentExperienceBullet(input.experienceBullets);
+  if (!bullet) return input;
+  const role = parseRoleFromExperienceBullet(bullet);
+  if (!role?.title) return input;
+
+  let headline = clean(input.headline);
+  let company = clean(input.company);
+
+  const titleOk = stringsOverlap(headline, role.title);
+  const companyOk = !role.company || !company || stringsOverlap(company, role.company);
+
+  if (!titleOk || !companyOk) {
+    headline = role.title;
+    if (role.company) company = role.company;
+  }
+
+  return {
+    ...input,
+    headline: headline || undefined,
+    company: company || undefined,
+  };
 }
 
 /**
@@ -192,10 +296,22 @@ export function normalizeExtractedPersonFields(input: PersonExtract): PersonExtr
   name = clean(name);
   company = clean(company);
 
-  return {
+  const fixed = sanitizeCompanyField(company || undefined, headline || undefined);
+  company = fixed.company ?? "";
+  headline = fixed.headline ?? "";
+
+  const aligned = alignCurrentRoleFromExperience({
     fullName: name || undefined,
     headline: headline || undefined,
     company: company || undefined,
     location: location ? clean(location) || undefined : undefined,
+    experienceBullets: input.experienceBullets,
+  });
+
+  return {
+    fullName: aligned.fullName,
+    headline: aligned.headline,
+    company: aligned.company,
+    location: aligned.location,
   };
 }

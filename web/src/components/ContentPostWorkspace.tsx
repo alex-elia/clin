@@ -63,6 +63,7 @@ type ContentPostWorkspaceProps = {
   post: ContentPostRow;
   sdEnabled: boolean;
   brandContentLanguage: string | null;
+  unicodeEmphasis?: boolean;
 };
 
 function toLocalDatetimeValue(d: Date | null): string {
@@ -76,6 +77,7 @@ export function ContentPostWorkspace({
   post,
   sdEnabled,
   brandContentLanguage,
+  unicodeEmphasis = true,
 }: ContentPostWorkspaceProps) {
   const [title, setTitle] = useState(post.title);
   const [status, setStatus] = useState(post.status as ContentPostStatus);
@@ -365,13 +367,23 @@ export function ContentPostWorkspace({
 
           <label className="block text-sm">
             <span className="font-medium">Body</span>
+            <p className="mt-0.5 text-xs text-[var(--clin-muted)]">
+              Use <code className="text-xs">**bold**</code> and{" "}
+              <code className="text-xs">*italic*</code> for highlights
+              {unicodeEmphasis
+                ? " — converted to LinkedIn Unicode when you copy."
+                : "."}{" "}
+              <Link href="/me" className="clin-link">
+                @mentions roster
+              </Link>
+            </p>
             <textarea
               name="body"
               rows={14}
               value={body}
               onChange={(e) => setBody(e.target.value)}
               className="clin-input mt-1 font-mono text-sm leading-relaxed"
-              placeholder="Full post (closing line and hashtags at the end, no labels)"
+              placeholder="Full post — **key line**, *emphasis*, @Name from your roster"
             />
           </label>
 
@@ -577,13 +589,16 @@ export function ContentPostWorkspace({
           format,
           hook,
           body,
-          copyText: formatPostForLinkedInClipboard({
-            format,
-            hook,
-            body,
-            articleBody,
-            title,
-          }),
+          copyText: formatPostForLinkedInClipboard(
+            {
+              format,
+              hook,
+              body,
+              articleBody,
+              title,
+            },
+            { unicodeEmphasis },
+          ),
           imageUrl:
             mediaItems.find((i) => i.kind === "image" && i.url)?.url ?? null,
         }}

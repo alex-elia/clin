@@ -122,6 +122,8 @@ export type CreateContentPostInput = {
   mediaJson?: ContentMediaJson | null;
   scheduledAt?: Date | null;
   language?: string | null;
+  sourceItemIds?: string[] | null;
+  planningWeek?: string | null;
 };
 
 export async function createContentPost(
@@ -143,6 +145,8 @@ export async function createContentPost(
     mediaJson: input.mediaJson ?? null,
     scheduledAt: input.scheduledAt ?? null,
     language: input.language ?? null,
+    sourceItemIds: input.sourceItemIds ?? null,
+    planningWeek: input.planningWeek ?? null,
     createdAt: now,
     updatedAt: now,
   });
@@ -165,6 +169,8 @@ export type UpdateContentPostPatch = Partial<{
   language: string | null;
   readyAt: Date | null;
   publishedAt: Date | null;
+  sourceItemIds: string[] | null;
+  planningWeek: string | null;
 }>;
 
 export async function updateContentPost(
@@ -209,8 +215,16 @@ export async function markContentPostPublished(id: string): Promise<void> {
   });
 }
 
-export function formatPostForClipboard(post: ContentPostRow): string {
-  return formatPostForLinkedInClipboard(post);
+export async function formatPostForClipboard(
+  post: ContentPostRow,
+): Promise<string> {
+  const { getOrCreateContentBrandContext } = await import(
+    "@/lib/contentBrandContext"
+  );
+  const brand = await getOrCreateContentBrandContext();
+  const unicodeEmphasis =
+    brand.editorialAutopilotPolicy?.useUnicodeEmphasis !== false;
+  return formatPostForLinkedInClipboard(post, { unicodeEmphasis });
 }
 
 export function postsByLocalDay(

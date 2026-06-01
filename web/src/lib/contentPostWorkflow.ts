@@ -27,10 +27,10 @@ export const POST_MIN_BRIEF_CHARS = 24;
 
 /** Same default prompt as Writing assistant quick action #1 (English). */
 export const POST_COMPOSE_COACH_PROMPT_EN =
-  "From my brief: write a powerful LinkedIn post (hook + body + title). Suggest format and schedule.";
+  "From my brief: write a powerful LinkedIn post (hook + body + title). Use **bold** and *italic* sparingly on key phrases; tag people/companies from the mention roster when relevant. Suggest format and schedule.";
 
 export const POST_COMPOSE_COACH_PROMPT_FR =
-  "À partir de mon brief : rédige un post LinkedIn percutant (accroche + corps + titre). Propose le format et un créneau de publication.";
+  "À partir de mon brief : rédige un post LinkedIn percutant (accroche + corps + titre). Utilise **gras** et *italique* avec parcimonie ; mentionne les contacts de la liste quand c'est pertinent. Propose le format et un créneau.";
 
 export const POST_WRITING_QUICK_PROMPTS_POST = {
   en: [
@@ -47,11 +47,13 @@ export const POST_WRITING_QUICK_PROMPTS_POST = {
 
 export const POST_WRITING_QUICK_PROMPTS_STUDIO = {
   en: [
+    "From trend inbox + rhythm, propose next week's posts and add to calendar (create_post).",
     "Plan next week: add Tue/Thu calendar slots with titles and idea notes (create_post actions).",
     "What should I publish this week given my pipeline? Then add the best slots to the calendar.",
     "Reschedule my pipeline to the next Tue/Thu morning slots.",
   ],
   fr: [
+    "À partir de la boîte tendances + mon rythme, propose les posts de la semaine prochaine (create_post).",
     "Planifie la semaine prochaine : créneaux mar/jeu avec titres et briefs (actions create_post).",
     "Que publier cette semaine vu mon pipeline ? Puis ajoute les créneaux au calendrier.",
     "Réorganise mon pipeline sur les prochains créneaux mar/jeu matin.",

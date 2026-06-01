@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { countContactsNeedingProfileCapture } from "@/lib/enrichment";
 import {
   countHygieneVisitsToday,
   getAutomationSettings,
@@ -12,9 +13,12 @@ export async function GET() {
   const todayCount = await countHygieneVisitsToday();
   const remainingToday = Math.max(0, automation.maxPerDay - todayCount);
 
+  const needsProfileCount = await countContactsNeedingProfileCapture();
+
   return NextResponse.json({
     automation,
     todayCount,
     remainingToday,
+    needsProfileCount,
   });
 }

@@ -43,6 +43,9 @@ export function formatRichProfileForPrompt(
     );
   }
 
+  const postsBlock = formatProfilePostsForPrompt(extracted, 6000);
+  if (postsBlock) parts.push(postsBlock);
+
   let text = parts.join("\n\n");
   if (text.length > maxChars) text = `${text.slice(0, maxChars - 1)}…`;
   return text;
@@ -65,9 +68,62 @@ export async function getLatestProfileCaptureJson(
   return raw as Record<string, unknown>;
 }
 
+function formatProfilePostsForPrompt(
+  extracted: Record<string, unknown> | null | undefined,
+  maxChars = 8000,
+): string {
+  const posts = extracted?.profilePosts;
+  if (!Array.isArray(posts) || posts.length === 0) return "";
+  const lines: string[] = [];
+  for (let i = 0; i < posts.length && i < 12; i++) {
+    const p = posts[i];
+    if (!p || typeof p !== "object") continue;
+    const text =
+      typeof (p as { text?: string }).text === "string"
+        ? (p as { text: string }).text.trim()
+        : "";
+    if (!text) continue;
+    const age =
+      typeof (p as { ageLabel?: string }).ageLabel === "string"
+        ? (p as { ageLabel: string }).ageLabel.trim()
+        : "";
+    lines.push(
+      `${i + 1}. ${age ? `[${age}] ` : ""}${text.length > 900 ? `${text.slice(0, 897)}…` : text}`,
+    );
+  }
+  if (!lines.length) return "";
+  let block = `Recent LinkedIn posts (captured):\n${lines.join("\n")}`;
+  if (block.length > maxChars) block = `${block.slice(0, maxChars - 1)}…`;
+  return block;
+}
+
+/** Latest posts-scope capture for a contact. */
+export async function getLatestPostsCaptureJson(
+  contactId: string,
+): Promise<Record<string, unknown> | null> {
+  const db = getDb();
+  const row = await db.query.captureSessions.findFirst({
+    where: and(
+      eq(captureSessions.contactId, contactId),
+      eq(captureSessions.pageType, "posts"),
+    ),
+    orderBy: [desc(captureSessions.capturedAt)],
+  });
+  const raw = row?.extractedJson;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  return raw as Record<string, unknown>;
+}
+
 export async function getLatestProfileContextForOutreach(
   contactId: string,
 ): Promise<string> {
-  const json = await getLatestProfileCaptureJson(contactId);
-  return formatRichProfileForPrompt(json);
+  const [profileJson, postsJson] = await Promise.all([
+    getLatestProfileCaptureJson(contactId),
+    getLatestPostsCaptureJson(contactId),
+  ]);
+  const parts = [
+    formatRichProfileForPrompt(profileJson),
+    formatProfilePostsForPrompt(postsJson),
+  ].filter(Boolean);
+  return parts.join("\n\n");
 }

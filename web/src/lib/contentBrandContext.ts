@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import {
   contentBrandContext,
+  type EditorialAutopilotPolicyJson,
   type PublishingRhythmJson,
 } from "@/db/schema";
 
@@ -13,7 +14,12 @@ export type ContentBrandContextRow = {
   expertiseSummary: string | null;
   publishingRhythm: PublishingRhythmJson | null;
   stanceNotes: string | null;
+  mentionRoster: string | null;
   contentLanguage: string | null;
+  marketRegion: string | null;
+  planningHorizonDays: number | null;
+  editorialAutopilotEnabled: boolean | null;
+  editorialAutopilotPolicy: EditorialAutopilotPolicyJson | null;
   updatedAt: Date;
 };
 
@@ -33,6 +39,9 @@ export async function getOrCreateContentBrandContext(): Promise<ContentBrandCont
   await db.insert(contentBrandContext).values({
     id: DEFAULT_ID,
     contentLanguage: "auto",
+    marketRegion: "fr",
+    planningHorizonDays: 14,
+    editorialAutopilotEnabled: false,
     updatedAt: now,
   });
   return {
@@ -41,7 +50,12 @@ export async function getOrCreateContentBrandContext(): Promise<ContentBrandCont
     expertiseSummary: null,
     publishingRhythm: null,
     stanceNotes: null,
+    mentionRoster: null,
     contentLanguage: "auto",
+    marketRegion: "fr",
+    planningHorizonDays: 14,
+    editorialAutopilotEnabled: false,
+    editorialAutopilotPolicy: null,
     updatedAt: now,
   };
 }
@@ -51,7 +65,12 @@ export async function updateContentBrandContext(patch: {
   expertiseSummary?: string | null;
   publishingRhythm?: PublishingRhythmJson | null;
   stanceNotes?: string | null;
+  mentionRoster?: string | null;
   contentLanguage?: string | null;
+  marketRegion?: string | null;
+  planningHorizonDays?: number | null;
+  editorialAutopilotEnabled?: boolean | null;
+  editorialAutopilotPolicy?: EditorialAutopilotPolicyJson | null;
 }): Promise<void> {
   await getOrCreateContentBrandContext();
   const db = getDb();

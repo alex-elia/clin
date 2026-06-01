@@ -4,6 +4,7 @@ import { getGlobalWriterInstructions } from "@/lib/brand";
 import { getOrCreateContentBrandContext } from "@/lib/contentBrandContext";
 import { getOrCreateUserContext } from "@/lib/userContext";
 import { getVoiceSetupStatus } from "@/lib/voiceSetup";
+import { BrandMentionRosterForm } from "@/components/BrandMentionRosterForm";
 
 export const dynamic = "force-dynamic";
 
@@ -39,11 +40,39 @@ export default async function MePage() {
       ) : (
         <section className="clin-card p-5 text-sm">
           <p className="text-emerald-800 dark:text-emerald-200">Voice setup complete.</p>
-          <Link href="/branding/setup" className="clin-link mt-2 inline-block text-sm">
-            Re-run setup tutorial
+          <Link
+            href="/branding/setup?edit=1"
+            className="clin-link mt-2 inline-block text-sm"
+          >
+            Edit goals &amp; positioning
           </Link>
         </section>
       )}
+
+      <section className="clin-card space-y-3 p-5 text-sm">
+        <h2 className="clin-section-title">Offer &amp; ICP (for contact analysis)</h2>
+        <p className="text-[var(--clin-muted)]">
+          Clin compares each contact to <strong className="text-[var(--clin-text)]">what you sell</strong>{" "}
+          using your goals and positioning below, plus each campaign&apos;s context when you draft
+          messages. Without this, analysis stays generic (scores only, no reach-out / skip advice).
+        </p>
+        <ol className="list-decimal space-y-1 pl-5 text-[var(--clin-muted)]">
+          <li>
+            Capture your LinkedIn profile in voice setup so drafts sign with your real name.
+          </li>
+          <li>
+            Fill <strong className="text-[var(--clin-text)]">positioning</strong> with product, ICP,
+            proof points (who you help, what you offer).
+          </li>
+          <li>
+            Run per-contact or batch analysis on{" "}
+            <Link href="/autopilot" className="clin-link">
+              Autopilot
+            </Link>{" "}
+            after profile captures.
+          </li>
+        </ol>
+      </section>
 
       <section className="clin-card space-y-3 p-5 text-sm">
         <h2 className="clin-section-title">Content voice (posts)</h2>
@@ -67,10 +96,12 @@ export default async function MePage() {
             </div>
           ) : null}
         </dl>
-        <Link href="/branding/setup" className="clin-link">
-          Edit in setup
+        <Link href="/branding/setup?edit=1" className="clin-link">
+          Edit goals &amp; positioning in voice setup
         </Link>
       </section>
+
+      <BrandMentionRosterForm mentionRosterDefault={brand.mentionRoster ?? ""} />
 
       <form action={saveGlobalWriterForm} className="clin-card space-y-3 p-5">
         <h2 className="clin-section-title">Outreach writer (DMs)</h2>

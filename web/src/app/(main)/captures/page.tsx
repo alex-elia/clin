@@ -12,7 +12,7 @@ export default async function CapturesPage() {
       <div>
         <h1 className="clin-page-title">Capture log</h1>
         <p className="mt-1 text-sm text-clin-muted">
-          Profiles, lists, and messaging threads. Snapshots:{" "}
+          Profiles, posts, lists, and messaging threads. Snapshots:{" "}
           <Link href="/inbox" className="clin-link">
             Inbox
           </Link>

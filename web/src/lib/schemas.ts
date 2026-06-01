@@ -5,10 +5,24 @@ const messagingMessageSchema = z.object({
   body: z.string().min(1).max(20_000),
 });
 
+const profilePostSchema = z.object({
+  text: z.string().min(1).max(12_000),
+  ageLabel: z.string().max(120).optional(),
+  reactions: z.number().int().nonnegative().optional(),
+  comments: z.number().int().nonnegative().optional(),
+  postUrl: z.string().url().optional(),
+});
+
 export const capturePayloadSchema = z
   .object({
     schemaVersion: z.string().min(1),
-    pageType: z.enum(["profile", "connections", "unknown", "messaging"]),
+    pageType: z.enum([
+      "profile",
+      "connections",
+      "unknown",
+      "messaging",
+      "posts",
+    ]),
     sourceUrl: z.string().url(),
     capturedAt: z.string().optional(),
     confidence: z.number().min(0).max(1).optional(),
@@ -25,6 +39,8 @@ export const capturePayloadSchema = z
       messagingThreadId: z.string().max(200).optional(),
       messagingParticipantName: z.string().max(500).optional(),
       messagingMessages: z.array(messagingMessageSchema).max(500).optional(),
+      targetProfileUrl: z.string().url().optional(),
+      profilePosts: z.array(profilePostSchema).max(40).optional(),
     }),
     fieldPresence: z.record(z.string(), z.boolean()).optional(),
     outreachCampaignId: z.string().min(1).optional(),
@@ -48,11 +64,33 @@ export const capturePayloadSchema = z
         path: ["extractedFields", "messagingMessages"],
       });
     }
-    if (!data.sourceUrl.includes("/messaging/")) {
+    const threadId = data.extractedFields.messagingThreadId?.trim();
+    if (!data.sourceUrl.includes("/messaging/") && !threadId) {
       ctx.addIssue({
         code: "custom",
-        message: "sourceUrl should be the messaging thread URL.",
+        message:
+          "sourceUrl should be the messaging thread URL (open /messaging/thread/… in the address bar).",
         path: ["sourceUrl"],
+      });
+    }
+  })
+  .superRefine((data, ctx) => {
+    if (data.pageType !== "posts") return;
+    const posts = data.extractedFields.profilePosts;
+    if (!posts?.length) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Posts capture requires at least one profilePosts entry.",
+        path: ["extractedFields", "profilePosts"],
+      });
+    }
+    const target =
+      data.extractedFields.targetProfileUrl?.trim() || data.sourceUrl;
+    if (!target.includes("/in/")) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Posts capture needs a profile URL (/in/…).",
+        path: ["extractedFields", "targetProfileUrl"],
       });
     }
   });
@@ -64,6 +102,8 @@ export const connectionRowSchema = z.object({
   company: z.string().optional(),
   location: z.string().optional(),
   connectionDegree: z.string().optional(),
+  /** e.g. "Pierre Delort and 67 other mutual connections" from search cards */
+  mutualConnectionsHint: z.string().optional(),
 });
 
 export const connectionsPagePayloadSchema = z.object({
@@ -97,6 +137,8 @@ export const automationSettingsPatchSchema = z
   .object({
     enabled: z.boolean().optional(),
     connectionsSprintEnabled: z.boolean().optional(),
+    autoEnrichAfterList: z.boolean().optional(),
+    autoCaptureMessagingInEnrich: z.boolean().optional(),
     maxPerDay: z.number().int().optional(),
     minGapSeconds: z.number().int().optional(),
     maxGapSeconds: z.number().int().optional(),

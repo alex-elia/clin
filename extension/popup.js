@@ -203,6 +203,7 @@ chrome.storage.sync.get(["clinApiBase"], (r) => {
   loadReadyOutreach();
   loadReadyBranding();
   void refreshCampaignUi();
+  void refreshPipelineStatus();
   chrome.runtime.sendMessage({ type: "CLIN_POLL_PENDING_SELF" }, () => {
     void chrome.runtime.lastError;
   });
@@ -277,9 +278,9 @@ function checkClinHealth(base) {
   });
 }
 
-function sendCaptureMessage() {
+function sendCaptureMessage(scope = "auto") {
   return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: "CLIN_CAPTURE" }, (resp) => {
+    chrome.runtime.sendMessage({ type: "CLIN_CAPTURE", scope }, (resp) => {
       if (chrome.runtime.lastError) {
         resolve({
           ok: false,
@@ -302,8 +303,18 @@ function campaignAttachLine(d) {
 function applyCaptureSuccess(resp) {
   clearPaceCountdown();
   if (resp.mode === "messaging" && resp.data) {
+    const n = resp.data?.messageCount ?? "?";
     setStatus(
-      `Thread saved.\nContact: ${resp.data?.contactId || "?"}` +
+      `Thread saved (${n} messages).\nContact: ${resp.data?.contactId || "?"}` +
+        campaignAttachLine(resp.data),
+      "ok",
+    );
+    return;
+  }
+  if (resp.mode === "posts" && resp.data) {
+    const n = resp.data?.postCount ?? "?";
+    setStatus(
+      `Posts saved (${n} items).\nContact: ${resp.data?.contactId || "?"}` +
         campaignAttachLine(resp.data),
       "ok",
     );
@@ -311,22 +322,41 @@ function applyCaptureSuccess(resp) {
   }
   if (resp.mode === "connections" && resp.data) {
     const d = resp.data;
+    const enrichNote = d.enrichQueued
+      ? `\nOpening up to ${d.enrichSteps ?? "?"} profiles in the background (keep tab open)…`
+      : "";
     setStatus(
       `List import: ${d.imported} people (${d.created} new, ${d.updated} updated).` +
         (d.skippedDueToHourlyCap
           ? `\nSkipped (hourly cap): ${d.skippedDueToHourlyCap} — raise limit in /settings or wait.`
           : "") +
         `\nDeduped from ${d.receivedCount} links (${d.dedupedProfileCount} profiles).` +
+        enrichNote +
         campaignAttachLine(d),
       "ok",
     );
     return;
   }
   const fp = resp.data?.fieldPresence;
+  const fieldList = fp
+    ? Object.entries(fp)
+        .filter(([, v]) => v)
+        .map(([k]) => k)
+        .join(", ")
+    : "";
+  const diag = resp.data?.captureDiagnostics;
+  const methods = resp.data?.captureMethods;
+  const diagLine = diag
+    ? `\nAPI: csrf=${diag.csrf ? "yes" : "NO — log in on linkedin.com"} voyager=${diag.voyagerStatus ?? "—"} bprHits=${diag.bprHits ?? 0}`
+    : methods?.length
+      ? `\nSources: ${methods.join(", ")}`
+      : "";
   const partial =
     fp && !fp.fullName
       ? "\n\nName not detected — let the profile finish loading (scroll to top), then capture again."
-      : "";
+      : fp && fieldList === "fullName"
+        ? `\n\nOnly name captured — reload extension v0.2.29+, stay logged in, scroll About/Experience, Capture again (Profile button).${diagLine}`
+        : "";
   const nameLine = resp.data?.fullName
     ? `\nName: ${resp.data.fullName}`
     : "";
@@ -338,7 +368,7 @@ function applyCaptureSuccess(resp) {
   );
 }
 
-async function runCaptureFlow() {
+async function runCaptureFlow(scope = "auto") {
   clearPaceCountdown();
   const base = getBase();
   setStatus("Checking Clin API…");
@@ -353,8 +383,18 @@ async function runCaptureFlow() {
     "ok",
   );
   await new Promise((r) => setTimeout(r, 400));
-  setStatus("Capturing…");
-  const resp = await sendCaptureMessage();
+  const scopeLabel =
+    scope === "posts"
+      ? "posts"
+      : scope === "messaging"
+        ? "messaging"
+        : scope === "profile"
+          ? "profile"
+          : scope === "connections"
+            ? "list"
+            : "tab";
+  setStatus(`Capturing ${scopeLabel}…`);
+  const resp = await sendCaptureMessage(scope);
   if (resp.ok) {
     applyCaptureSuccess(resp);
     void refreshCampaignUi();
@@ -370,7 +410,7 @@ async function runCaptureFlow() {
       sec -= 1;
       if (sec <= 0) {
         clearPaceCountdown();
-        void runCaptureFlow();
+        void runCaptureFlow(scope);
         return;
       }
       setStatus(
@@ -384,8 +424,20 @@ async function runCaptureFlow() {
   setStatus(resp.error || "Capture failed.", "err");
 }
 
-document.getElementById("cap").addEventListener("click", () => {
-  void runCaptureFlow();
+document.getElementById("cap")?.addEventListener("click", () => {
+  void runCaptureFlow("auto");
+});
+document.getElementById("cap-profile")?.addEventListener("click", () => {
+  void runCaptureFlow("profile");
+});
+document.getElementById("cap-posts")?.addEventListener("click", () => {
+  void runCaptureFlow("posts");
+});
+document.getElementById("cap-messaging")?.addEventListener("click", () => {
+  void runCaptureFlow("messaging");
+});
+document.getElementById("cap-list")?.addEventListener("click", () => {
+  void runCaptureFlow("connections");
 });
 
 const genDraftBtn = document.getElementById("campaign-gen-draft");
@@ -448,10 +500,15 @@ function sendConnectionsSprintStep(tabId, round, postScrollMs) {
   });
 }
 
-document.getElementById("sprint-run").addEventListener("click", async () => {
-  const rawR = Number(document.getElementById("sprint-rounds").value);
-  const rounds = Math.min(20, Math.max(2, Number.isFinite(rawR) ? rawR : 6));
-  const rawP = Number(document.getElementById("sprint-pause").value);
+document.getElementById("pipeline-run")?.addEventListener("click", async () => {
+  const rawR = Number(document.getElementById("pipeline-list-rounds")?.value);
+  const listRounds = Math.min(12, Math.max(1, Number.isFinite(rawR) ? rawR : 4));
+  const rawE = Number(document.getElementById("pipeline-enrich-steps")?.value);
+  const enrichSteps = Math.min(
+    20,
+    Math.max(0, Number.isFinite(rawE) ? rawE : 0),
+  );
+  const rawP = Number(document.getElementById("pipeline-pause")?.value);
   const postScrollMs = Math.min(
     12000,
     Math.max(800, Number.isFinite(rawP) ? rawP : 2800),
@@ -470,39 +527,51 @@ document.getElementById("sprint-run").addEventListener("click", async () => {
     return;
   }
 
-  setStatus(`List sprint: ${rounds} rounds (keep panel open)…`);
-  let totalImported = 0;
-  for (let r = 0; r < rounds; r++) {
-    setStatus(`List sprint round ${r + 1}/${rounds}…`);
-    const resp = await sendConnectionsSprintStep(tab.id, r, postScrollMs);
-    if (!resp.ok) {
-      setStatus(resp.error || "Sprint failed.", "err");
-      return;
-    }
-    const imp = Number(resp.data?.imported) || 0;
-    totalImported += imp;
-    const skipped = resp.data?.skippedDueToHourlyCap;
-    const extra =
-      skipped > 0
-        ? ` — ${skipped} skipped (hourly cap on server)`
-        : "";
-    const camp = campaignAttachLine(resp.data);
-    setStatus(
-      `Round ${r + 1}/${rounds}: +${imp} rows${extra}. Cumulative ~${totalImported} this sprint.${camp}`,
-      "ok",
-    );
-  }
   setStatus(
-    `List sprint done (${rounds} rounds). See Clin → Captures / Contacts.`,
+    `Pipeline: ${listRounds} list round(s), then profile capture… Keep this popup and LinkedIn tab open.`,
+    "",
+  );
+
+  const resp = await new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      {
+        type: "CLIN_RUN_PIPELINE",
+        tabId: tab.id,
+        listRounds,
+        enrichSteps,
+        postScrollMs,
+      },
+      (r) => {
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+          return;
+        }
+        resolve(r || { ok: false, error: "No response from extension." });
+      },
+    );
+  });
+
+  if (!resp.ok) {
+    setStatus(resp.error || "Pipeline failed.", "err");
+    void refreshPipelineStatus();
+    return;
+  }
+
+  const s = resp.summary || {};
+  const errLine =
+    s.errors?.length > 0 ? `\nNotes: ${s.errors.slice(0, 2).join(" · ")}` : "";
+  setStatus(
+    `Done. List: ~${s.listImported ?? 0} imported · Profiles: ${s.profilesCaptured ?? 0} · Threads: ${s.messagingCaptured ?? 0}.${errLine}\nSee Clin → Contacts / Autopilot.`,
     "ok",
   );
+  void refreshPipelineStatus();
 });
 
 document.getElementById("refresh-outreach").addEventListener("click", () => {
   loadReadyOutreach();
 });
 
-const hygieneStatusEl = document.getElementById("hygiene-status");
+const pipelineStatusEl = document.getElementById("pipeline-status");
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -584,22 +653,23 @@ async function waitForLinkedInProfileTab(tabId, timeoutMs = 90000, onProgress) {
   );
 }
 
-async function refreshHygieneStatus() {
-  if (!hygieneStatusEl) return;
+async function refreshPipelineStatus() {
+  if (!pipelineStatusEl) return;
   const base = getBase();
   try {
     const res = await fetch(`${base}/api/automation/status`);
     const j = await res.json();
     if (!res.ok) {
-      hygieneStatusEl.textContent = "";
+      pipelineStatusEl.textContent = "";
       return;
     }
     const a = j.automation;
-    hygieneStatusEl.textContent = a?.enabled
-      ? `Hygiene: ${j.todayCount ?? "?"}/${a.maxPerDay} visits today (${j.remainingToday ?? "?"} left).`
-      : "Hygiene automation is off (enable in Clin → Settings).";
+    const need = j.needsProfileCount ?? "?";
+    pipelineStatusEl.textContent = a?.enabled
+      ? `${need} need full profile · ${j.todayCount ?? "?"}/${a.maxPerDay} opens today (${j.remainingToday ?? "?"} left)`
+      : "Background enrich is off — enable in Clin → Settings.";
   } catch {
-    hygieneStatusEl.textContent = "";
+    pipelineStatusEl.textContent = "";
   }
 }
 
@@ -610,122 +680,6 @@ async function postAck(base, contactId, outcome) {
     body: JSON.stringify({ contactId, outcome }),
   });
 }
-
-document.getElementById("hygiene-run").addEventListener("click", async () => {
-  const raw = Number(document.getElementById("hygiene-steps").value);
-  const maxSteps = Math.min(8, Math.max(1, Number.isFinite(raw) ? raw : 3));
-
-  setStatus("Hygiene: starting…");
-  const base = getBase();
-
-  let tabList;
-  try {
-    tabList = await chrome.tabs.query({ active: true, currentWindow: true });
-  } catch (e) {
-    setStatus(String(e), "err");
-    return;
-  }
-  const tab = tabList[0];
-  if (!tab?.id) {
-    setStatus("No active tab.", "err");
-    return;
-  }
-
-  for (let i = 0; i < maxSteps; i++) {
-    const first = i === 0 ? "1" : "0";
-    let nextRes;
-    try {
-      nextRes = await fetch(`${base}/api/automation/next?first=${first}`);
-    } catch (e) {
-      setStatus(String(e), "err");
-      return;
-    }
-    let next;
-    try {
-      next = await nextRes.json();
-    } catch {
-      setStatus("Bad response from /api/automation/next", "err");
-      return;
-    }
-    if (!nextRes.ok) {
-      setStatus(next.error || `HTTP ${nextRes.status}`, "err");
-      refreshHygieneStatus();
-      return;
-    }
-    if (next.done || !next.contact) {
-      setStatus(
-        next.reason === "daily_limit"
-          ? "Daily hygiene cap reached. Try tomorrow or raise the limit in Settings."
-          : next.reason === "no_contacts"
-            ? "No contacts in the local database."
-            : "Hygiene batch finished.",
-        "ok",
-      );
-      refreshHygieneStatus();
-      return;
-    }
-
-    if (next.waitBeforeMs > 0) {
-      const sec = Math.max(1, Math.round(next.waitBeforeMs / 1000));
-      setStatus(`Hygiene: waiting ${sec}s before opening next profile…`);
-      await sleep(next.waitBeforeMs);
-    }
-
-    setStatus(
-      `Hygiene: opening ${next.contact.fullName || next.contact.id}…`,
-      "",
-    );
-    try {
-      await chrome.tabs.update(tab.id, { url: next.contact.linkedinUrl });
-      await waitForLinkedInProfileTab(tab.id, 90000, (info) => {
-        setStatus(formatHygieneUrlWaitProgress(info), "");
-      });
-    } catch (e) {
-      await postAck(base, next.contact.id, "error");
-      setStatus(e instanceof Error ? e.message : String(e), "err");
-      refreshHygieneStatus();
-      return;
-    }
-
-    await sleep(2000 + Math.floor(Math.random() * 3000));
-
-    const step = await chrome.runtime.sendMessage({
-      type: "CLIN_HYGIENE_CAPTURE_STEP",
-      tabId: tab.id,
-    });
-    if (chrome.runtime.lastError) {
-      await postAck(base, next.contact.id, "error");
-      setStatus(chrome.runtime.lastError.message, "err");
-      refreshHygieneStatus();
-      return;
-    }
-    if (!step?.ok) {
-      await postAck(base, next.contact.id, "error");
-      setStatus(step?.error || "Hygiene capture failed.", "err");
-      refreshHygieneStatus();
-      return;
-    }
-    const savedId = step.data?.contactId;
-    if (savedId && savedId !== next.contact.id) {
-      await postAck(base, next.contact.id, "error");
-      setStatus(
-        "Capture returned a different contact than planned; marked as error. Check the active tab.",
-        "err",
-      );
-      refreshHygieneStatus();
-      return;
-    }
-
-    await postAck(base, next.contact.id, "ok");
-    setStatus(
-      `Hygiene: saved ${i + 1}/${maxSteps} — ${next.contact.fullName || next.contact.id}`,
-      "ok",
-    );
-  }
-
-  setStatus(`Hygiene: finished ${maxSteps} profile(s).`, "ok");
-  refreshHygieneStatus();
-});
 
 document.getElementById("refresh-branding")?.addEventListener("click", () => {
   loadReadyBranding();
