@@ -7,7 +7,6 @@ const standaloneSrc = path.join(webRoot, ".next", "standalone");
 const staticSrc = path.join(webRoot, ".next", "static");
 const publicSrc = path.join(webRoot, "public");
 const drizzleSrc = path.join(webRoot, "drizzle");
-const webPkgSrc = path.join(webRoot, "package.json");
 const appOut = path.join(root, "desktop-app");
 
 async function exists(p) {
@@ -34,7 +33,6 @@ async function main() {
   await copyRequired(staticSrc, path.join(appOut, ".next", "static"), "Next static assets");
   await copyRequired(publicSrc, path.join(appOut, "public"), "public assets");
   await copyRequired(drizzleSrc, path.join(appOut, "drizzle"), "Drizzle migrations");
-  await copyRequired(webPkgSrc, path.join(appOut, "package.json"), "web/package.json");
 
   console.log(`[desktop] Prepared runtime app at ${appOut}`);
 }

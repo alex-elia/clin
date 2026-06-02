@@ -13,6 +13,7 @@ import {
   findMemberById,
 } from "@/lib/outreachCampaigns";
 import { canonicalizeLinkedInUrl } from "@/lib/url";
+import { trackTimedFeature } from "@/lib/telemetry/orchestration";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -101,7 +102,11 @@ export async function POST(req: Request) {
     });
   }
 
-  const gen = await generateOutreachDraftForMember(member.id);
+  const gen = await trackTimedFeature(
+    "extension_outreach_draft",
+    () => generateOutreachDraftForMember(member.id),
+    { contactId: contact.id, campaignId, memberId: member.id },
+  );
   if (!gen.ok) {
     return NextResponse.json(
       {

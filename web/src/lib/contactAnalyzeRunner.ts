@@ -36,6 +36,9 @@ export async function executeContactAnalysis(
   contactId: string,
   body: ContactAnalyzeInput,
   llm: LlmConfig,
+  opts?: {
+    llmMeta?: Record<string, string | number | boolean | null>;
+  },
 ): Promise<ExecuteContactAnalysisResult> {
   const row = await db.query.contacts.findFirst({
     where: eq(contacts.id, contactId),
@@ -65,6 +68,7 @@ export async function executeContactAnalysis(
     tier: tierIn,
     messageContext: msgCtx,
     settings: llm,
+    llmMeta: opts?.llmMeta,
   });
 
   const jsonStr = JSON.stringify(result.envelope);

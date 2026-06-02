@@ -42,7 +42,7 @@ export function TrendsInboxPanel() {
     await load();
   };
 
-  const useForPost = async (id: string) => {
+  const createPostFromTrend = async (id: string) => {
     const res = await fetch(`/api/branding/trends/${id}/use`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -113,7 +113,7 @@ export function TrendsInboxPanel() {
             <div className="mt-2 flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => void useForPost(it.id)}
+                onClick={() => void createPostFromTrend(it.id)}
                 className="clin-btn-secondary px-2 py-0.5 text-xs"
               >
                 Use for new post

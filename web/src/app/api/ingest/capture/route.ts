@@ -12,6 +12,7 @@ import {
   rollCaptureGapAfterSuccess,
 } from "@/lib/pace";
 import { capturePayloadSchema } from "@/lib/schemas";
+import { trackFeatureEvent } from "@/lib/telemetry/orchestration";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -77,6 +78,7 @@ export async function POST(req: Request) {
   }
 
   const { outreachCampaignId, ...capturePayload } = parsed.data;
+  const started = Date.now();
 
   try {
     const result = await ingestCapture(db, capturePayload);
@@ -101,9 +103,23 @@ export async function POST(req: Request) {
         contactId: result.contactId,
       });
     }
+    trackFeatureEvent("capture_ingest", {
+      ok: true,
+      durationMs: Date.now() - started,
+      meta: {
+        pageType: capturePayload.pageType,
+        contactId: result.contactId,
+      },
+    });
     return NextResponse.json({ ...result, campaignAttach, campaignWorkflow });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Ingest failed";
+    trackFeatureEvent("capture_ingest", {
+      ok: false,
+      durationMs: Date.now() - started,
+      error: message,
+      meta: { pageType: capturePayload.pageType },
+    });
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

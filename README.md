@@ -81,6 +81,12 @@ Artifacts are written under `dist/desktop/`. The build uses:
 - Electron runtime that starts the local API on `http://127.0.0.1:3000`
 - user-scoped DB path (`CLIN_DB_PATH`) under Electron app data
 
+### Anonymous telemetry (optional)
+
+On first launch, Clin may ask whether to share **anonymous usage data** (feature counts, AI latency — never contact names or drafts). **Off until you consent.** Local logs always work in Settings → Usage telemetry.
+
+Cloud sync to the project backend is **not enabled in current releases** (placeholders only). If you opt in, your choice is saved locally and cloud collection starts automatically in a later update when Supabase is deployed. See [`docs/telemetry/README.md`](./docs/telemetry/README.md).
+
 ## Repository layout
 
 | Path | Description |

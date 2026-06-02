@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { runCampaignPrepAutopilot } from "@/lib/campaignPrepAutopilot";
+import { runOrchestration } from "@/lib/telemetry/orchestration";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,22 +42,27 @@ export async function POST(
   }
   const p = parsed.data;
   try {
-    const result = await runCampaignPrepAutopilot({
-      campaignId,
-      brief: p.brief,
-      applyFields: p.applyFields ?? true,
-      suggestFromDatabase: p.suggestFromDatabase ?? true,
-      suggestLimit: p.suggestLimit ?? 8,
-      addSuggestedContactIds: p.addContactIds ?? [],
-      verifyMembers: p.verifyMembers ?? true,
-      memberVerifyLimit: p.memberVerifyLimit ?? 10,
-      runPipeline: p.runPipeline ?? false,
-      pipelineLimit: p.pipelineLimit ?? 6,
-      policy: {
-        draftOnReachOut: p.policy?.draftOnReachOut ?? true,
-        tagSkipAsGhost: p.policy?.tagSkipAsGhost ?? false,
-        tagNurtureAsWarm: p.policy?.tagNurtureAsWarm ?? false,
-      },
+    const { result } = await runOrchestration({
+      action: "campaign_prep_autopilot",
+      meta: { campaignId },
+      fn: async () =>
+        runCampaignPrepAutopilot({
+          campaignId,
+          brief: p.brief,
+          applyFields: p.applyFields ?? true,
+          suggestFromDatabase: p.suggestFromDatabase ?? true,
+          suggestLimit: p.suggestLimit ?? 8,
+          addSuggestedContactIds: p.addContactIds ?? [],
+          verifyMembers: p.verifyMembers ?? true,
+          memberVerifyLimit: p.memberVerifyLimit ?? 10,
+          runPipeline: p.runPipeline ?? false,
+          pipelineLimit: p.pipelineLimit ?? 6,
+          policy: {
+            draftOnReachOut: p.policy?.draftOnReachOut ?? true,
+            tagSkipAsGhost: p.policy?.tagSkipAsGhost ?? false,
+            tagNurtureAsWarm: p.policy?.tagNurtureAsWarm ?? false,
+          },
+        }),
     });
     return NextResponse.json(result);
   } catch (e) {

@@ -79,6 +79,7 @@ export async function runCampaignAutopilot(opts: {
   minProfileDepth: ProfileDepth;
   policy: AutopilotActionPolicy;
   runActions: boolean;
+  llmMeta?: Record<string, string | number | boolean | null>;
 }): Promise<{
   campaignName: string;
   results: CampaignAutopilotItemResult[];
@@ -116,6 +117,7 @@ export async function runCampaignAutopilot(opts: {
           t.contactId,
           body,
           llm,
+          { llmMeta: opts.llmMeta },
         );
         item.tier = tier;
         const output = (envelope as { output?: { outreach_fit?: { recommendation?: string } } })

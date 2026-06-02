@@ -14,7 +14,7 @@
     "dist:desktop": "npm run build:desktop && electron-builder",
     "dist:desktop:win": "npm run build:desktop && electron-builder --win portable zip",
     "dist:desktop:mac": "npm run build:desktop && electron-builder --mac zip",
-    "dist:extension": "bestzip dist/desktop/clin-capture-${npm_package_version}.zip extension/*",
+    "dist:extension": "node scripts/zip-extension.mjs",
     "desktop:start": "electron .",
     "start": "npm --prefix web run start",
     "lint": "npm --prefix web run lint",
@@ -24,7 +24,6 @@
     "db:studio": "npm --prefix web run db:studio"
   },
   "devDependencies": {
-    "bestzip": "^2.2.1",
     "electron": "^37.1.0",
     "electron-builder": "^26.0.12"
   },
@@ -36,8 +35,14 @@
     },
     "files": [
       "electron/**/*",
-      "desktop-app/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "desktop-app",
+        "to": "desktop-app",
+        "filter": ["**/*"]
+      }
     ],
     "asar": true,
     "mac": {

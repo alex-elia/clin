@@ -80,7 +80,7 @@ export async function applyAutopilotActionsForContact(opts: {
 
   if (rec === "reach_out" && policy.draftOnReachOut) {
     await addContactsToCampaign(campaignId, [contactId]);
-    let member = await findMemberByCampaignAndContact(campaignId, contactId);
+    const member = await findMemberByCampaignAndContact(campaignId, contactId);
     if (!member) {
       errors.push("Could not add to campaign.");
     } else {

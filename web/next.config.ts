@@ -17,9 +17,15 @@ function optionalBasePath(): string | undefined {
   return normalized === "" ? undefined : normalized;
 }
 
+const isDesktopStandalone = process.env.CLIN_DESKTOP_STANDALONE === "1";
+
 const nextConfig: NextConfig = {
   basePath: optionalBasePath(),
-  output: process.env.CLIN_DESKTOP_STANDALONE === "1" ? "standalone" : undefined,
+  output: isDesktopStandalone ? "standalone" : undefined,
+  eslint: {
+    // Desktop release builds must not fail on unrelated lint warnings.
+    ignoreDuringBuilds: isDesktopStandalone,
+  },
   // Parent folders may contain unrelated lockfiles; pin tracing to this app.
   outputFileTracingRoot: webRoot,
   serverExternalPackages: ["better-sqlite3", "bindings"],
