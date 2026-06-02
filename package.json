@@ -11,9 +11,9 @@
     "build:desktop:web": "npm --prefix web run build:desktop",
     "build:desktop:prepare": "node scripts/prepare-electron-app.mjs",
     "build:desktop": "npm run build:desktop:web && npm run build:desktop:prepare",
-    "dist:desktop": "npm run build:desktop && electron-builder",
-    "dist:desktop:win": "npm run build:desktop && electron-builder --win portable zip",
-    "dist:desktop:mac": "npm run build:desktop && electron-builder --mac zip",
+    "dist:desktop": "npm run build:desktop && electron-builder --publish never",
+    "dist:desktop:win": "npm run build:desktop && electron-builder --win portable zip --publish never",
+    "dist:desktop:mac": "npm run build:desktop && electron-builder --mac zip --publish never",
     "dist:extension": "node scripts/zip-extension.mjs",
     "desktop:start": "electron .",
     "start": "npm --prefix web run start",
@@ -28,6 +28,7 @@
     "electron-builder": "^26.0.12"
   },
   "build": {
+    "publish": null,
     "appId": "com.clin.desktop",
     "productName": "Clin",
     "directories": {
@@ -49,7 +50,9 @@
       "target": [
         "zip"
       ],
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "identity": "-",
+      "gatekeeperAssess": false
     },
     "win": {
       "target": [
