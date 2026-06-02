@@ -65,6 +65,9 @@ export async function generateOutreachDraftForMember(
 
   let user = `${buildSenderIdentityPromptBlock(sender)}\n\n`;
   user += `Campaign context (what you are offering in this campaign):\n${campaign.contextText}\n\n`;
+  if (campaign.icpText?.trim()) {
+    user += `Campaign ICP (who this campaign targets):\n${campaign.icpText.trim()}\n\n`;
+  }
   if (userContextHasLlmSignal(ownerCtx)) {
     if (ownerCtx.goalsText) {
       user += `Your networking goals (Clin):\n${ownerCtx.goalsText}\n\n`;

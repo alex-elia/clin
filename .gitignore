@@ -11,6 +11,8 @@ web/node_modules
 web/.next
 web/out
 web/*.tsbuildinfo
+desktop-app/
+dist/
 
 # SQLite (local dev)
 *.db

@@ -18,6 +18,15 @@ function setStatus(text, cls) {
   else activityEl.className = base;
 }
 
+function isMessageChannelClosedError(message) {
+  if (typeof message !== "string") return false;
+  const t = message.toLowerCase();
+  return (
+    t.includes("message channel closed before a response was received") ||
+    t.includes("the message port closed before a response was received")
+  );
+}
+
 function initTabs() {
   const tabBar = document.querySelector(".tab-bar");
   if (!tabBar) return;
@@ -116,6 +125,31 @@ async function loadCampaignCaptureHint() {
     if (queueEl) queueEl.textContent = "";
     if (openNextBtn) openNextBtn.hidden = true;
   }
+}
+
+async function fetchCampaignContext(base) {
+  return fetchCampaignContextForCampaign(base, null);
+}
+
+async function fetchCampaignContextForCampaign(base, campaignId) {
+  try {
+    const q =
+      typeof campaignId === "string" && campaignId.trim()
+        ? `?campaignId=${encodeURIComponent(campaignId.trim())}`
+        : "";
+    const res = await fetch(`${base}/api/extension/campaign-context${q}`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+function selectedCampaignIdFromPicker() {
+  const sel = document.getElementById("import-campaign-picker");
+  const raw = typeof sel?.value === "string" ? sel.value.trim() : "";
+  if (!raw || raw === "__none__" || raw === "__clin_default__") return null;
+  return raw;
 }
 
 const IMPORT_CAMPAIGN_KEY = "clinImportCampaignChoice";
@@ -500,7 +534,18 @@ function sendConnectionsSprintStep(tabId, round, postScrollMs) {
   });
 }
 
-document.getElementById("pipeline-run")?.addEventListener("click", async () => {
+async function runFullCampaignCaptureFlow() {
+  const base = getBase();
+  const selectedCampaignId = selectedCampaignIdFromPicker();
+  const campaignCtx = await fetchCampaignContextForCampaign(base, selectedCampaignId);
+  if (!campaignCtx?.captureTargetCampaignId) {
+    setStatus(
+      "No campaign selected for import. In extension: Import into campaign -> choose a campaign, then run full campaign capture again.",
+      "err",
+    );
+    return;
+  }
+
   const rawR = Number(document.getElementById("pipeline-list-rounds")?.value);
   const listRounds = Math.min(12, Math.max(1, Number.isFinite(rawR) ? rawR : 4));
   const rawE = Number(document.getElementById("pipeline-enrich-steps")?.value);
@@ -513,37 +558,63 @@ document.getElementById("pipeline-run")?.addEventListener("click", async () => {
     12000,
     Math.max(800, Number.isFinite(rawP) ? rawP : 2800),
   );
+  const suppressFocus = Boolean(
+    document.getElementById("pipeline-background-mode")?.checked,
+  );
 
-  let tabList;
+  let tab;
   try {
-    tabList = await chrome.tabs.query({ active: true, currentWindow: true });
+    tab = await resolvePipelineLinkedInTab();
   } catch (e) {
     setStatus(String(e), "err");
     return;
   }
-  const tab = tabList[0];
   if (!tab?.id) {
-    setStatus("No active tab.", "err");
+    setStatus(
+      "Open LinkedIn people search or Connections in a tab, then try again.",
+      "err",
+    );
     return;
   }
+  const canImportListFromTab = Boolean(tab.url && isConnectionsListPageUrl(tab.url));
 
-  setStatus(
-    `Pipeline: ${listRounds} list round(s), then profile capture… Keep this popup and LinkedIn tab open.`,
-    "",
-  );
+  if (canImportListFromTab) {
+    setStatus(
+      `Pipeline: ${listRounds} list round(s) with auto-scroll, then campaign profiles one-by-one… ${suppressFocus ? "Background mode on (no foreground focus)." : "Clin will focus the LinkedIn tab."}`,
+      "",
+    );
+  } else {
+    setStatus(
+      "Resuming campaign capture: list import skipped (current tab is not a people list). Clin will continue individual profile captures.",
+      "",
+    );
+  }
 
   const resp = await new Promise((resolve) => {
     chrome.runtime.sendMessage(
       {
         type: "CLIN_RUN_PIPELINE",
         tabId: tab.id,
-        listRounds,
+        listRounds: canImportListFromTab ? listRounds : 0,
         enrichSteps,
         postScrollMs,
+        fullRun: true,
+        suppressFocus,
+        selectedCampaignId: selectedCampaignId || campaignCtx.captureTargetCampaignId,
       },
       (r) => {
         if (chrome.runtime.lastError) {
-          resolve({ ok: false, error: chrome.runtime.lastError.message });
+          const msg = chrome.runtime.lastError.message || "";
+          if (isMessageChannelClosedError(msg)) {
+            resolve({
+              ok: false,
+              transient: true,
+              error:
+                "Connection to extension worker closed while waiting. If the run started, it may still continue in background.",
+            });
+            return;
+          }
+          resolve({ ok: false, error: msg });
           return;
         }
         resolve(r || { ok: false, error: "No response from extension." });
@@ -552,7 +623,11 @@ document.getElementById("pipeline-run")?.addEventListener("click", async () => {
   });
 
   if (!resp.ok) {
-    setStatus(resp.error || "Pipeline failed.", "err");
+    if (resp.transient) {
+      setStatus(resp.error, "");
+    } else {
+      setStatus(resp.error || "Pipeline failed.", "err");
+    }
     void refreshPipelineStatus();
     return;
   }
@@ -560,11 +635,54 @@ document.getElementById("pipeline-run")?.addEventListener("click", async () => {
   const s = resp.summary || {};
   const errLine =
     s.errors?.length > 0 ? `\nNotes: ${s.errors.slice(0, 2).join(" · ")}` : "";
+  const modeLine = s.campaignCaptureMode
+    ? "\nMode: campaign queue (per-contact captures)."
+    : "";
+  const focusLine = suppressFocus
+    ? "\nFocus: background mode (best effort)."
+    : "\nFocus: foreground mode.";
   setStatus(
-    `Done. List: ~${s.listImported ?? 0} imported · Profiles: ${s.profilesCaptured ?? 0} · Threads: ${s.messagingCaptured ?? 0}.${errLine}\nSee Clin → Contacts / Autopilot.`,
+    `Done (${campaignCtx.captureTargetCampaignName || "campaign"}). List: ~${s.listImported ?? 0} imported in ${s.listRoundsRun ?? "?"} round(s) · Profiles: ${s.profilesCaptured ?? 0} (${s.profileStepsRun ?? "?"} step(s)) · Threads: ${s.messagingCaptured ?? 0}.${modeLine}${focusLine}${errLine}\nSee Clin → Contacts / Autopilot.`,
     "ok",
   );
   void refreshPipelineStatus();
+}
+
+document.getElementById("pipeline-run")?.addEventListener("click", () => {
+  void runFullCampaignCaptureFlow();
+});
+
+document.getElementById("cap-campaign-full")?.addEventListener("click", () => {
+  void runFullCampaignCaptureFlow();
+});
+
+document.getElementById("pipeline-stop")?.addEventListener("click", async () => {
+  try {
+    const resp = await chrome.runtime.sendMessage({ type: "CLIN_RUN_PIPELINE_STOP" });
+    if (chrome.runtime.lastError) {
+      const msg = chrome.runtime.lastError.message || "";
+      if (isMessageChannelClosedError(msg)) {
+        setStatus(
+          "Stop requested, but response channel closed. Reopen popup and check status.",
+          "",
+        );
+        return;
+      }
+      setStatus(msg, "err");
+      return;
+    }
+    setStatus(resp?.ok ? "Full orchestration stop requested." : "Stop request failed.", "ok");
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (isMessageChannelClosedError(msg)) {
+      setStatus(
+        "Connection closed before stop confirmation. Reopen popup and check status.",
+        "",
+      );
+      return;
+    }
+    setStatus(msg || "Stop request failed.", "err");
+  }
 });
 
 document.getElementById("refresh-outreach").addEventListener("click", () => {
@@ -589,6 +707,46 @@ function isLinkedInProfilePageUrl(url) {
   } catch {
     return false;
   }
+}
+
+function isConnectionsListPageUrl(url) {
+  try {
+    const u = new URL(url);
+    if (!u.hostname.toLowerCase().endsWith("linkedin.com")) return false;
+    const p = u.pathname.toLowerCase();
+    if (p.includes("/mynetwork/invite-connect/connections")) return true;
+    if (p.includes("/mynetwork/connection-manager")) return true;
+    if (p.includes("/search/results/people")) return true;
+    if (p.includes("/search/results/all") && /people/i.test(u.search)) return true;
+    if (p.includes("/sales/search/people")) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/** Prefer active LinkedIn list tab; else any open people-search / connections tab. */
+async function resolvePipelineLinkedInTab() {
+  const activeList = await chrome.tabs.query({
+    active: true,
+    currentWindow: true,
+  });
+  const active = activeList[0];
+  if (
+    active?.id &&
+    active.url?.includes("linkedin.com") &&
+    isConnectionsListPageUrl(active.url)
+  ) {
+    return active;
+  }
+  const linkedInTabs = await chrome.tabs.query({
+    url: "*://*.linkedin.com/*",
+  });
+  for (const t of linkedInTabs) {
+    if (t.id && t.url && isConnectionsListPageUrl(t.url)) return t;
+  }
+  if (active?.id && active.url?.includes("linkedin.com")) return active;
+  return linkedInTabs.find((t) => t.id) ?? active ?? null;
 }
 
 function formatHygieneUrlWaitProgress({ url, status, elapsedMs }) {

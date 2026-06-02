@@ -68,6 +68,13 @@ Allowed action types:
 
 Use postIds from the pipeline context.`;
 
+const HOME_COACH_INSTRUCTIONS = `Home coach (Clin command center):
+- Help the user understand their network + content + outreach in plain language.
+- You can plan LinkedIn posts (create_post, reschedule_pipeline) like studio when they ask.
+- For network tasks (import list, analyze contacts, campaign autopilot): explain the Clin path with links — extension Import & enrich, /autopilot, /campaigns — you cannot capture LinkedIn from the server.
+- Prefer short, actionable replies. Offer 1–3 concrete next steps.
+- When they ask to "run" or "launch" content planning, use create_post actions with scheduledAt when possible.`;
+
 const STUDIO_PLANNING_INSTRUCTIONS = `Planning chat (studio scope — no single active post):
 - When the user asks what to publish this week/month, or to plan the calendar: propose concrete ideas AND add them with create_post actions (title, ideaNotes with angle + key points, scheduledAt on Tue/Thu mornings per publishing_rhythm unless they specify otherwise). Use status "idea" or "drafting".
 - Do NOT return {"actions":[]} after listing ideas they asked to plan — either create_post for each slot or ask ONE clarifying question without an empty actions block.
@@ -80,9 +87,13 @@ function buildBrandCoachSystemPrompt(
   resolved: ResolvedLanguage,
   scope: CoachThreadScope,
 ): string {
-  const studioBlock =
-    scope === "studio" ? `\n\n${STUDIO_PLANNING_INSTRUCTIONS}` : "";
-  return `${SYSTEM_PROMPT_BASE}${studioBlock}
+  const scopeBlock =
+    scope === "home"
+      ? `\n\n${HOME_COACH_INSTRUCTIONS}\n\n${STUDIO_PLANNING_INSTRUCTIONS}`
+      : scope === "studio"
+        ? `\n\n${STUDIO_PLANNING_INSTRUCTIONS}`
+        : "";
+  return `${SYSTEM_PROMPT_BASE}${scopeBlock}
 
 ${buildCoachLanguageInstruction(resolved.language)}`;
 }
@@ -108,6 +119,22 @@ async function buildPipelineContext(): Promise<string> {
     return `- id=${p.id} | ${p.status} | ${sched} | ${p.format} | ${p.title}${hook ? ` | hook: ${hook}` : ""}`;
   });
   return `Pipeline:\n${lines.join("\n")}`;
+}
+
+async function buildNetworkContext(): Promise<string> {
+  const stats = await import("@/lib/queries").then((m) => m.getOverviewStats());
+  const campaigns = await import("@/lib/outreachCampaigns").then((m) =>
+    m.listOutreachCampaigns(),
+  );
+  const seg = stats.bySegment
+    .map((s) => `${s.segment}: ${s.n}`)
+    .join(", ");
+  return `Network (local CRM):
+contacts: ${stats.contacts}
+capture events: ${stats.captures}
+review queue pending: ${stats.queuePending}
+segments: ${seg || "(none)"}
+outreach campaigns: ${campaigns.length}`;
 }
 
 async function buildAnalyticsContext(): Promise<string> {
@@ -217,7 +244,7 @@ styleNotes: ${activePost.styleNotes ?? ""}`;
   const horizon = brandCtx.planningHorizonDays ?? 14;
   const region = brandCtx.marketRegion ?? "fr";
   let planningExtras = "";
-  if (scope === "studio") {
+  if (scope === "studio" || scope === "home") {
     const pack = loadMarketCalendarPack(region);
     const calendarBlock = pack
       ? formatMarketCalendarBlock(pack, new Date(), horizon)
@@ -225,6 +252,9 @@ styleNotes: ${activePost.styleNotes ?? ""}`;
     const trendBlock = await buildTrendInboxContextBlock(7, 10);
     planningExtras = `\n\n${calendarBlock}\n\n${trendBlock}\n\nPlanning horizon: ${horizon} days.`;
   }
+
+  const networkBlock =
+    scope === "home" ? `\n\n${await buildNetworkContext()}` : "";
 
   const contextBlock = `Author context:
 goals: ${userCtx.goalsText ?? "(none)"}
@@ -244,6 +274,7 @@ ${publishedLines || "(none)"}
 ${pipeline}
 
 ${analytics}
+${networkBlock}
 ${planningExtras}
 
 ${postBlock}`;
@@ -252,7 +283,8 @@ ${postBlock}`;
     threadId: input.threadId,
     scope,
     postId: input.postId ?? null,
-    title: input.postId ? "Post coach" : "Brand studio",
+    title:
+      input.postId ? "Post coach" : scope === "home" ? "Home" : "Brand studio",
   });
 
   const history = await listThreadMessages(threadId, 30);

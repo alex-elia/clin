@@ -361,6 +361,7 @@ export async function createOutreachCampaign(
   name: string,
   contextText: string,
   opts?: {
+    icpText?: string | null;
     writerInstructions?: string | null;
     systemPromptOverride?: string | null;
   },
@@ -372,6 +373,7 @@ export async function createOutreachCampaign(
     id,
     name: name.trim(),
     contextText: contextText.trim(),
+    icpText: opts?.icpText?.trim() ? opts.icpText.trim() : null,
     writerInstructions: opts?.writerInstructions?.trim()
       ? opts.writerInstructions.trim()
       : null,
@@ -389,6 +391,7 @@ export async function updateOutreachCampaign(
   patch: {
     name?: string;
     contextText?: string;
+    icpText?: string | null;
     writerInstructions?: string | null;
     systemPromptOverride?: string | null;
   },
@@ -401,6 +404,14 @@ export async function updateOutreachCampaign(
       ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
       ...(patch.contextText !== undefined
         ? { contextText: patch.contextText.trim() }
+        : {}),
+      ...(patch.icpText !== undefined
+        ? {
+            icpText:
+              patch.icpText === null || patch.icpText.trim() === ""
+                ? null
+                : patch.icpText.trim(),
+          }
         : {}),
       ...(patch.writerInstructions !== undefined
         ? {

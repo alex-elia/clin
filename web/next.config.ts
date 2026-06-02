@@ -19,6 +19,7 @@ function optionalBasePath(): string | undefined {
 
 const nextConfig: NextConfig = {
   basePath: optionalBasePath(),
+  output: process.env.CLIN_DESKTOP_STANDALONE === "1" ? "standalone" : undefined,
   // Parent folders may contain unrelated lockfiles; pin tracing to this app.
   outputFileTracingRoot: webRoot,
   serverExternalPackages: ["better-sqlite3", "bindings"],

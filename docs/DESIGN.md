@@ -192,7 +192,7 @@ Overview, Contacts, Queue, Autopilot, Insights, Capture log — see MVP iteratio
 
 1. SQLite + one Node process (default).
 2. Separate worker only if scoring/AI or heavy autopilot scheduling blocks the UI.
-3. Tauri/Electron for one-click launch.
+3. Tauri/Electron for one-click launch (see ADR-0009).
 4. Postgres + Docker when analytics/ops warrant it.
 
 ---

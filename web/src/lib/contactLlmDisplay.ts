@@ -9,6 +9,20 @@ export type OutreachFitView = {
   icp_signals?: string[];
 };
 
+export type CleaningPlanView = {
+  bucket:
+    | "enrich_first"
+    | "needs_review"
+    | "review_remove"
+    | "reach_out_dm"
+    | "engage_comment"
+    | "nurture_light"
+    | "keep_passive";
+  confidence: "low" | "medium" | "high";
+  rationale: string;
+  playbook?: string;
+};
+
 export type LlmAnalysisView = {
   tier: string | null;
   model: string | null;
@@ -16,6 +30,7 @@ export type LlmAnalysisView = {
   ruleScores: { r: number; b: number; c: number } | null;
   modelScores: { r: number; b: number; c: number } | null;
   outreachFit: OutreachFitView | null;
+  cleaningPlan: CleaningPlanView | null;
   stewardship: StewardshipView | null;
   rationale: {
     relationship?: string;
@@ -45,6 +60,40 @@ function parseStewardship(output: Record<string, unknown>): StewardshipView | nu
     typeof rat === "string"
   ) {
     return { recommendation: rec, rationale: rat };
+  }
+  return null;
+}
+
+function parseCleaningPlan(
+  output: Record<string, unknown>,
+): CleaningPlanView | null {
+  const plan = output.cleaning_plan;
+  if (!plan || typeof plan !== "object") return null;
+  const p = plan as Record<string, unknown>;
+  const bucket = p.bucket;
+  const confidence = p.confidence;
+  const rationale = p.rationale;
+  const buckets = [
+    "enrich_first",
+    "needs_review",
+    "review_remove",
+    "reach_out_dm",
+    "engage_comment",
+    "nurture_light",
+    "keep_passive",
+  ] as const;
+  if (
+    typeof bucket === "string" &&
+    (buckets as readonly string[]).includes(bucket) &&
+    (confidence === "low" || confidence === "medium" || confidence === "high") &&
+    typeof rationale === "string"
+  ) {
+    return {
+      bucket: bucket as CleaningPlanView["bucket"],
+      confidence,
+      rationale,
+      playbook: typeof p.playbook === "string" ? p.playbook : undefined,
+    };
   }
   return null;
 }
@@ -129,6 +178,7 @@ export function parseLlmAnalysisView(env: unknown): LlmAnalysisView | null {
         ? { r: modelScores.r, b: modelScores.b, c: modelScores.c }
         : null,
     outreachFit: parseOutreachFit(output),
+    cleaningPlan: parseCleaningPlan(output),
     stewardship: parseStewardship(output),
     rationale,
     suggestedActions,
@@ -188,5 +238,17 @@ export const SUGGESTED_ACTION_LABELS: Record<string, string> = {
   visit_profile: "Suggested: capture full profile on LinkedIn",
   stay_connected: "Suggested: keep in network, no pitch now",
   consider_removing: "Suggested: review whether to disconnect",
+  comment_on_post: "Suggested: engage with a comment first",
   none: "No specific action",
 };
+
+export const CLEANING_BUCKET_LABELS: Record<CleaningPlanView["bucket"], string> =
+  {
+    enrich_first: "Enrich first",
+    needs_review: "Needs review",
+    review_remove: "Review removal",
+    reach_out_dm: "Reach out (DM)",
+    engage_comment: "Engage (comment)",
+    nurture_light: "Nurture",
+    keep_passive: "Keep as-is",
+  };

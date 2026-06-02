@@ -21,9 +21,8 @@ const menus: NavMenu[] = [
     hub: { href: "/data", label: "Overview" },
     items: [
       { href: "/contacts", label: "Contacts" },
-      { href: "/captures", label: "Captures" },
       { href: "/queue", label: "Queue" },
-      { href: "/autopilot", label: "Cleaning" },
+      { href: "/cleaning", label: "Cleaning" },
     ],
   },
   {

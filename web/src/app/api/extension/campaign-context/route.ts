@@ -18,14 +18,17 @@ export const dynamic = "force-dynamic";
  * Extension polls this (no server push). Used to attach `outreachCampaignId` to captures
  * and to show the user which campaign list they are filling.
  */
-export async function GET() {
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const requestedCampaignId = url.searchParams.get("campaignId")?.trim() || null;
   const [captureTargetId, activeExtensionId] = await Promise.all([
     getCaptureTargetCampaignId(),
     getActiveOutreachCampaignId(),
   ]);
+  const effectiveCampaignId = requestedCampaignId || captureTargetId;
 
   const [captureCamp, activeCamp] = await Promise.all([
-    captureTargetId ? getOutreachCampaign(captureTargetId) : null,
+    effectiveCampaignId ? getOutreachCampaign(effectiveCampaignId) : null,
     activeExtensionId ? getOutreachCampaign(activeExtensionId) : null,
   ]);
 
@@ -41,8 +44,8 @@ export async function GET() {
     nextProfileName: string | null;
   } | null = null;
 
-  if (captureTargetId) {
-    const rawMembers = await listCampaignMembers(captureTargetId);
+  if (effectiveCampaignId) {
+    const rawMembers = await listCampaignMembers(effectiveCampaignId);
     const enriched = await enrichCampaignMembers(rawMembers);
     const counts = countProfileDepths(enriched);
     const next = pickNextProfileCaptureTarget(enriched);
@@ -57,7 +60,7 @@ export async function GET() {
   }
 
   return NextResponse.json({
-    captureTargetCampaignId: captureTargetId,
+    captureTargetCampaignId: effectiveCampaignId,
     captureTargetCampaignName: captureCamp?.name ?? null,
     captureContextPreview: captureCamp?.contextText
       ? preview(captureCamp.contextText)

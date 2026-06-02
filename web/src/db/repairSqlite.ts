@@ -85,6 +85,10 @@ export function repairClinSqliteSchema(db: Database.Database): void {
       db,
       "ALTER TABLE outreach_campaigns ADD COLUMN system_prompt_override text",
     );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaigns ADD COLUMN icp_text text",
+    );
   }
 
   if (tableExists(db, "outreach_campaign_members")) {
@@ -99,6 +103,22 @@ export function repairClinSqliteSchema(db: Database.Database): void {
     addColumnOrExists(
       db,
       "ALTER TABLE outreach_campaign_members ADD COLUMN message_outcome_note text",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaign_members ADD COLUMN icp_match text",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaign_members ADD COLUMN icp_rationale text",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaign_members ADD COLUMN icp_recommended_action text",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaign_members ADD COLUMN icp_checked_at integer",
     );
   }
 

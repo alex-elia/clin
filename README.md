@@ -52,11 +52,34 @@ Install [Ollama](https://ollama.com/), pull a model (e.g. `qwen2.5:8b`), and poi
 | `npm run dev:stop` | Stop port 3000 / orphaned Clin dev (from `web/`) |
 | `npm run dev:clean` | Clear `.next` cache then start dev (from `web/`) |
 | `npm run build` / `npm run start` | Production build / serve |
+| `npm run build:desktop` | Build standalone runtime for Electron packaging |
+| `npm run dist:desktop:win` | Build Windows portable + zip desktop artifacts |
+| `npm run dist:desktop:mac` | Build macOS zip desktop artifact |
+| `npm run dist:extension` | Build Chrome extension zip for release |
 | `npm run db:repair` | Repair / migrate local SQLite |
 | `npm run db:studio` | Drizzle Studio |
 | `npm run db:generate` | New migration from `web/src/db/schema.ts` |
 
 Equivalent from `web/`: `cd web && npm install && npm run dev`.
+
+### Desktop packaging (portable)
+
+Clin ships as a local desktop wrapper around the same local-first API/SQLite runtime.
+
+From repository root:
+
+```bash
+npm install
+npm run dist:desktop:win   # on Windows host
+# or
+npm run dist:desktop:mac   # on macOS host
+```
+
+Artifacts are written under `dist/desktop/`. The build uses:
+
+- Next standalone output (`CLIN_DESKTOP_STANDALONE=1`)
+- Electron runtime that starts the local API on `http://127.0.0.1:3000`
+- user-scoped DB path (`CLIN_DB_PATH`) under Electron app data
 
 ## Repository layout
 

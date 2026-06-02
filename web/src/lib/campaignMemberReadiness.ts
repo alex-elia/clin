@@ -1,6 +1,11 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { captureSessions, contacts, outreachCampaignMembers } from "@/db/schema";
+import { readMemberIcpFromRow } from "@/lib/campaignMemberIcp";
+import type {
+  CampaignMemberIcpMatch,
+  CampaignMemberIcpRecommendedAction,
+} from "@/lib/campaignMemberIcpShared";
 
 /** Same shape as `CampaignMemberRow` in outreachCampaigns (avoid import cycle). */
 export type CampaignMemberRowLite = {
@@ -110,6 +115,10 @@ export async function loadLatestProfileCapturesByContactId(
 export type EnrichedCampaignMember = CampaignMemberRowLite & {
   profileDepth: ProfileDepth;
   lastProfileCapturedAt: Date | null;
+  icpMatch: CampaignMemberIcpMatch | null;
+  icpRationale: string | null;
+  icpRecommendedAction: CampaignMemberIcpRecommendedAction | null;
+  icpCheckedAt: Date | null;
 };
 
 /** Still in the outreach pipeline (not marked sent/skipped after manual LinkedIn send). */
@@ -132,10 +141,12 @@ export async function enrichCampaignMembers(
     // A profile-type capture row means the page was captured; empty JSON / DOM drift
     // should still count as at least "thin" (not "missing").
     if (cap && depth === "missing") depth = "thin";
+    const icp = readMemberIcpFromRow(row.member);
     return {
       ...row,
       profileDepth: depth,
       lastProfileCapturedAt: cap?.capturedAt ?? null,
+      ...icp,
     };
   });
 }
@@ -148,7 +159,12 @@ export type MemberReadinessFilter =
   | "need_draft"
   | "has_draft"
   | "extension_ready"
-  | "done";
+  | "done"
+  | "icp_strong"
+  | "icp_partial"
+  | "icp_weak"
+  | "icp_unknown"
+  | "icp_unchecked";
 
 export function parseMemberReadinessFilter(
   raw: string | undefined,
@@ -162,6 +178,11 @@ export function parseMemberReadinessFilter(
     "has_draft",
     "extension_ready",
     "done",
+    "icp_strong",
+    "icp_partial",
+    "icp_weak",
+    "icp_unknown",
+    "icp_unchecked",
   ];
   if (raw && allowed.includes(raw as MemberReadinessFilter)) {
     return raw as MemberReadinessFilter;
@@ -194,6 +215,16 @@ export function enrichedMemberMatchesFilter(
       return open && st === "ready";
     case "done":
       return st === "sent" || st === "skipped";
+    case "icp_strong":
+      return row.icpMatch === "strong";
+    case "icp_partial":
+      return row.icpMatch === "partial";
+    case "icp_weak":
+      return row.icpMatch === "weak";
+    case "icp_unknown":
+      return row.icpMatch === "unknown";
+    case "icp_unchecked":
+      return !row.icpCheckedAt;
     default:
       return true;
   }
@@ -272,5 +303,10 @@ export function readinessFilterCounts(
       (m) =>
         m.member.status === "sent" || m.member.status === "skipped",
     ).length,
+    icp_strong: rows.filter((m) => m.icpMatch === "strong").length,
+    icp_partial: rows.filter((m) => m.icpMatch === "partial").length,
+    icp_weak: rows.filter((m) => m.icpMatch === "weak").length,
+    icp_unknown: rows.filter((m) => m.icpMatch === "unknown").length,
+    icp_unchecked: rows.filter((m) => !m.icpCheckedAt).length,
   };
 }
