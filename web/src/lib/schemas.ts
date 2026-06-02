@@ -154,6 +154,13 @@ export const contactAnalyzeBodySchema = z
   })
   .strict();
 
+export const inboxAnalyzeBodySchema = z
+  .object({
+    contactId: z.string().min(1),
+    threadKey: z.string().min(1).optional(),
+  })
+  .strict();
+
 export const profileCaptureQueueBodySchema = z.object({
   contactIds: z.array(z.string().min(1)).min(1).max(40),
 });

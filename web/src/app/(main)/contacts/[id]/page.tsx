@@ -90,6 +90,7 @@ export default async function ContactDetailPage({
             ? {
                 messageCount: messagingCapture.messageCount,
                 capturedAt: messagingCapture.capturedAt.toISOString(),
+                needsReply: messagingCapture.replyState.needsReply,
               }
             : null
         }

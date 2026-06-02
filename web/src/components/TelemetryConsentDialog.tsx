@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { setTelemetryConsent } from "@/app/actions";
 
 export function TelemetryConsentDialog() {
   const [show, setShow] = useState(false);
@@ -22,7 +21,15 @@ export function TelemetryConsentDialog() {
   const handleDecision = async (consent: boolean) => {
     setDeciding(true);
     try {
-      await setTelemetryConsent(consent);
+      const res = await fetch("/api/telemetry/consent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ consent }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || `HTTP ${res.status}`);
+      }
       setShow(false);
     } catch (e) {
       console.error("Failed to save consent:", e);

@@ -429,6 +429,47 @@
     }
 
     .footer-sep { margin-inline: 0.5rem; opacity: 0.4; }
+
+    .install-notice {
+      margin-bottom: 2rem;
+      padding: 1rem 1.25rem;
+      font-size: 0.9375rem;
+      color: var(--text-muted);
+      background: var(--bg-raised);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius);
+      border-left: 3px solid var(--accent);
+      max-width: 40rem;
+    }
+
+    .install-steps {
+      margin: 0 0 1.5rem;
+      padding-left: 1.35rem;
+      max-width: 40rem;
+      color: var(--text-muted);
+      font-size: 0.9375rem;
+    }
+
+    .install-steps li + li { margin-top: 0.75rem; }
+    .install-steps li::marker { color: var(--accent); font-weight: 600; }
+
+    .install-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem 1rem;
+      align-items: center;
+    }
+
+    .btn-secondary {
+      background: var(--bg-raised);
+      color: var(--text);
+      border-color: var(--border-strong);
+    }
+
+    .btn-secondary:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
   </style>
 </head>
 <body>
@@ -450,9 +491,10 @@
         </button>
         <nav class="site-nav" id="site-nav" data-i18n-aria="nav.main">
           <ul>
+            <li><a href="#installer" data-i18n="nav.install">Installer</a></li>
             <li><a href="#fonctionnalites" data-i18n="nav.features">Fonctionnalités</a></li>
             <li><a href="#pour-qui" data-i18n="nav.audience">Pour qui ?</a></li>
-            <li><a href="#beta" data-i18n="nav.beta">Rejoindre la bêta</a></li>
+            <li><a href="#beta" data-i18n="nav.beta">Retours bêta</a></li>
             <li><a href="https://github.com/alex-elia/clin" target="_blank" rel="noopener noreferrer">GitHub</a></li>
           </ul>
         </nav>
@@ -463,12 +505,32 @@
   <main>
     <section class="hero">
       <div class="wrap">
-        <span class="hero-badge" data-i18n="hero.badge">Open source · Local-first</span>
+        <span class="hero-badge" data-i18n="hero.badge">Bêta · Open source · Local-first</span>
         <h1 data-i18n="hero.title">Ton assistant LinkedIn local, piloté par l'IA — que tu contrôles.</h1>
         <p class="hero-lead" data-i18n="hero.lead">Clin capture tes contacts LinkedIn, nettoie ta base, prépare tes messages et génère tes posts. Il tourne sur ta machine. Tes données restent chez toi.</p>
         <div class="hero-actions">
-          <a class="btn btn-primary" id="cta-hero" href="#" data-i18n="cta.test">👋 Je veux tester Clin</a>
-          <a class="link-arrow" href="https://github.com/alex-elia/clin" target="_blank" rel="noopener noreferrer" data-i18n="cta.github">Voir le code sur GitHub →</a>
+          <a class="btn btn-primary" id="cta-hero" href="https://github.com/alex-elia/clin/releases/latest" target="_blank" rel="noopener noreferrer" data-i18n="cta.download">⬇ Télécharger la bêta (Windows / Mac)</a>
+          <a class="link-arrow" id="cta-hero-feedback" href="#beta" data-i18n="cta.feedback">Signaler un bug ou un retour →</a>
+        </div>
+      </div>
+    </section>
+
+    <section id="installer">
+      <div class="wrap">
+        <span class="section-label" data-i18n="install.label">Installation</span>
+        <h2 data-i18n="install.title">Essayer Clin — installateurs desktop (bêta)</h2>
+        <p class="install-notice" data-i18n="install.notice">Les installateurs Windows et macOS sont <strong>récents et peu testés</strong>. Je cherche des personnes curieuses et patientes pour essayer, rapporter les bugs et partager des retours — pas un produit fini prêt pour tout le monde.</p>
+        <ol class="install-steps">
+          <li data-i18n="install.step0">Sur <a href="https://github.com/alex-elia/clin/releases/latest" target="_blank" rel="noopener noreferrer">GitHub Releases</a>, télécharge l’app desktop pour ton OS et le zip de l’extension Chrome.</li>
+          <li data-i18n="install.step1">Lance Clin (Windows&nbsp;: fichier portable — macOS&nbsp;: dézippe, puis clic droit → <em>Ouvrir</em> la première fois si macOS bloque l’app non signée).</li>
+          <li data-i18n="install.step2">Chrome → Extensions → Mode développeur → <em>Charger l’extension non empaquetée</em> → dossier extrait du zip extension.</li>
+          <li data-i18n="install.step3">Dans Clin, configure une clé API IA ou Ollama local si tu veux les brouillons assistés par IA.</li>
+          <li data-i18n="install.step4">Teste sur LinkedIn, puis <a href="https://github.com/alex-elia/clin/issues/new" target="_blank" rel="noopener noreferrer">ouvre une issue</a> ou écris-moi sur WhatsApp avec ce qui coince.</li>
+        </ol>
+        <div class="install-actions">
+          <a class="btn btn-primary" id="cta-install" href="https://github.com/alex-elia/clin/releases/latest" target="_blank" rel="noopener noreferrer" data-i18n="cta.download">⬇ Télécharger la bêta</a>
+          <a class="btn btn-secondary" id="cta-issues" href="https://github.com/alex-elia/clin/issues/new" target="_blank" rel="noopener noreferrer" data-i18n="cta.issues">Signaler un bug</a>
+          <a class="link-arrow" href="https://github.com/alex-elia/clin" target="_blank" rel="noopener noreferrer" data-i18n="cta.dev">Installer depuis les sources (développeurs) →</a>
         </div>
       </div>
     </section>
@@ -513,15 +575,16 @@
             <ul>
               <li data-i18n="audience.yes.0">Tu as une base LinkedIn de plusieurs centaines ou milliers de contacts</li>
               <li data-i18n="audience.yes.1">Tu veux reprendre la main sur ta gestion réseau sans payer un SaaS mensuel</li>
-              <li data-i18n="audience.yes.2">Tu es à l'aise avec un terminal et Node.js (ou tu as quelqu'un pour t'aider à installer)</li>
-              <li data-i18n="audience.yes.3">Tu as accès à une API d'IA (OpenAI, Mistral, Ollama local…)</li>
+              <li data-i18n="audience.yes.2">Tu es prêt·e à tester une bêta desktop (bugs possibles) et à partager des retours</li>
+              <li data-i18n="audience.yes.3">Tu as accès à une API d'IA (OpenAI, Mistral, Ollama local…) ou tu peux t'en passer au début</li>
             </ul>
           </article>
           <article class="card audience-card">
             <h3><span aria-hidden="true">❌</span> <span data-i18n="audience.no.title">Clin n'est pas encore pour toi si&nbsp;:</span></h3>
             <ul>
-              <li data-i18n="audience.no.0">Tu veux un outil clé en main sans installation</li>
-              <li data-i18n="audience.no.1">Tu n'as pas de clé API IA</li>
+              <li data-i18n="audience.no.0">Tu attends un produit clé en main, stable et supporté comme un SaaS commercial</li>
+              <li data-i18n="audience.no.1">Tu ne veux rien installer (ni app desktop, ni extension Chrome)</li>
+              <li data-i18n="audience.no.2">Tu ne veux pas signaler de bugs ni participer à une bêta</li>
             </ul>
           </article>
         </div>
@@ -538,12 +601,13 @@
 
     <section id="beta" class="beta-section">
       <div class="wrap">
-        <span class="section-label" data-i18n="beta.label">Bêta</span>
-        <h2 data-i18n="beta.title">Rejoindre la bêta</h2>
-        <p class="prose-block" data-i18n="beta.body">Je cherche quelques dirigeants qui veulent tester Clin et me faire des retours. Si tu es curieux·se, envoie-moi un message WhatsApp.</p>
+        <span class="section-label" data-i18n="beta.label">Retours</span>
+        <h2 data-i18n="beta.title">Ta voix compte pour la bêta</h2>
+        <p class="prose-block" data-i18n="beta.body">Les installateurs viennent tout juste d’arriver — je compte sur les premiers testeurs pour trouver les problèmes d’installation, de lancement et d’usage. Un issue GitHub détaillé vaut de l’or&nbsp;; WhatsApp convient aussi pour un retour rapide.</p>
         <div class="beta-actions">
-          <a class="btn btn-primary" id="cta-beta" href="#" data-i18n="cta.test">👋 Je veux tester Clin</a>
-          <a class="link-arrow" href="https://github.com/alex-elia/clin" target="_blank" rel="noopener noreferrer" data-i18n="cta.github">Voir le code sur GitHub →</a>
+          <a class="btn btn-primary" id="cta-issues-beta" href="https://github.com/alex-elia/clin/issues/new" target="_blank" rel="noopener noreferrer" data-i18n="cta.issues">Signaler un bug ou une idée</a>
+          <a class="btn btn-secondary" id="cta-beta" href="#" data-i18n="cta.whatsapp">Message WhatsApp</a>
+          <a class="link-arrow" href="https://github.com/alex-elia/clin/releases/latest" target="_blank" rel="noopener noreferrer" data-i18n="cta.download">Télécharger la dernière version →</a>
         </div>
       </div>
     </section>
@@ -566,24 +630,37 @@
     (function () {
       var WHATSAPP_NUMBER = "33757917064";
       var STORAGE_KEY = "clin-lang";
+      var RELEASES_URL = "https://github.com/alex-elia/clin/releases/latest";
+      var ISSUES_URL = "https://github.com/alex-elia/clin/issues/new";
 
       var I18N = {
         fr: {
           meta: {
             title: "Clin — Assistant LinkedIn local",
-            description: "Clin — ton assistant LinkedIn local, piloté par l'IA. Capture, nettoie et prépare tes messages. Tes données restent chez toi."
+            description: "Clin — assistant LinkedIn local en bêta. Télécharge l'app desktop, teste et partage tes retours. Tes données restent chez toi."
           },
           nav: {
             menu: "Menu",
             main: "Navigation principale",
+            install: "Installer",
             features: "Fonctionnalités",
             audience: "Pour qui ?",
-            beta: "Rejoindre la bêta"
+            beta: "Retours bêta"
           },
           hero: {
-            badge: "Open source · Local-first",
+            badge: "Bêta · Open source · Local-first",
             title: "Ton assistant LinkedIn local, piloté par l'IA — que tu contrôles.",
             lead: "Clin capture tes contacts LinkedIn, nettoie ta base, prépare tes messages et génère tes posts. Il tourne sur ta machine. Tes données restent chez toi."
+          },
+          install: {
+            label: "Installation",
+            title: "Essayer Clin — installateurs desktop (bêta)",
+            notice: "Les installateurs Windows et macOS sont <strong>récents et peu testés</strong>. Je cherche des personnes curieuses et patientes pour essayer, rapporter les bugs et partager des retours — pas un produit fini prêt pour tout le monde.",
+            step0: "Sur <a href=\"https://github.com/alex-elia/clin/releases/latest\" target=\"_blank\" rel=\"noopener noreferrer\">GitHub Releases</a>, télécharge l’app desktop pour ton OS et le zip de l’extension Chrome.",
+            step1: "Lance Clin (Windows&nbsp;: fichier portable — macOS&nbsp;: dézippe, puis clic droit → <em>Ouvrir</em> la première fois si macOS bloque l’app non signée).",
+            step2: "Chrome → Extensions → Mode développeur → <em>Charger l’extension non empaquetée</em> → dossier extrait du zip extension.",
+            step3: "Dans Clin, configure une clé API IA ou Ollama local si tu veux les brouillons assistés par IA.",
+            step4: "Teste sur LinkedIn, puis <a href=\"https://github.com/alex-elia/clin/issues/new\" target=\"_blank\" rel=\"noopener noreferrer\">ouvre une issue</a> ou écris-moi sur WhatsApp avec ce qui coince."
           },
           features: {
             label: "Fonctionnalités",
@@ -613,13 +690,14 @@
               title: "Clin est fait pour toi si\u00a0:",
               0: "Tu as une base LinkedIn de plusieurs centaines ou milliers de contacts",
               1: "Tu veux reprendre la main sur ta gestion réseau sans payer un SaaS mensuel",
-              2: "Tu es à l'aise avec un terminal et Node.js (ou tu as quelqu'un pour t'aider à installer)",
-              3: "Tu as accès à une API d'IA (OpenAI, Mistral, Ollama local…)"
+              2: "Tu es prêt·e à tester une bêta desktop (bugs possibles) et à partager des retours",
+              3: "Tu as accès à une API d'IA (OpenAI, Mistral, Ollama local…) ou tu peux t'en passer au début"
             },
             no: {
               title: "Clin n'est pas encore pour toi si\u00a0:",
-              0: "Tu veux un outil clé en main sans installation",
-              1: "Tu n'as pas de clé API IA"
+              0: "Tu attends un produit clé en main, stable et supporté comme un SaaS commercial",
+              1: "Tu ne veux rien installer (ni app desktop, ni extension Chrome)",
+              2: "Tu ne veux pas signaler de bugs ni participer à une bêta"
             }
           },
           opensource: {
@@ -628,38 +706,52 @@
             body: "Clin est publié en open source sous licence MIT. Tu peux lire le code, le forker, l'adapter. C'est un terrain d'expérimentation partagé, pas un produit à vendre."
           },
           beta: {
-            label: "Bêta",
-            title: "Rejoindre la bêta",
-            body: "Je cherche quelques dirigeants qui veulent tester Clin et me faire des retours. Si tu es curieux·se, envoie-moi un message WhatsApp."
+            label: "Retours",
+            title: "Ta voix compte pour la bêta",
+            body: "Les installateurs viennent tout juste d’arriver — je compte sur les premiers testeurs pour trouver les problèmes d’installation, de lancement et d’usage. Un issue GitHub détaillé vaut de l’or\u00a0; WhatsApp convient aussi pour un retour rapide."
           },
           cta: {
-            test: "👋 Je veux tester Clin",
-            github: "Voir le code sur GitHub →"
+            download: "⬇ Télécharger la bêta (Windows / Mac)",
+            feedback: "Signaler un bug ou un retour →",
+            issues: "Signaler un bug ou une idée",
+            whatsapp: "Message WhatsApp",
+            dev: "Installer depuis les sources (développeurs) →"
           },
           footer: {
             built: "Construit par",
             mit: "Open source MIT",
             linkedin: "Pas affilié à LinkedIn"
           },
-          whatsapp: "Clin - je veux tester",
+          whatsapp: "Clin bêta — retour d'expérience",
           langGroup: "Langue"
         },
         en: {
           meta: {
             title: "Clin — Local LinkedIn assistant",
-            description: "Clin — your local AI-powered LinkedIn assistant. Capture, clean, and draft your outreach. Your data stays on your machine."
+            description: "Clin — local LinkedIn assistant in beta. Download the desktop app, try it, and share feedback. Your data stays on your machine."
           },
           nav: {
             menu: "Menu",
             main: "Main navigation",
+            install: "Install",
             features: "Features",
             audience: "Who is it for?",
-            beta: "Join the beta"
+            beta: "Beta feedback"
           },
           hero: {
-            badge: "Open source · Local-first",
+            badge: "Beta · Open source · Local-first",
             title: "Your local LinkedIn assistant, AI-powered — under your control.",
             lead: "Clin captures your LinkedIn contacts, cleans your database, drafts your messages, and generates your posts. It runs on your machine. Your data stays with you."
+          },
+          install: {
+            label: "Install",
+            title: "Try Clin — desktop installers (beta)",
+            notice: "Windows and macOS installers are <strong>new and lightly tested</strong>. I'm looking for curious, patient early testers who report bugs and share feedback — not a polished product for everyone yet.",
+            step0: "On <a href=\"https://github.com/alex-elia/clin/releases/latest\" target=\"_blank\" rel=\"noopener noreferrer\">GitHub Releases</a>, download the desktop app for your OS and the Chrome extension zip.",
+            step1: "Launch Clin (Windows: portable .exe — macOS: unzip, then right-click → <em>Open</em> the first time if Gatekeeper blocks the unsigned app).",
+            step2: "Chrome → Extensions → Developer mode → <em>Load unpacked</em> → folder extracted from the extension zip.",
+            step3: "In Clin, set up an AI API key or local Ollama if you want AI-assisted drafts.",
+            step4: "Try it on LinkedIn, then <a href=\"https://github.com/alex-elia/clin/issues/new\" target=\"_blank\" rel=\"noopener noreferrer\">open an issue</a> or message me on WhatsApp with what broke."
           },
           features: {
             label: "Features",
@@ -689,13 +781,14 @@
               title: "Clin is for you if:",
               0: "You have a LinkedIn network of several hundred or thousand contacts",
               1: "You want to own your network management without a monthly SaaS bill",
-              2: "You're comfortable with a terminal and Node.js (or have someone to help you install)",
-              3: "You have access to an AI API (OpenAI, Mistral, local Ollama…)"
+              2: "You're willing to try an early desktop beta (bugs expected) and share feedback",
+              3: "You have an AI API (OpenAI, Mistral, local Ollama…) or can skip AI drafts at first"
             },
             no: {
               title: "Clin is not for you yet if:",
-              0: "You want a turnkey tool with no installation",
-              1: "You don't have an AI API key"
+              0: "You expect a stable, supported turnkey product like commercial SaaS",
+              1: "You don't want to install anything (desktop app or Chrome extension)",
+              2: "You don't want to report bugs or participate in a beta"
             }
           },
           opensource: {
@@ -704,20 +797,23 @@
             body: "Clin is published under the MIT license. Read the code, fork it, adapt it. It's a shared experiment — not a product for sale."
           },
           beta: {
-            label: "Beta",
-            title: "Join the beta",
-            body: "I'm looking for a few leaders willing to test Clin and share feedback. If you're curious, send me a WhatsApp message."
+            label: "Feedback",
+            title: "Your feedback shapes the beta",
+            body: "Installers just shipped — I'm relying on early testers to surface install, launch, and usage issues. A detailed GitHub issue is gold; WhatsApp works for quick notes too."
           },
           cta: {
-            test: "👋 I want to try Clin",
-            github: "View the code on GitHub →"
+            download: "⬇ Download beta (Windows / Mac)",
+            feedback: "Report a bug or share feedback →",
+            issues: "Report a bug or idea",
+            whatsapp: "WhatsApp message",
+            dev: "Install from source (developers) →"
           },
           footer: {
             built: "Built by",
             mit: "Open source MIT",
             linkedin: "Not affiliated with LinkedIn"
           },
-          whatsapp: "Clin - I want to try the beta",
+          whatsapp: "Clin beta — feedback",
           langGroup: "Language"
         }
       };
@@ -767,8 +863,18 @@
         });
 
         var whatsappUrl = buildWhatsAppUrl(lang);
-        document.getElementById("cta-hero").href = whatsappUrl;
-        document.getElementById("cta-beta").href = whatsappUrl;
+        var ctaBeta = document.getElementById("cta-beta");
+        if (ctaBeta) ctaBeta.href = whatsappUrl;
+
+        ["cta-hero", "cta-install"].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el) el.href = RELEASES_URL;
+        });
+
+        ["cta-issues", "cta-issues-beta"].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el) el.href = ISSUES_URL;
+        });
 
         try { localStorage.setItem(STORAGE_KEY, lang); } catch (e) {}
       }

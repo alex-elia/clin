@@ -48,7 +48,6 @@ import {
   upsertInboxThreadState,
   type InboxThreadStatus,
 } from "@/lib/inbox";
-import { setTelemetryConsent as saveTelemetryConsent } from "@/lib/telemetrySettings";
 
 export async function recomputeAllScores() {
   const db = getDb();
@@ -641,11 +640,6 @@ export async function updateInboxThreadAction(formData: FormData) {
     note: note || null,
   });
   revalidatePath("/inbox");
-}
-
-export async function setTelemetryConsent(consented: boolean): Promise<void> {
-  await saveTelemetryConsent(consented);
-  revalidatePath("/");
 }
 
 const CONTACT_SEGMENT_OVERRIDES = new Set([

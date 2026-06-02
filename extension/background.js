@@ -509,13 +509,17 @@ async function captureMessagingBundleInPage() {
     const included = Array.isArray(json?.included) ? json.included : [];
     const messages = [];
     const seen = new Set();
-    function pushMsg(from, body) {
+    function pushMsg(from, body, createdAt) {
       const b = String(body || "").replace(/\s+/g, " ").trim();
       if (!b || b.length < 2) return;
       const key = `${from}:${b.slice(0, 100)}`;
       if (seen.has(key)) return;
       seen.add(key);
-      messages.push({ from, body: b.slice(0, 20_000) });
+      messages.push({
+        from,
+        body: b.slice(0, 20_000),
+        createdAt: typeof createdAt === "number" ? createdAt : 0,
+      });
     }
     for (const item of included) {
       const type = item?.$type || "";
@@ -531,9 +535,16 @@ async function captureMessagingBundleInPage() {
       let from = "unknown";
       if (item?.fromSelf === true) from = "me";
       else if (item?.fromSelf === false) from = "them";
-      pushMsg(from, body);
+      const createdAt =
+        item?.createdAt ??
+        item?.deliveredAt ??
+        item?.originToken ??
+        0;
+      pushMsg(from, body, createdAt);
     }
     if (!messages.length) return null;
+    messages.sort((a, b) => a.createdAt - b.createdAt);
+    const normalized = messages.map(({ from, body }) => ({ from, body }));
     let messagingParticipantProfileUrl;
     let messagingParticipantName;
     for (const item of included) {
@@ -543,13 +554,27 @@ async function captureMessagingBundleInPage() {
         break;
       }
     }
+    const oldestCreatedAt = messages[0]?.createdAt || 0;
     return {
       messagingThreadId: threadId,
       messagingParticipantProfileUrl,
       messagingParticipantName,
-      messagingMessages: messages,
+      messagingMessages: normalized,
       captureMethod: "voyager",
+      oldestCreatedAt,
     };
+  }
+
+  async function fetchVoyagerThreadPage(beforeCreatedAt) {
+    const base = `https://www.linkedin.com/voyager/api/messaging/conversations/${encodeURIComponent(threadId)}/events?count=80`;
+    const url =
+      beforeCreatedAt && beforeCreatedAt > 0
+        ? `${base}&createdBefore=${beforeCreatedAt}`
+        : base;
+    const resp = await fetch(url, { headers, credentials: "include" });
+    if (!resp.ok) return null;
+    const json = await resp.json();
+    return parseVoyagerMessages(json, threadId);
   }
 
   const deadline = Date.now() + 6000;
@@ -579,22 +604,50 @@ async function captureMessagingBundleInPage() {
   let voyager = null;
   const headers = voyagerHeaders();
   if (threadId && headers["csrf-token"]) {
-    const urls = [
-      `https://www.linkedin.com/voyager/api/messaging/conversations/${encodeURIComponent(threadId)}/events?count=80`,
-      `https://www.linkedin.com/voyager/api/voyagerMessagingDashMessengerMessages?action=execute&q=findConversation&conversationId=${encodeURIComponent(threadId)}`,
-    ];
-    for (const url of urls) {
-      try {
-        const resp = await fetch(url, { headers, credentials: "include" });
-        if (!resp.ok) continue;
-        const json = await resp.json();
-        const parsed = parseVoyagerMessages(json, threadId);
-        if (parsed?.messagingMessages?.length) {
-          voyager = parsed;
-          break;
+    let mergedPage = null;
+    let before = 0;
+    for (let page = 0; page < 4; page++) {
+      const parsed = await fetchVoyagerThreadPage(before);
+      if (!parsed?.messagingMessages?.length) break;
+      if (!mergedPage) {
+        mergedPage = parsed;
+      } else {
+        const seen = new Set(
+          mergedPage.messagingMessages.map(
+            (m) => `${m.from}:${m.body.slice(0, 100)}`,
+          ),
+        );
+        for (const m of parsed.messagingMessages) {
+          const key = `${m.from}:${m.body.slice(0, 100)}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          mergedPage.messagingMessages.push(m);
         }
-      } catch {
-        /* next */
+      }
+      const nextBefore = parsed.oldestCreatedAt;
+      if (!nextBefore || nextBefore === before) break;
+      before = nextBefore;
+      if (mergedPage.messagingMessages.length >= 240) break;
+    }
+    if (mergedPage?.messagingMessages?.length) {
+      voyager = mergedPage;
+    } else {
+      const urls = [
+        `https://www.linkedin.com/voyager/api/voyagerMessagingDashMessengerMessages?action=execute&q=findConversation&conversationId=${encodeURIComponent(threadId)}`,
+      ];
+      for (const url of urls) {
+        try {
+          const resp = await fetch(url, { headers, credentials: "include" });
+          if (!resp.ok) continue;
+          const json = await resp.json();
+          const parsed = parseVoyagerMessages(json, threadId);
+          if (parsed?.messagingMessages?.length) {
+            voyager = parsed;
+            break;
+          }
+        } catch {
+          /* next */
+        }
       }
     }
   }
@@ -607,20 +660,20 @@ async function captureMessagingBundleInPage() {
  * Page world — scroll thread to load older messages before scrape.
  */
 async function prepMessagingThreadForScrape(maxMs) {
-  const deadline = Date.now() + (maxMs || 6000);
+  const deadline = Date.now() + (maxMs || 8000);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const list =
     document.querySelector("ul.msg-s-message-list") ||
     document.querySelector(".msg-s-message-list");
   if (!list) return { prepped: false };
-  for (let i = 0; i < 6 && Date.now() < deadline; i++) {
+  for (let i = 0; i < 10 && Date.now() < deadline; i++) {
     list.scrollTop = list.scrollHeight;
-    await sleep(450);
+    await sleep(500);
     list.scrollTop = 0;
-    await sleep(350);
+    await sleep(400);
   }
   list.scrollTop = list.scrollHeight;
-  await sleep(300);
+  await sleep(350);
   return { prepped: true };
 }
 
@@ -1382,6 +1435,413 @@ function scrapeLinkedInAnalyticsStructured() {
   return { domOverview, domTopPosts };
 }
 
+/**
+ * Page world — messaging inbox list snapshot (DOM tiles + optional Voyager).
+ */
+async function scrapeMessagingInboxSnapshotInPage() {
+  const kind = "linkedin_messages_inbox_visible";
+  const sourceUrl = window.location.href;
+  const capturedAt = new Date().toISOString();
+
+  function clean(s) {
+    if (!s) return "";
+    return String(s).replace(/\s+/g, " ").trim();
+  }
+
+  function profileUrlFromTile(el) {
+    const links = el.querySelectorAll('a[href*="/in/"]');
+    for (const a of links) {
+      const raw = a.getAttribute("href");
+      if (!raw || raw.includes("/edit/")) continue;
+      try {
+        const abs = new URL(raw, "https://www.linkedin.com");
+        const m = abs.pathname.match(/^\/in\/([^/?#]+)\/?/i);
+        if (m?.[1] && m[1].toLowerCase() !== "me") {
+          return `https://www.linkedin.com/in/${m[1]}/`;
+        }
+      } catch {
+        continue;
+      }
+    }
+    return undefined;
+  }
+
+  function findMessagingListRoot() {
+    const selectors = [
+      "ul.msg-conversations-container__conversations-list",
+      ".msg-conversations-container",
+      "[class*='msg-conversations-container']",
+      "[data-test-messaging-conversations-list]",
+      "[class*='msg-thread-list']",
+      "[class*='messaging-inbox']",
+      "aside [class*='msg-conversations']",
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el) return el;
+    }
+    if (/\/messaging/i.test(sourceUrl)) {
+      const main = document.querySelector("main");
+      const nested =
+        main?.querySelector("ul.msg-conversations-container__conversations-list") ||
+        main?.querySelector("[class*='conversation-list']") ||
+        main?.querySelector("[class*='msg-conversation']");
+      if (nested) return nested;
+    }
+    return null;
+  }
+
+  function parseConversationTileElement(el) {
+    function pickText(selectors) {
+      for (const sel of selectors) {
+        const node = el.querySelector(sel);
+        const t = clean(node?.textContent || "");
+        if (t) return t;
+      }
+      return undefined;
+    }
+
+    function nameFromCheckboxLabel(root) {
+      const label = root.querySelector(
+        "label.msg-selectable-entity__checkbox-label[aria-label]",
+      );
+      const aria = label?.getAttribute("aria-label") || "";
+      const fr = aria.match(
+        /S[ée]lectionner la conversation avec\s+([A-ZÀ-ÖØ-Þ][^.!?]+?)(?:\s*$|[.!?,])/i,
+      );
+      if (fr?.[1]) return clean(fr[1]);
+      const en = aria.match(
+        /Select conversation with\s+([A-ZÀ-ÖØ-Þ][^.!?]+?)(?:\s*$|[.!?,])/i,
+      );
+      if (en?.[1]) return clean(en[1]);
+      return undefined;
+    }
+
+    function isTimeLine(s) {
+      return /^\d{1,2}:\d{2}$/.test(String(s || "").trim());
+    }
+
+    function normalizeSnippet(text, participantName) {
+      if (!text) return undefined;
+      const t = clean(text);
+      const vous = t.match(/^(Vous|You)\s*:\s*(.+)$/i);
+      if (vous?.[2]) return { preview: vous[2].trim(), fromMe: true };
+      const named = t.match(/^([A-ZÀ-ÖØ-Þ][\wÀ-ÿ'.-]+)\s*:\s*(.+)$/);
+      if (named?.[2]) {
+        const tag = named[1].trim();
+        const body = named[2].trim();
+        const full = participantName || "";
+        const fromThem =
+          full &&
+          (full.toLowerCase().startsWith(tag.toLowerCase()) ||
+            tag.toLowerCase() === full.split(/\s+/)[0]?.toLowerCase());
+        return { preview: body, fromMe: !fromThem && /^(vous|you)$/i.test(tag) };
+      }
+      return { preview: t, fromMe: /^(Vous|You)\s*:/i.test(t) };
+    }
+
+    const card =
+      el.classList?.contains("msg-conversation-card")
+        ? el
+        : el.querySelector(".msg-conversation-card") || el;
+
+    const participantName =
+      pickText([
+        ".msg-conversation-listitem__participant-names span",
+        ".msg-conversation-listitem__participant-names",
+        ".msg-conversation-card__participant-names span",
+        ".msg-conversation-card__participant-names",
+        "h3",
+      ]) ||
+      nameFromCheckboxLabel(card) ||
+      clean(card.querySelector(".presence-entity__image[alt]")?.getAttribute("alt"));
+
+    const snippetRaw =
+      pickText([
+        "p.msg-conversation-card__message-snippet",
+        ".msg-conversation-card__message-snippet",
+      ]) || undefined;
+
+    const timeLabel =
+      pickText([
+        "time.msg-conversation-listitem__time-stamp",
+        "time.msg-conversation-card__time-stamp",
+        "time",
+      ]) || undefined;
+
+    const snippetNorm = normalizeSnippet(snippetRaw, participantName);
+    let preview = snippetNorm?.preview;
+    let fromMe = snippetNorm?.fromMe ?? false;
+
+    const rawText = clean(card.innerText || el.innerText);
+    const unread =
+      /\bunread\b/i.test(rawText) ||
+      card.classList?.contains("msg-conversation-card--unread");
+
+    if (!preview && rawText) {
+      const lines = rawText.split(/\n/).map(clean).filter(Boolean);
+      for (const line of lines) {
+        if (line === participantName || isTimeLine(line)) continue;
+        if (/^(Appuyez|Press|Le statut|Status|S[ée]lectionner|Ouvrir la liste)/i.test(line)) {
+          continue;
+        }
+        const norm = normalizeSnippet(line, participantName);
+        if (norm?.preview && norm.preview.length >= 4) {
+          preview = norm.preview;
+          fromMe = norm.fromMe;
+          break;
+        }
+      }
+    }
+
+    if (!preview && snippetRaw) {
+      const norm = normalizeSnippet(snippetRaw, participantName);
+      preview = norm?.preview;
+      fromMe = norm?.fromMe ?? fromMe;
+    }
+
+    const profileUrl = profileUrlFromTile(card);
+    return {
+      participantName,
+      preview: preview?.slice(0, 800),
+      timeLabel,
+      profileUrl,
+      fromMe,
+      unread,
+      previewText: rawText.slice(0, 1200),
+    };
+  }
+
+  function collectTiles(searchRoot) {
+    const tiles = [];
+    const seen = new Set();
+
+    function addTile(parsed) {
+      const hasContent =
+        parsed.participantName ||
+        parsed.preview ||
+        (parsed.previewText && parsed.previewText.length >= 12);
+      if (!hasContent) return;
+      const key = `${parsed.participantName || "?"}:${(parsed.preview || parsed.previewText || "").slice(0, 80)}:${parsed.timeLabel || ""}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      tiles.push(parsed);
+    }
+
+    function collectFromScope(scope) {
+      if (!scope?.querySelectorAll) return 0;
+      let added = 0;
+
+      const ul =
+        scope.matches?.("ul.msg-conversations-container__conversations-list")
+          ? scope
+          : scope.querySelector("ul.msg-conversations-container__conversations-list");
+      const listRoot = ul || scope;
+
+      listRoot.querySelectorAll("li.msg-conversation-listitem").forEach((el) => {
+        if (tiles.length >= 160) return;
+        const before = tiles.length;
+        addTile(parseConversationTileElement(el));
+        if (tiles.length > before) added += 1;
+      });
+      if (added > 0) return added;
+
+      scope.querySelectorAll(".msg-conversation-card").forEach((el) => {
+        if (tiles.length >= 160) return;
+        const before = tiles.length;
+        addTile(parseConversationTileElement(el));
+        if (tiles.length > before) added += 1;
+      });
+      return added;
+    }
+
+    const scopes = [];
+    const globalUl = document.querySelector(
+      "ul.msg-conversations-container__conversations-list",
+    );
+    if (globalUl) scopes.push(globalUl);
+    if (searchRoot && searchRoot !== globalUl) scopes.push(searchRoot);
+    scopes.push(document);
+
+    for (const scope of scopes) {
+      if (collectFromScope(scope) > 0) break;
+    }
+
+    return tiles;
+  }
+
+  function voyagerHeaders() {
+    const cookies = document.cookie.split(";").map((c) => c.trim());
+    const jsession = cookies.find((c) => c.startsWith("JSESSIONID="));
+    let csrf =
+      jsession?.split("=")[1]?.replace(/^"|"$/g, "")?.trim() || "";
+    if (!csrf) {
+      csrf =
+        document.querySelector('meta[name="csrf-token"]')?.getAttribute("content")?.trim() ||
+        "";
+    }
+    return {
+      "csrf-token": csrf,
+      "x-restli-protocol-version": "2.0.0",
+      accept: "application/vnd.linkedin.normalized+json+2.1",
+    };
+  }
+
+  function parseVoyagerInboxList(json) {
+    const included = Array.isArray(json?.included) ? json.included : [];
+    const elements = Array.isArray(json?.elements) ? json.elements : [];
+    const profiles = new Map();
+    for (const item of included) {
+      const id = item?.publicIdentifier;
+      const name = [item?.firstName, item?.lastName].filter(Boolean).join(" ");
+      if (id && name) {
+        profiles.set(item.entityUrn || item.objectUrn || id, {
+          name,
+          profileUrl: `https://www.linkedin.com/in/${id}/`,
+        });
+      }
+    }
+
+    const tiles = [];
+    const seen = new Set();
+    const convs = [
+      ...elements,
+      ...included.filter((i) => /Conversation|conversation/i.test(i?.$type || "")),
+    ];
+
+    for (const conv of convs) {
+      let preview =
+        conv?.lastMessage?.text ||
+        conv?.lastMessage?.body?.text ||
+        conv?.events?.[0]?.body?.text ||
+        conv?.eventContent?.attributedBody?.text;
+      if (!preview && Array.isArray(conv?.events) && conv.events[0]) {
+        preview =
+          conv.events[0]?.body?.text ||
+          conv.events[0]?.eventContent?.attributedBody?.text;
+      }
+      preview = clean(preview || "");
+      if (!preview || preview.length < 2) continue;
+
+      let participantName;
+      let profileUrl;
+      const parts = conv?.participants || conv["*participants"] || conv.participantUrns;
+      if (Array.isArray(parts)) {
+        for (const p of parts) {
+          const urn = typeof p === "string" ? p : p?.entityUrn || p?.profileUrn;
+          const prof = urn ? profiles.get(urn) : null;
+          if (prof) {
+            participantName = prof.name;
+            profileUrl = prof.profileUrl;
+            break;
+          }
+        }
+      }
+      for (const item of included) {
+        if (participantName) break;
+        if (!/MiniProfile|Member|Profile/i.test(item?.$type || "")) continue;
+        if (item?.publicIdentifier && item?.firstName) {
+          participantName = [item.firstName, item.lastName].filter(Boolean).join(" ");
+          profileUrl = `https://www.linkedin.com/in/${item.publicIdentifier}/`;
+          break;
+        }
+      }
+
+      const key = `${participantName || "?"}:${preview.slice(0, 80)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      let timeLabel;
+      const ts = conv?.lastActivityAt || conv?.updatedAt || conv?.createdAt;
+      if (typeof ts === "number" && ts > 1e11) {
+        const diffH = Math.round((Date.now() - ts) / 3_600_000);
+        if (diffH < 48) timeLabel = `${diffH} h`;
+      }
+
+      const text = [participantName, preview].filter(Boolean).join("\n");
+      tiles.push({
+        participantName,
+        preview,
+        previewText: text.slice(0, 1200),
+        profileUrl,
+        timeLabel,
+      });
+      if (tiles.length >= 80) break;
+    }
+    return tiles.length ? tiles : null;
+  }
+
+  async function fetchInboxViaVoyager() {
+    const headers = voyagerHeaders();
+    if (!headers["csrf-token"]) return null;
+    const urls = [
+      "https://www.linkedin.com/voyager/api/messaging/conversations?keyVersion=LEGACY_INBOX&count=40",
+      "https://www.linkedin.com/voyager/api/voyagerMessagingDashConversations?count=40&start=0",
+    ];
+    for (const url of urls) {
+      try {
+        const resp = await fetch(url, { headers, credentials: "include" });
+        if (!resp.ok) continue;
+        const json = await resp.json();
+        const parsed = parseVoyagerInboxList(json);
+        if (parsed?.length) return parsed;
+      } catch {
+        /* next */
+      }
+    }
+    return null;
+  }
+
+  const listRoot = findMessagingListRoot();
+  let tiles = collectTiles(listRoot || document);
+
+  if (tiles.length === 0) {
+    const voyagerTiles = await fetchInboxViaVoyager();
+    if (voyagerTiles?.length) {
+      return {
+        kind,
+        sourceUrl,
+        capturedAt,
+        payload: { voyagerTiles, tileCount: voyagerTiles.length },
+      };
+    }
+  }
+
+  if (tiles.length > 0) {
+    return {
+      kind,
+      sourceUrl,
+      capturedAt,
+      payload: { tiles, tileCount: tiles.length },
+    };
+  }
+
+  const onMessaging = /\/messaging/i.test(sourceUrl);
+  const dumpRoot =
+    document.querySelector("ul.msg-conversations-container__conversations-list") ||
+    document.querySelector(".msg-conversations-container") ||
+    listRoot ||
+    (onMessaging ? document.querySelector("main") : null);
+  let dumpText = dumpRoot ? clean(dumpRoot.innerText || "") : "";
+  if (dumpText.length > 16000) dumpText = `${dumpText.slice(0, 16000)}…`;
+
+  const note = listRoot
+    ? "Conversation rows not matched — dumped messaging sidebar text for server parsing."
+    : onMessaging
+      ? "No messaging sidebar found — scroll the inbox list and snapshot again."
+      : "Not on messaging — open linkedin.com/messaging before snapshot (feed was skipped).";
+
+  return {
+    kind,
+    sourceUrl,
+    capturedAt,
+    payload: {
+      fallbackPlainText: dumpText,
+      note,
+    },
+  };
+}
+
 function scrapeExtensionSnapshot(kindRaw) {
   const kind =
     typeof kindRaw === "string" ? kindRaw : "linkedin_messages_inbox_visible";
@@ -1406,50 +1866,15 @@ function scrapeExtensionSnapshot(kindRaw) {
   const capturedAt = new Date().toISOString();
 
   if (kind === "linkedin_messages_inbox_visible") {
-    function profileUrlFromTile(el) {
-      const links = el.querySelectorAll('a[href*="/in/"]');
-      for (const a of links) {
-        const raw = a.getAttribute("href");
-        if (!raw || raw.includes("/edit/")) continue;
-        try {
-          const abs = new URL(raw, "https://www.linkedin.com");
-          const m = abs.pathname.match(/^\/in\/([^/?#]+)\/?/i);
-          if (m?.[1]) return `https://www.linkedin.com/in/${m[1]}/`;
-        } catch {
-          continue;
-        }
-      }
-      return undefined;
-    }
-    const selectors = [
-      ".msg-conversation-card",
-      "li.msg-conversation-listitem",
-      "[class*='conversation-list-item']",
-    ];
-    const tiles = [];
-    const seen = new Set();
-    for (const sel of selectors) {
-      document.querySelectorAll(sel).forEach((el) => {
-        if (tiles.length >= 160) return;
-        const t = clean(el.innerText);
-        if (!t || t.length < 20) return;
-        const key = t.slice(0, 120);
-        if (seen.has(key)) return;
-        seen.add(key);
-        const tile = { preview: t.slice(0, 1200), len: t.length };
-        const profileUrl = profileUrlFromTile(el);
-        if (profileUrl) tile.profileUrl = profileUrl;
-        tiles.push(tile);
-      });
-    }
-    const payload =
-      tiles.length === 0
-        ? {
-            fallbackPlainText: mainDump(48000),
-            note: "No conversation rows matched — dumped main text.",
-          }
-        : { tiles, tileCount: tiles.length };
-    return { kind, sourceUrl, capturedAt, payload };
+    return {
+      kind,
+      sourceUrl,
+      capturedAt,
+      payload: {
+        error:
+          "Use scrapeMessagingInboxSnapshotInPage() for messaging snapshots.",
+      },
+    };
   }
 
   if (kind === "linkedin_post_analytics_visible") {
@@ -4725,10 +5150,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         msg.kind === "linkedin_post_analytics_visible"
           ? "linkedin_post_analytics_visible"
           : "linkedin_messages_inbox_visible";
+      const snapFunc =
+        kind === "linkedin_messages_inbox_visible"
+          ? scrapeMessagingInboxSnapshotInPage
+          : scrapeExtensionSnapshot;
       const [{ result: snap }] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: scrapeExtensionSnapshot,
-        args: [kind],
+        func: snapFunc,
+        args: kind === "linkedin_post_analytics_visible" ? [kind] : [],
       });
       if (!snap?.kind) {
         sendResponse({ ok: false, error: "Snapshot returned nothing." });

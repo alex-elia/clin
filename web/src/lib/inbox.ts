@@ -5,35 +5,17 @@ import {
   contacts,
   inboxThreadState,
 } from "@/db/schema";
+import {
+  deriveThreadReplyState,
+  getMergedMessagingThreadForContact,
+  mergeMessagingMessages,
+  messagesFromJson,
+  threadKeyFromCapture,
+  type MessagingMessageRow,
+  type ThreadReplyState,
+} from "@/lib/messagingContext";
 
 export type InboxThreadStatus = "open" | "done" | "snoozed";
-
-function threadKeyFromCapture(row: {
-  sourceUrl: string;
-  extractedJson: unknown;
-}): string {
-  const j = row.extractedJson as Record<string, unknown> | null;
-  const id = j?.messagingThreadId;
-  if (typeof id === "string" && id.trim()) return id.trim();
-  try {
-    const u = new URL(row.sourceUrl);
-    const m = u.pathname.match(/\/messaging\/thread\/([^/?#]+)/i);
-    if (m?.[1]) return decodeURIComponent(m[1]);
-  } catch {
-    /* ignore */
-  }
-  return row.sourceUrl.replace(/\/+$/, "");
-}
-
-function previewFromJson(extractedJson: unknown, maxLen = 180): string {
-  const j = extractedJson as Record<string, unknown> | null;
-  const msgs = j?.messagingMessages;
-  if (!Array.isArray(msgs) || msgs.length === 0) return "";
-  const last = msgs[msgs.length - 1] as { body?: string } | undefined;
-  const t = typeof last?.body === "string" ? last.body.trim() : "";
-  if (!t) return "";
-  return t.length > maxLen ? `${t.slice(0, maxLen - 1)}…` : t;
-}
 
 export type InboxOverviewRow = {
   contactId: string;
@@ -44,7 +26,11 @@ export type InboxOverviewRow = {
   lastCapturedAt: Date;
   captureId: string;
   messageCount: number;
+  captureCount: number;
   preview: string;
+  messages: MessagingMessageRow[];
+  lastFrom: ThreadReplyState["lastFrom"];
+  needsReply: boolean;
   state: {
     id: string;
     status: InboxThreadStatus;
@@ -53,10 +39,112 @@ export type InboxOverviewRow = {
   } | null;
 };
 
+export type InboxThreadDetail = {
+  contactId: string;
+  threadKey: string;
+  threadUrl: string;
+  messages: MessagingMessageRow[];
+  messageCount: number;
+  captureCount: number;
+  lastCapturedAt: Date | null;
+  replyState: ThreadReplyState;
+  state: InboxOverviewRow["state"];
+  fullName: string | null;
+  linkedinUrl: string;
+};
+
+function previewFromMessages(messages: MessagingMessageRow[], maxLen = 180): string {
+  if (!messages.length) return "";
+  const last = messages[messages.length - 1]!;
+  const t = last.body.trim();
+  if (!t) return "";
+  return t.length > maxLen ? `${t.slice(0, maxLen - 1)}…` : t;
+}
+
+async function loadMergedThreadsForContact(
+  contactId: string,
+  captureRows: {
+    id: string;
+    sourceUrl: string;
+    extractedJson: unknown;
+    capturedAt: Date;
+  }[],
+): Promise<
+  Map<
+    string,
+    {
+      threadUrl: string;
+      latestCaptureId: string;
+      lastCapturedAt: Date;
+      messages: MessagingMessageRow[];
+      captureCount: number;
+    }
+  >
+> {
+  const byThread = new Map<
+    string,
+    {
+      threadUrl: string;
+      latestCaptureId: string;
+      lastCapturedAt: Date;
+      batches: MessagingMessageRow[][];
+      captureCount: number;
+    }
+  >();
+
+  for (const row of captureRows) {
+    const tk = threadKeyFromCapture({
+      sourceUrl: row.sourceUrl,
+      extractedJson: row.extractedJson,
+    });
+    const msgs = messagesFromJson(row.extractedJson);
+    let bucket = byThread.get(tk);
+    if (!bucket) {
+      bucket = {
+        threadUrl: row.sourceUrl,
+        latestCaptureId: row.id,
+        lastCapturedAt: row.capturedAt,
+        batches: [],
+        captureCount: 0,
+      };
+      byThread.set(tk, bucket);
+    }
+    if (msgs.length) bucket.batches.push(msgs);
+    bucket.captureCount += 1;
+    if (row.capturedAt >= bucket.lastCapturedAt) {
+      bucket.lastCapturedAt = row.capturedAt;
+      bucket.latestCaptureId = row.id;
+      bucket.threadUrl = row.sourceUrl;
+    }
+  }
+
+  const out = new Map<
+    string,
+    {
+      threadUrl: string;
+      latestCaptureId: string;
+      lastCapturedAt: Date;
+      messages: MessagingMessageRow[];
+      captureCount: number;
+    }
+  >();
+  for (const [tk, v] of byThread) {
+    out.set(tk, {
+      threadUrl: v.threadUrl,
+      latestCaptureId: v.latestCaptureId,
+      lastCapturedAt: v.lastCapturedAt,
+      messages: mergeMessagingMessages(v.batches),
+      captureCount: v.captureCount,
+    });
+  }
+  return out;
+}
+
 export async function listInboxOverview(opts?: {
   statusFilter?: "active" | "all" | InboxThreadStatus;
   contactId?: string;
   limit?: number;
+  needsReplyOnly?: boolean;
 }): Promise<InboxOverviewRow[]> {
   const db = getDb();
   const lim = Math.min(opts?.limit ?? 120, 400);
@@ -80,40 +168,39 @@ export async function listInboxOverview(opts?: {
         : eq(captureSessions.pageType, "messaging"),
     )
     .orderBy(desc(captureSessions.capturedAt))
-    .limit(Math.min(lim * 4, 800));
+    .limit(Math.min(lim * 8, 1200));
 
-  const dedup = new Map<string, (typeof captures)[0]>();
+  const byContact = new Map<string, typeof captures>();
   for (const row of captures) {
     if (!row.contactId) continue;
-    const tk = threadKeyFromCapture({
-      sourceUrl: row.sourceUrl,
-      extractedJson: row.extractedJson,
-    });
-    const key = `${row.contactId}::${tk}`;
-    if (!dedup.has(key)) dedup.set(key, row);
+    const list = byContact.get(row.contactId) ?? [];
+    list.push(row);
+    byContact.set(row.contactId, list);
   }
 
-  let rows: InboxOverviewRow[] = [...dedup.values()].map((row) => {
-    const j = row.extractedJson as Record<string, unknown> | null;
-    const msgs = j?.messagingMessages;
-    const count = Array.isArray(msgs) ? msgs.length : 0;
-    const tk = threadKeyFromCapture({
-      sourceUrl: row.sourceUrl,
-      extractedJson: row.extractedJson,
-    });
-    return {
-      contactId: row.contactId!,
-      fullName: null as string | null,
-      linkedinUrl: "",
-      threadKey: tk,
-      threadUrl: row.sourceUrl,
-      lastCapturedAt: row.capturedAt,
-      captureId: row.id,
-      messageCount: count,
-      preview: previewFromJson(row.extractedJson),
-      state: null,
-    };
-  });
+  let rows: InboxOverviewRow[] = [];
+  for (const [contactId, capRows] of byContact) {
+    const merged = await loadMergedThreadsForContact(contactId, capRows);
+    for (const [threadKey, thread] of merged) {
+      const replyState = deriveThreadReplyState(thread.messages);
+      rows.push({
+        contactId,
+        fullName: null,
+        linkedinUrl: "",
+        threadKey,
+        threadUrl: thread.threadUrl,
+        lastCapturedAt: thread.lastCapturedAt,
+        captureId: thread.latestCaptureId,
+        messageCount: thread.messages.length,
+        captureCount: thread.captureCount,
+        preview: replyState.lastPreview || previewFromMessages(thread.messages),
+        messages: thread.messages,
+        lastFrom: replyState.lastFrom,
+        needsReply: replyState.needsReply,
+        state: null,
+      });
+    }
+  }
 
   rows.sort(
     (a, b) => b.lastCapturedAt.getTime() - a.lastCapturedAt.getTime(),
@@ -155,20 +242,72 @@ export async function listInboxOverview(opts?: {
 
   const now = Date.now();
   const filter = opts?.statusFilter ?? "active";
-  if (filter === "all") return rows;
+  let filtered = rows;
 
-  return rows.filter((r) => {
-    const st = r.state?.status ?? "open";
-    if (filter === "done") return st === "done";
-    if (filter === "open") return st === "open";
-    if (filter === "snoozed") return st === "snoozed";
-    if (st === "done") return false;
-    if (st === "snoozed" && r.state?.snoozedUntil) {
-      return r.state.snoozedUntil.getTime() <= now;
-    }
-    if (st === "snoozed") return false;
-    return true;
+  if (filter !== "all") {
+    filtered = rows.filter((r) => {
+      const st = r.state?.status ?? "open";
+      if (filter === "done") return st === "done";
+      if (filter === "open") return st === "open";
+      if (filter === "snoozed") return st === "snoozed";
+      if (st === "done") return false;
+      if (st === "snoozed" && r.state?.snoozedUntil) {
+        return r.state.snoozedUntil.getTime() <= now;
+      }
+      if (st === "snoozed") return false;
+      return true;
+    });
+  }
+
+  if (opts?.needsReplyOnly) {
+    filtered = filtered.filter((r) => r.needsReply);
+  }
+
+  return filtered;
+}
+
+export async function getInboxThreadDetail(input: {
+  contactId: string;
+  threadKey: string;
+}): Promise<InboxThreadDetail | null> {
+  const db = getDb();
+  const contact = await db.query.contacts.findFirst({
+    where: eq(contacts.id, input.contactId),
   });
+  if (!contact) return null;
+
+  const merged = await getMergedMessagingThreadForContact(input.contactId, {
+    threadKey: input.threadKey,
+  });
+  if (!merged) return null;
+
+  const st = await db.query.inboxThreadState.findFirst({
+    where: and(
+      eq(inboxThreadState.contactId, input.contactId),
+      eq(inboxThreadState.threadKey, input.threadKey),
+    ),
+  });
+
+  return {
+    contactId: input.contactId,
+    threadKey: merged.threadKey,
+    threadUrl: merged.threadUrl,
+    messages: merged.messages,
+    messageCount: merged.messageCount,
+    captureCount: merged.captureCount,
+    lastCapturedAt: merged.lastCapturedAt,
+    replyState: merged.replyState,
+    fullName: contact.fullName,
+    linkedinUrl: contact.linkedinUrlCanonical,
+    state: st
+      ? {
+          id: st.id,
+          status: st.status as InboxThreadStatus,
+          snoozedUntil: st.snoozedUntil ?? null,
+          note: st.note ?? null,
+        }
+      : null,
+  };
 }
 
 export async function upsertInboxThreadState(input: {

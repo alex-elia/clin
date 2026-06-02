@@ -20,6 +20,7 @@ type Props = {
   messagingCaptureMeta?: {
     messageCount: number;
     capturedAt: string;
+    needsReply?: boolean;
   } | null;
   initialProvisional: string | null;
   initialRefined: string | null;
@@ -315,17 +316,26 @@ export function ContactLlmPanel({
           className="cursor-pointer text-sm font-semibold text-clin-text"
           onClick={() => setShowMessaging((v) => !v)}
         >
-          Message thread (optional — for “should I remove?”)
+          Message thread (optional — reply advice & stewardship)
         </summary>
         <div className="mt-4 space-y-4">
           <p className="text-xs text-clin-muted">
-            Extension → Messaging on an open LinkedIn thread, or paste below. Only
-            needed if you want keep vs remove advice.
+            Extension → Messaging on an open LinkedIn thread, or paste below.
+            Merged captures fill this automatically. Use{" "}
+            <Link href="/inbox" className="clin-link">
+              Inbox
+            </Link>{" "}
+            for reply drafts and suggested actions.
           </p>
           {messagingCaptureMeta ? (
             <p className="rounded-md border border-emerald-400/40 bg-emerald-50/80 px-3 py-2 text-xs text-emerald-950 dark:bg-emerald-950/40 dark:text-emerald-100">
-              Loaded {messagingCaptureMeta.messageCount} messages (
+              Loaded {messagingCaptureMeta.messageCount} messages from merged captures (
               {new Date(messagingCaptureMeta.capturedAt).toLocaleString()}).
+              {messagingCaptureMeta.needsReply ? (
+                <span className="ml-1 font-medium text-amber-900 dark:text-amber-200">
+                  Their last message is unanswered.
+                </span>
+              ) : null}
             </p>
           ) : null}
           <div className="clin-voice-field">
