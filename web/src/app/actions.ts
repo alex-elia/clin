@@ -24,12 +24,18 @@ import {
   type OutreachSendSettingsPatch,
 } from "@/lib/outreachSend";
 import { generateOutreachDraftForMember } from "@/lib/outreachCampaignDraft";
+import { runCampaignPostCaptureWorkflow } from "@/lib/campaignPostCaptureWorkflow";
+import {
+  enrichCampaignMembers,
+  memberPipelineOpen,
+} from "@/lib/campaignMemberReadiness";
 import {
   addContactsFromSegment,
   addContactsToCampaign,
   createOutreachCampaign,
   findMemberById,
   listMembersNeedingDraft,
+  listCampaignMembers,
   removeMemberFromCampaign,
   setActiveOutreachCampaignId,
   setCaptureTargetCampaignId,
@@ -387,6 +393,76 @@ export async function addSegmentToCampaignAction(formData: FormData) {
   if (!campaignId || !segment) return;
   await addContactsFromSegment(campaignId, segment, limit);
   revalidatePath(`/campaigns/${campaignId}`);
+}
+
+/** Backfill old campaign members: run missing ICP + draft workflow in batch. */
+export type OrchestrateCampaignWorkflowState = {
+  ok: boolean;
+  message: string;
+  processed: number;
+  drafted: number;
+  skipped: number;
+  failed: number;
+};
+
+export async function orchestrateCampaignWorkflowAction(
+  _prev: OrchestrateCampaignWorkflowState,
+  formData: FormData,
+): Promise<OrchestrateCampaignWorkflowState> {
+  const campaignId = String(formData.get("campaignId") ?? "").trim();
+  if (!campaignId) {
+    return {
+      ok: false,
+      message: "Missing campaign id.",
+      processed: 0,
+      drafted: 0,
+      skipped: 0,
+      failed: 0,
+    };
+  }
+  const limit = 120;
+
+  const rows = await listCampaignMembers(campaignId);
+  const enriched = await enrichCampaignMembers(rows);
+  const targets = enriched
+    .filter((m) => memberPipelineOpen(m))
+    .filter((m) => m.profileDepth === "ok")
+    .filter((m) => {
+      const hasDraft = Boolean((m.member.draftOutreach ?? "").trim());
+      const fit = m.icpMatch === "strong" || m.icpMatch === "partial";
+      const needsIcp = !m.icpCheckedAt;
+      const needsDraft = fit && !hasDraft;
+      return needsIcp || needsDraft;
+    })
+    .slice(0, limit);
+
+  let processed = 0;
+  let drafted = 0;
+  let skipped = 0;
+  let failed = 0;
+  for (const t of targets) {
+    try {
+      const r = await runCampaignPostCaptureWorkflow({
+        campaignId,
+        contactId: t.contact.id,
+      });
+      processed += 1;
+      if (r.drafted) drafted += 1;
+      else skipped += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+
+  revalidatePath(`/campaigns/${campaignId}`);
+  return {
+    ok: failed === 0,
+    message: `Workflow orchestration done: ${processed} processed, ${drafted} drafted, ${skipped} no-draft decisions, ${failed} failed.`,
+    processed,
+    drafted,
+    skipped,
+    failed,
+  };
 }
 
 export async function addContactIdsToCampaignAction(formData: FormData) {

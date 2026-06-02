@@ -168,17 +168,25 @@ const CAMPAIGN_CTX_TTL_MS = 30_000;
 let campaignContextFetchedAt = 0;
 /** @type {Record<string, unknown> | null} */
 let campaignContextPayload = null;
+let campaignContextKey = "";
 
-async function getExtensionCampaignContext(root) {
+async function getExtensionCampaignContext(root, campaignId) {
   const now = Date.now();
+  const key = `${root}::${typeof campaignId === "string" ? campaignId.trim() : ""}`;
   if (
+    key === campaignContextKey &&
     campaignContextFetchedAt > 0 &&
     now - campaignContextFetchedAt < CAMPAIGN_CTX_TTL_MS
   ) {
     return campaignContextPayload;
   }
   try {
-    const r = await fetch(`${root}/api/extension/campaign-context`);
+    const q =
+      typeof campaignId === "string" && campaignId.trim()
+        ? `?campaignId=${encodeURIComponent(campaignId.trim())}`
+        : "";
+    const r = await fetch(`${root}/api/extension/campaign-context${q}`);
+    campaignContextKey = key;
     campaignContextFetchedAt = now;
     if (!r.ok) {
       campaignContextPayload = null;
@@ -187,6 +195,7 @@ async function getExtensionCampaignContext(root) {
     campaignContextPayload = await r.json();
     return campaignContextPayload;
   } catch {
+    campaignContextKey = key;
     campaignContextFetchedAt = now;
     campaignContextPayload = null;
     return null;
@@ -1498,15 +1507,45 @@ async function waitForProfileDomReady(maxMs) {
 async function prepProfilePageForScrape(maxMs) {
   const deadline = Date.now() + (maxMs || 8000);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await waitForProfileDomReady(Math.min(6000, Math.max(1200, maxMs || 8000)));
+
+  const scrollRoots = () => {
+    const roots = [document.scrollingElement || document.documentElement];
+    for (const el of document.querySelectorAll("main, section, div")) {
+      try {
+        if (!el || roots.includes(el)) continue;
+        if (el.scrollHeight > el.clientHeight + 120) roots.push(el);
+      } catch {
+        /* ignore */
+      }
+    }
+    return roots.slice(0, 6);
+  };
+
+  const stepScroll = (dy) => {
+    for (const root of scrollRoots()) {
+      try {
+        if (typeof root.scrollBy === "function") {
+          root.scrollBy({ top: dy, behavior: "instant" });
+        } else {
+          root.scrollTop = (root.scrollTop || 0) + dy;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    try {
+      window.scrollBy({ top: dy, behavior: "instant" });
+    } catch {
+      /* ignore */
+    }
+  };
 
   window.scrollTo({ top: 0, behavior: "instant" });
   await sleep(300);
 
-  for (let i = 0; i < 8 && Date.now() < deadline; i++) {
-    window.scrollBy({
-      top: Math.min(900, window.innerHeight || 800),
-      behavior: "instant",
-    });
+  for (let i = 0; i < 10 && Date.now() < deadline; i++) {
+    stepScroll(Math.min(920, window.innerHeight || 800));
     await sleep(450);
   }
 
@@ -1529,6 +1568,17 @@ async function prepProfilePageForScrape(maxMs) {
     }
   }
 
+  for (const root of scrollRoots()) {
+    try {
+      if (typeof root.scrollTo === "function") {
+        root.scrollTo({ top: 0, behavior: "instant" });
+      } else {
+        root.scrollTop = 0;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
   window.scrollTo({ top: 0, behavior: "instant" });
   await sleep(350);
   return { prepped: true };
@@ -2817,8 +2867,9 @@ async function scrollConnectionsListViewport() {
 }
 
 /** Bring the LinkedIn automation tab to the foreground (required for lazy-load / scroll). */
-async function focusAutomationTab(tabId) {
+async function focusAutomationTab(tabId, opts = {}) {
   if (typeof tabId !== "number") return;
+  if (opts?.suppressFocus) return;
   try {
     const tab = await chrome.tabs.get(tabId);
     if (!tab?.id) return;
@@ -2837,8 +2888,8 @@ async function focusAutomationTab(tabId) {
 }
 
 /** Focus tab, auto-scroll list, wait for new rows to render. */
-async function prepareListPageForScrape(tabId, postScrollMs) {
-  await focusAutomationTab(tabId);
+async function prepareListPageForScrape(tabId, postScrollMs, opts = {}) {
+  await focusAutomationTab(tabId, opts);
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
@@ -3413,6 +3464,15 @@ async function postProfileCaptureForTab(tabId, root, pruned) {
   if (!isLinkedInProfilePageUrl(tab.url)) {
     return { ok: false, error: "Not on a profile page." };
   }
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: prepProfilePageForScrape,
+      args: [9000],
+    });
+  } catch {
+    /* best-effort prep; continue with scrape */
+  }
   const result = await scrapeProfileFromTab(tabId);
   if (!result) {
     return { ok: false, error: "Extractor returned nothing." };
@@ -3445,7 +3505,7 @@ async function postProfileCaptureForTab(tabId, root, pruned) {
 /**
  * One list-import round (scroll optional) → POST connections-page.
  */
-async function importConnectionsListRound(tabId, base, round, postScrollMs) {
+async function importConnectionsListRound(tabId, base, round, postScrollMs, opts = {}) {
   const root = base.replace(/\/$/, "");
   const tab = await chrome.tabs.get(tabId);
   if (!tab?.url?.includes("linkedin.com")) {
@@ -3459,7 +3519,7 @@ async function importConnectionsListRound(tabId, base, round, postScrollMs) {
     };
   }
   try {
-    await prepareListPageForScrape(tabId, postScrollMs);
+    await prepareListPageForScrape(tabId, postScrollMs, opts);
   } catch (e) {
     return {
       ok: false,
@@ -3552,7 +3612,7 @@ async function importConnectionsListRound(tabId, base, round, postScrollMs) {
 }
 
 /** Open next thin/missing profile, capture, ack. Uses Clin pacing + daily cap. */
-async function enrichOneProfileStep(tabId, base, firstOpen) {
+async function enrichOneProfileStep(tabId, base, firstOpen, opts = {}) {
   const root = base.replace(/\/$/, "");
   const q = firstOpen ? "?first=1" : "?first=0";
   let nextRes;
@@ -3581,7 +3641,7 @@ async function enrichOneProfileStep(tabId, base, firstOpen) {
     await sleep(next.waitBeforeMs);
   }
   try {
-    await focusAutomationTab(tabId);
+    await focusAutomationTab(tabId, opts);
     await chrome.tabs.update(tabId, { url: next.contact.linkedinUrl });
     await waitForLinkedInProfileTab(tabId);
   } catch (e) {
@@ -3647,6 +3707,14 @@ async function runClinPipeline(opts) {
   const tabId = opts.tabId;
   const listRounds = Math.max(0, Math.min(20, Number(opts.listRounds) || 0));
   const enrichSteps = Math.max(0, Math.min(25, Number(opts.enrichSteps) || 0));
+  const fullRun = Boolean(opts.fullRun);
+  const suppressFocus = Boolean(opts.suppressFocus);
+  const runKey = typeof opts.runKey === "string" ? opts.runKey : null;
+  const shouldContinue = async () => {
+    if (!runKey) return true;
+    const stored = await chrome.storage.local.get([runKey]);
+    return Boolean(stored[runKey]);
+  };
   const postScrollMs = Math.min(
     12000,
     Math.max(500, Number(opts.postScrollMs) || 2800),
@@ -3660,37 +3728,99 @@ async function runClinPipeline(opts) {
     };
   }
   try {
-    await focusAutomationTab(tabId);
+    await focusAutomationTab(tabId, { suppressFocus });
   } catch {
     return { ok: false, error: "LinkedIn tab was closed." };
   }
+  let currentTab;
+  try {
+    currentTab = await chrome.tabs.get(tabId);
+  } catch {
+    return { ok: false, error: "LinkedIn tab was closed." };
+  }
+  const canImportFromCurrentTab = Boolean(
+    currentTab?.url && isConnectionsListPageUrl(currentTab.url),
+  );
   const summary = {
     listImported: 0,
     profilesCaptured: 0,
     messagingCaptured: 0,
     errors: [],
+    listRoundsRun: 0,
+    profileStepsRun: 0,
+    campaignCaptureMode: false,
   };
 
-  for (let r = 0; r < listRounds; r++) {
-    const round = await importConnectionsListRound(tabId, base, r, postScrollMs);
+  let requestedListRounds = fullRun ? Math.max(1, listRounds || 12) : listRounds;
+  if (requestedListRounds > 0 && !canImportFromCurrentTab) {
+    requestedListRounds = 0;
+    summary.errors.push(
+      "List import skipped: selected tab is not a people-search / Connections page. Continuing campaign profile capture only.",
+    );
+  }
+  let consecutiveNoRows = 0;
+  for (let r = 0; r < requestedListRounds; r++) {
+    if (!(await shouldContinue())) {
+      summary.errors.push("Stopped by user.");
+      return { ok: true, summary, cancelled: true };
+    }
+    const round = await importConnectionsListRound(tabId, base, r, postScrollMs, {
+      suppressFocus,
+    });
+    summary.listRoundsRun += 1;
     if (!round.ok) {
       summary.errors.push(round.error || "List import failed.");
       if (round.stop) break;
       continue;
     }
-    summary.listImported += round.imported || 0;
+    const imported = round.imported || 0;
+    summary.listImported += imported;
+    if (fullRun) {
+      consecutiveNoRows = imported > 0 ? 0 : consecutiveNoRows + 1;
+    }
     if (round.stop) break;
+    if (fullRun && consecutiveNoRows >= 2) break;
   }
 
-  const steps =
-    enrichSteps > 0
-      ? enrichSteps
-      : automation.autoEnrichAfterList && summary.listImported > 0
-        ? Math.min(15, summary.listImported)
-        : 0;
+  const root = base.replace(/\/$/, "");
+  const campaignCtx = await getExtensionCampaignContext(root, opts.selectedCampaignId);
+  const hasCaptureTargetCampaign = Boolean(campaignCtx?.captureTargetCampaignId);
+  const runCampaignQueueCapture = fullRun && hasCaptureTargetCampaign;
+  summary.campaignCaptureMode = runCampaignQueueCapture;
+
+  const steps = runCampaignQueueCapture
+    ? Math.max(40, enrichSteps > 0 ? enrichSteps : 250)
+    : fullRun
+      ? Math.max(
+          25,
+          enrichSteps > 0
+            ? enrichSteps
+            : automation.autoEnrichAfterList
+              ? Math.min(250, Math.max(40, summary.listImported * 3))
+              : 0,
+        )
+      : enrichSteps > 0
+        ? enrichSteps
+        : automation.autoEnrichAfterList && summary.listImported > 0
+          ? Math.min(15, summary.listImported)
+          : 0;
 
   for (let e = 0; e < steps; e++) {
-    const step = await enrichOneProfileStep(tabId, base, e === 0 && listRounds === 0);
+    if (!(await shouldContinue())) {
+      summary.errors.push("Stopped by user.");
+      return { ok: true, summary, cancelled: true };
+    }
+    const step = runCampaignQueueCapture
+      ? await captureOneCampaignMemberProfileStep(
+          tabId,
+          base,
+          opts.selectedCampaignId,
+          { suppressFocus },
+        )
+      : await enrichOneProfileStep(tabId, base, e === 0 && listRounds === 0, {
+          suppressFocus,
+        });
+    summary.profileStepsRun += 1;
     if (!step.ok) {
       summary.errors.push(step.error || "Enrich step failed.");
       if (step.done) break;
@@ -3702,6 +3832,58 @@ async function runClinPipeline(opts) {
   }
 
   return { ok: true, summary };
+}
+
+async function captureOneCampaignMemberProfileStep(
+  tabId,
+  base,
+  selectedCampaignId,
+  opts = {},
+) {
+  const root = base.replace(/\/$/, "");
+  const ctx = await getExtensionCampaignContext(root, selectedCampaignId);
+  const campaignName = ctx?.captureTargetCampaignName || null;
+  const nextProfileUrl = ctx?.captureTargetQueue?.nextProfileUrl || null;
+  if (!nextProfileUrl) {
+    return {
+      ok: true,
+      done: true,
+      reason: campaignName
+        ? `campaign_queue_complete:${campaignName}`
+        : "campaign_queue_complete",
+    };
+  }
+  try {
+    await focusAutomationTab(tabId, opts);
+    await chrome.tabs.update(tabId, { url: nextProfileUrl });
+    await waitForLinkedInProfileTab(tabId);
+  } catch (e) {
+    return {
+      ok: false,
+      done: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+  await sleep(1200 + Math.floor(Math.random() * 1400));
+  let pruned;
+  try {
+    pruned = await waitForPaceGapAllowCapture(base);
+  } catch (e) {
+    return {
+      ok: false,
+      done: true,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+  const out = await postProfileCaptureForTab(tabId, root, pruned);
+  if (!out.ok) {
+    return {
+      ok: false,
+      done: false,
+      error: out.error || "Campaign profile capture failed.",
+    };
+  }
+  return { ok: true, done: false, messagingCaptured: false };
 }
 
 async function pollPendingSelfCapture() {
@@ -4096,6 +4278,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
       }
 
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: prepProfilePageForScrape,
+          args: [9000],
+        });
+      } catch {
+        /* best-effort prep; continue with scrape */
+      }
       const result = await scrapeProfileFromTab(tab.id);
 
       if (!result) {
@@ -4194,6 +4385,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
       }
 
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          func: prepProfilePageForScrape,
+          args: [9000],
+        });
+      } catch {
+        /* best-effort prep; continue with scrape */
+      }
       const result = await scrapeProfileFromTab(tabId);
 
       if (!result) {
@@ -4408,6 +4608,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === "CLIN_RUN_PIPELINE_STOP") {
+    chrome.storage.local.set({ [PIPELINE_RUN_KEY]: false });
+    sendResponse({ ok: true });
+    return true;
+  }
   if (msg?.type !== "CLIN_RUN_PIPELINE") return;
 
   (async () => {
@@ -4417,11 +4622,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       return;
     }
     try {
+      await chrome.storage.local.set({ [PIPELINE_RUN_KEY]: true });
       const result = await runClinPipeline({
         tabId,
         listRounds: msg.listRounds,
         enrichSteps: msg.enrichSteps,
         postScrollMs: msg.postScrollMs,
+        fullRun: msg.fullRun,
+        suppressFocus: msg.suppressFocus,
+        runKey: PIPELINE_RUN_KEY,
+        selectedCampaignId:
+          typeof msg.selectedCampaignId === "string"
+            ? msg.selectedCampaignId
+            : undefined,
       });
       sendResponse(result);
     } catch (e) {
@@ -4429,6 +4642,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         ok: false,
         error: e instanceof Error ? e.message : String(e),
       });
+    } finally {
+      await chrome.storage.local.set({ [PIPELINE_RUN_KEY]: false });
     }
   })();
 
@@ -4558,6 +4773,48 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 const OUTREACH_RUN_KEY = "clinOutreachRunActive";
+const OUTREACH_RUN_TAB_ID_KEY = "clinOutreachRunTabId";
+const PIPELINE_RUN_KEY = "clinPipelineRunActive";
+
+function isLinkedInHostUrl(url) {
+  return typeof url === "string" && /https?:\/\/([^.]+\.)?linkedin\.com\//i.test(url);
+}
+
+/**
+ * Lock outreach automation to a single LinkedIn tab.
+ * Fallback order: explicit tab id -> stored tab id -> active tab -> any LinkedIn tab.
+ */
+async function resolveOutreachRunTabId(preferredTabId) {
+  const tryTabId = async (candidate) => {
+    if (typeof candidate !== "number") return null;
+    try {
+      const tab = await chrome.tabs.get(candidate);
+      if (!tab?.id || !isLinkedInHostUrl(tab.url || "")) return null;
+      return tab.id;
+    } catch {
+      return null;
+    }
+  };
+
+  const fromPreferred = await tryTabId(preferredTabId);
+  if (fromPreferred != null) return fromPreferred;
+
+  const stored = await chrome.storage.local.get([OUTREACH_RUN_TAB_ID_KEY]);
+  const fromStored = await tryTabId(stored[OUTREACH_RUN_TAB_ID_KEY]);
+  if (fromStored != null) return fromStored;
+
+  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const fromActive = await tryTabId(activeTab?.id);
+  if (fromActive != null) return fromActive;
+
+  const linkedInTabs = await chrome.tabs.query({ url: "*://*.linkedin.com/*" });
+  for (const tab of linkedInTabs) {
+    const valid = await tryTabId(tab?.id);
+    if (valid != null) return valid;
+  }
+
+  return null;
+}
 
 /** Page world — best-effort DM composer fill on LinkedIn messaging. */
 function clinOutreachFillComposer(draftText, autoSend) {
@@ -4664,7 +4921,10 @@ async function outreachRunStep(tabId, base) {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "CLIN_OUTREACH_RUN_STOP") {
-    chrome.storage.local.set({ [OUTREACH_RUN_KEY]: false });
+    chrome.storage.local.set({
+      [OUTREACH_RUN_KEY]: false,
+      [OUTREACH_RUN_TAB_ID_KEY]: null,
+    });
     sendResponse({ ok: true });
     return true;
   }
@@ -4677,15 +4937,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse({ ok: false, error: "Outreach run stopped." });
           return;
         }
-        const [tab] = await chrome.tabs.query({
-          active: true,
-          currentWindow: true,
-        });
-        if (!tab?.id) {
-          sendResponse({ ok: false, error: "No active tab." });
+        const tabId = await resolveOutreachRunTabId(msg.tabId);
+        if (typeof tabId !== "number") {
+          sendResponse({
+            ok: false,
+            error: "No LinkedIn tab found. Open LinkedIn and retry.",
+          });
           return;
         }
-        const step = await outreachRunStep(tab.id, base);
+        await chrome.storage.local.set({ [OUTREACH_RUN_TAB_ID_KEY]: tabId });
+        const step = await outreachRunStep(tabId, base);
         sendResponse(step);
       } catch (e) {
         sendResponse({
@@ -4732,22 +4993,34 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type !== "CLIN_OUTREACH_RUN_START") return false;
   (async () => {
     try {
-      await chrome.storage.local.set({ [OUTREACH_RUN_KEY]: true });
+      const runTabId = await resolveOutreachRunTabId(msg.tabId);
+      if (typeof runTabId !== "number") {
+        sendResponse({
+          ok: false,
+          error: "No LinkedIn tab found. Open LinkedIn and retry.",
+        });
+        return;
+      }
+      await chrome.storage.local.set({
+        [OUTREACH_RUN_KEY]: true,
+        [OUTREACH_RUN_TAB_ID_KEY]: runTabId,
+      });
       const base = await getApiBase();
       let steps = 0;
       const maxSteps = Math.min(20, Number(msg.maxSteps) || 5);
       while (steps < maxSteps) {
         const stored = await chrome.storage.local.get([OUTREACH_RUN_KEY]);
         if (!stored[OUTREACH_RUN_KEY]) break;
-        const [tab] = await chrome.tabs.query({
-          active: true,
-          currentWindow: true,
-        });
-        if (!tab?.id) {
-          sendResponse({ ok: false, error: "No active tab." });
+        const tabId = await resolveOutreachRunTabId(runTabId);
+        if (typeof tabId !== "number") {
+          sendResponse({
+            ok: false,
+            error: "LinkedIn tab closed. Open LinkedIn and start again.",
+          });
           return;
         }
-        const step = await outreachRunStep(tab.id, base);
+        await chrome.storage.local.set({ [OUTREACH_RUN_TAB_ID_KEY]: tabId });
+        const step = await outreachRunStep(tabId, base);
         if (step.done) {
           sendResponse({ ok: true, done: true, reason: step.reason });
           return;
@@ -4774,7 +5047,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         error: e instanceof Error ? e.message : String(e),
       });
     } finally {
-      await chrome.storage.local.set({ [OUTREACH_RUN_KEY]: false });
+      await chrome.storage.local.set({
+        [OUTREACH_RUN_KEY]: false,
+        [OUTREACH_RUN_TAB_ID_KEY]: null,
+      });
     }
   })();
   return true;

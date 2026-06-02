@@ -519,6 +519,9 @@
           <button id="cap" type="button" class="btn btn-primary">
             Capture tab (auto)
           </button>
+          <button id="cap-campaign-full" type="button" class="btn btn-secondary">
+            Capture full campaign (paced)
+          </button>
           <div class="capture-scopes" role="group" aria-label="Capture scope">
             <button id="cap-profile" type="button" class="btn btn-secondary btn-scope">
               Profile
@@ -548,28 +551,39 @@
           </p>
 
           <div class="sub-block">
-          <p class="section-title">Import &amp; enrich (recommended)</p>
+          <p class="section-title">Full import orchestration (paced)</p>
           <p class="hint">
             Open <strong>people search</strong> or <strong>Connections</strong> in a LinkedIn
-            tab (it can be in the background — Clin will focus it and scroll automatically).
-            Then each profile opens in that same tab (paced). AI analysis runs after capture
-            if enabled in Clin Settings.
+            tab. Clin locks that tab for this run, loops list capture rounds, then continues
+            paced profile extraction and AI analysis until queue/list exhaustion (or safety caps).
+            If list import was already done, run it again from any LinkedIn tab to resume
+            campaign member captures one by one.
           </p>
           <p id="pipeline-status" class="pill" aria-live="polite"></p>
           <label class="field">
-            <span>List scroll rounds (1–12)</span>
+            <span>List round cap (1–12)</span>
             <input id="pipeline-list-rounds" type="number" min="1" max="12" value="4" />
           </label>
           <label class="field">
-            <span>Full profile captures (0–20, 0 = auto after list)</span>
+            <span>Profile extraction floor (0–20, 0 = fully automatic)</span>
             <input id="pipeline-enrich-steps" type="number" min="0" max="20" value="0" />
           </label>
           <label class="field">
             <span>Pause after scroll (ms)</span>
             <input id="pipeline-pause" type="number" min="800" max="12000" value="2800" />
           </label>
+          <label class="field" style="text-transform: none; letter-spacing: 0; font-weight: 500">
+            <span style="margin-bottom: 4px">Execution mode</span>
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 12px">
+              <input id="pipeline-background-mode" type="checkbox" checked />
+              Run in background (do not bring LinkedIn tab to front)
+            </label>
+          </label>
           <button id="pipeline-run" type="button" class="btn btn-primary">
-            Import &amp; enrich
+            Run full orchestration
+          </button>
+          <button id="pipeline-stop" type="button" class="btn btn-secondary">
+            Stop full orchestration
           </button>
           </div>
         </section>

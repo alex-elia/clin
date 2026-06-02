@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { captureSessions } from "@/db/schema";
 import { maybeAutopilotAnalyzeAfterProfileCapture } from "@/lib/autopilot";
+import { runCampaignPostCaptureWorkflow } from "@/lib/campaignPostCaptureWorkflow";
 import { ingestCapture } from "@/lib/ingest";
 import { attachImportedContactsToCampaign } from "@/lib/outreachCampaigns";
 import {
@@ -88,7 +89,19 @@ export async function POST(req: Request) {
       outreachCampaignId,
       [result.contactId],
     );
-    return NextResponse.json({ ...result, campaignAttach });
+    let campaignWorkflow: Awaited<
+      ReturnType<typeof runCampaignPostCaptureWorkflow>
+    > | null = null;
+    if (
+      capturePayload.pageType === "profile" &&
+      campaignAttach.attachedToCampaignId
+    ) {
+      campaignWorkflow = await runCampaignPostCaptureWorkflow({
+        campaignId: campaignAttach.attachedToCampaignId,
+        contactId: result.contactId,
+      });
+    }
+    return NextResponse.json({ ...result, campaignAttach, campaignWorkflow });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Ingest failed";
     return NextResponse.json({ error: message }, { status: 400 });

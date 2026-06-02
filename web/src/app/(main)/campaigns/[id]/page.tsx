@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CampaignAutopilotPrepPanel } from "@/components/CampaignAutopilotPrepPanel";
 import { CampaignFormFields } from "@/components/CampaignFormFields";
+import { CampaignOrchestrateButton } from "@/components/CampaignOrchestrateButton";
 import { CampaignMemberIcpCheckButton } from "@/components/CampaignMemberIcpCheckButton";
 import {
   ICP_ACTION_LABELS,
@@ -111,6 +112,18 @@ export default async function CampaignDetailPage({
     enrichedMemberMatchesFilter(m, memberFilter),
   );
   const nextCapture = pickNextProfileCaptureTarget(membersEnriched);
+  const openMembers = membersEnriched.filter(
+    (m) => m.member.status !== "sent" && m.member.status !== "skipped",
+  );
+  const wfNeedProfile = openMembers.filter((m) => m.profileDepth !== "ok").length;
+  const wfNeedIcp = openMembers.filter((m) => !m.icpCheckedAt).length;
+  const wfFitToDraft = openMembers.filter(
+    (m) => m.icpMatch === "strong" || m.icpMatch === "partial",
+  );
+  const wfNeedDraft = wfFitToDraft.filter(
+    (m) => !(m.member.draftOutreach ?? "").trim(),
+  ).length;
+  const wfReady = openMembers.filter((m) => m.member.status === "ready").length;
 
   return (
     <div className="space-y-8">
@@ -191,6 +204,59 @@ export default async function CampaignDetailPage({
       </section>
 
       <CampaignAutopilotPrepPanel campaignId={id} />
+
+      <section className="clin-callout">
+        <h2 className="text-sm font-semibold text-clin-text">
+          Workflow status (capture {"->"} ICP {"->"} draft {"->"} ready)
+        </h2>
+        <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-5">
+          <div className="rounded border border-red-200 bg-red-50 px-3 py-2 dark:border-red-900 dark:bg-red-950/30">
+            <p className="text-xs uppercase tracking-wide text-red-700 dark:text-red-300">
+              Need profile
+            </p>
+            <p className="mt-1 text-lg font-semibold text-red-900 dark:text-red-100">
+              {wfNeedProfile}
+            </p>
+          </div>
+          <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900 dark:bg-amber-950/30">
+            <p className="text-xs uppercase tracking-wide text-amber-700 dark:text-amber-300">
+              Need ICP check
+            </p>
+            <p className="mt-1 text-lg font-semibold text-amber-900 dark:text-amber-100">
+              {wfNeedIcp}
+            </p>
+          </div>
+          <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2 dark:border-blue-900 dark:bg-blue-950/30">
+            <p className="text-xs uppercase tracking-wide text-blue-700 dark:text-blue-300">
+              Need draft
+            </p>
+            <p className="mt-1 text-lg font-semibold text-blue-900 dark:text-blue-100">
+              {wfNeedDraft}
+            </p>
+          </div>
+          <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 dark:border-emerald-900 dark:bg-emerald-950/30">
+            <p className="text-xs uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+              Ready for extension
+            </p>
+            <p className="mt-1 text-lg font-semibold text-emerald-900 dark:text-emerald-100">
+              {wfReady}
+            </p>
+          </div>
+          <div className="rounded border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+            <p className="text-xs uppercase tracking-wide text-zinc-600 dark:text-zinc-300">
+              Open members
+            </p>
+            <p className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+              {openMembers.length}
+            </p>
+          </div>
+        </div>
+        <p className="mt-2 text-xs text-clin-muted">
+          New profile captures now auto-run ICP analysis; when fit is strong/partial,
+          Clin auto-generates a draft.
+        </p>
+        <CampaignOrchestrateButton campaignId={id} />
+      </section>
 
       <section className="space-y-3">
         <h2 className="text-sm font-semibold">Campaign details</h2>
