@@ -13,6 +13,7 @@
     "dev:clean": "npm run clean && npm run predev && next dev",
     "rebuild:native": "npm rebuild better-sqlite3",
     "build": "next build",
+    "build:desktop": "node scripts/build-desktop.mjs",
     "start": "next start",
     "lint": "next lint",
     "db:generate": "drizzle-kit generate",

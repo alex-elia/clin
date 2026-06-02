@@ -14,6 +14,7 @@ ADRs document **significant, stable** choices for Clin. They complement [DESIGN.
 | [0006](./0006-local-dev-singleton.md) | Local dev singleton: fixed port, lock file, health contract |
 | [0007](./0007-content-calendar-brand-coach.md) | Content calendar, Brand Coach, extension publish handoff |
 | [0008](./0008-editorial-autopilot-jobs-sources.md) | Editorial autopilot: job queue, sources, market calendar, runners |
+| [0009](./0009-desktop-distribution-portable-electron.md) | Desktop distribution strategy: portable Electron + GitHub Releases |
 
 ## Conventions
 
