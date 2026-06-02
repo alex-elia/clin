@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { runEditorialJobTick } from "@/lib/editorial/editorialJobRunner";
+import { runOrchestration } from "@/lib/telemetry/orchestration";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,7 +19,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
   try {
-    const result = await runEditorialJobTick();
+    const { result } = await runOrchestration({
+      action: "editorial_tick",
+      fn: async () => runEditorialJobTick(),
+    });
     return NextResponse.json(result);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

@@ -253,6 +253,7 @@ export async function runContactLlmAnalysis(
     tier: "provisional" | "refined";
     messageContext: string | null;
     settings: LlmConfig;
+    llmMeta?: Record<string, string | number | boolean | null>;
   },
 ): Promise<{
   tier: "provisional" | "refined";
@@ -290,6 +291,7 @@ export async function runContactLlmAnalysis(
     }),
     jsonMode: true,
     timeoutMs: 120_000,
+    meta: input.llmMeta,
   });
 
   const jsonStr = extractJsonObjectFromModelText(rawText);

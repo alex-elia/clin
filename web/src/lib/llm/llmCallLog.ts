@@ -2,6 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { resolveDataDirectory } from "@/lib/dataPaths";
+import {
+  llmCallToCloudRow,
+  pushTelemetryToCloudAsync,
+} from "@/lib/telemetry/cloudSink";
+import { getTelemetryCloudConfig } from "@/lib/telemetry/cloudConfig";
 
 export type LlmCallLogEntry = {
   id: string;
@@ -62,6 +67,12 @@ export async function appendLlmCallLog(
   const line = `${JSON.stringify(row)}\n`;
   await fs.appendFile(logPath(), line, "utf8");
   await trimLlmCallLogFile();
+
+  const cloudCfg = await getTelemetryCloudConfig();
+  if (cloudCfg) {
+    pushTelemetryToCloudAsync(llmCallToCloudRow(row, cloudCfg.instanceId));
+  }
+
   return row;
 }
 

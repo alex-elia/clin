@@ -9,6 +9,7 @@ import {
   type CampaignAutopilotMode,
 } from "@/lib/campaignAutopilot";
 import type { ProfileDepth } from "@/lib/campaignMemberReadiness";
+import { runOrchestration } from "@/lib/telemetry/orchestration";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,14 +67,26 @@ export async function POST(req: Request) {
   };
 
   try {
-    const { campaignName, results } = await runCampaignAutopilot({
-      campaignId: parsed.data.campaignId,
-      limit: Math.min(20, limit),
-      mode,
-      minProfileDepth,
-      policy,
-      runActions,
+    const { result: run } = await runOrchestration({
+      action: "campaign_autopilot",
+      meta: {
+        campaignId: parsed.data.campaignId,
+        mode,
+        limit: Math.min(20, limit),
+        runActions,
+      },
+      fn: async (ctx) =>
+        runCampaignAutopilot({
+          campaignId: parsed.data.campaignId,
+          limit: Math.min(20, limit),
+          mode,
+          minProfileDepth,
+          policy,
+          runActions,
+          llmMeta: ctx.llmMeta,
+        }),
     });
+    const { campaignName, results } = run;
     const ok = results.filter((r) => r.ok).length;
     return NextResponse.json({
       ok: true,

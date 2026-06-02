@@ -5,6 +5,7 @@ import { contacts } from "@/db/schema";
 import { executeContactAnalysis } from "@/lib/contactAnalyzeRunner";
 import { getLlmConfig } from "@/lib/llm/completeChat";
 import { contactAnalyzeBodySchema } from "@/lib/schemas";
+import { trackTimedFeature } from "@/lib/telemetry/orchestration";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,7 +50,11 @@ export async function POST(
 
   let out;
   try {
-    out = await executeContactAnalysis(db, id, parsed.data, llm);
+    out = await trackTimedFeature(
+      "contact_analyze",
+      () => executeContactAnalysis(db, id, parsed.data, llm),
+      { contactId: id },
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json(
