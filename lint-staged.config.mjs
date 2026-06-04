@@ -1,13 +1,8 @@
-import path from "node:path";
-
 /** ESLint on staged web TS/TSX only (runs from web/ so Next config resolves). */
 function eslintWeb(filenames) {
-  const rel = filenames
-    .map((f) => path.relative("web", f).split(path.sep).join("/"))
-    .filter(Boolean);
-  if (!rel.length) return [];
-  const quoted = rel.map((f) => `"${f}"`).join(" ");
-  return `npm --prefix web exec eslint --fix --max-warnings 0 ${quoted}`;
+  if (!filenames.length) return [];
+  const quoted = filenames.map((f) => `"${f.replace(/"/g, '\\"')}"`).join(" ");
+  return `node scripts/lint-staged-eslint.mjs ${quoted}`;
 }
 
 /** @type {import('lint-staged').Configuration} */
