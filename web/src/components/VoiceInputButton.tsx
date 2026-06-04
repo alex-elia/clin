@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   getSpeechSupport,
   speechLangFromPreference,
@@ -37,9 +37,10 @@ export function VoiceInputButton({
 
   useEffect(() => setMounted(true), []);
 
-  const support = mounted
-    ? getSpeechSupport()
-    : ({ supported: true } as const);
+  const support = useMemo(
+    () => (mounted ? getSpeechSupport() : ({ supported: true } as const)),
+    [mounted],
+  );
 
   const lang: SpeechLangCode = mounted
     ? speechLangFromPreference(language === "auto" ? null : language)

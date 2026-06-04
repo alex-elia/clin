@@ -3,8 +3,6 @@ import { getDb } from "@/db";
 import { appSettings } from "@/db/schema";
 import { hasOvhSdxlEnvConfig } from "@/lib/ovhSdxl";
 import {
-  DEFAULT_STABILITY_SD3_MODEL,
-  DEFAULT_STABILITY_SD3_URL,
   stabilityApiKeyFromEnv,
   stabilitySd3ModelFromEnv,
   stabilitySd3UrlFromEnv,
@@ -100,7 +98,7 @@ export async function getSdSettings(): Promise<SdSettings> {
 
 export async function getSdSettingsPublic(): Promise<SdSettingsPublic> {
   const map = await readSettingsMap();
-  const { apiUrl, model, apiKey } = resolveSdConfig();
+  const { apiUrl, model } = resolveSdConfig();
   const stabilityConfigured = hasStabilityEnvConfig();
   const ovhFallbackConfigured = hasOvhSdxlEnvConfig();
   const envConfigured = stabilityConfigured || ovhFallbackConfigured;

@@ -1,5 +1,4 @@
 import type { PersonExtract } from "@/lib/linkedinNormalize";
-import { sanitizeScrapedFullName } from "@/lib/linkedinNormalize";
 
 /** Same signal as linkedinNormalize — name field polluted with a job title. */
 const TITLE_LEAD =

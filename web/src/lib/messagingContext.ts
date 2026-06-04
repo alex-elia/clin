@@ -1,13 +1,36 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { captureSessions } from "@/db/schema";
+import { canonicalizeLinkedInUrl } from "@/lib/url";
+export type {
+  MergedMessagingThread,
+  MessagingMessageRow,
+  ThreadReplyState,
+} from "@/lib/messagingTypes";
+import type {
+  MergedMessagingThread,
+  MessagingMessageRow,
+  ThreadReplyState,
+} from "@/lib/messagingTypes";
 
-export type MessagingMessageRow = {
-  from: "me" | "them" | "unknown";
-  body: string;
-};
+export function threadKeyFromCapture(row: {
+  sourceUrl: string;
+  extractedJson: unknown;
+}): string {
+  const j = row.extractedJson as Record<string, unknown> | null;
+  const id = j?.messagingThreadId;
+  if (typeof id === "string" && id.trim()) return id.trim();
+  try {
+    const u = new URL(row.sourceUrl);
+    const m = u.pathname.match(/\/messaging\/thread\/([^/?#]+)/i);
+    if (m?.[1]) return decodeURIComponent(m[1]);
+  } catch {
+    /* ignore */
+  }
+  return row.sourceUrl.replace(/\/+$/, "");
+}
 
-function messagesFromJson(json: unknown): MessagingMessageRow[] {
+export function messagesFromJson(json: unknown): MessagingMessageRow[] {
   if (!json || typeof json !== "object") return [];
   const o = json as Record<string, unknown>;
   const src =
@@ -31,6 +54,49 @@ function messagesFromJson(json: unknown): MessagingMessageRow[] {
   return out;
 }
 
+/** Dedupe and preserve order when merging multiple capture batches. */
+export function mergeMessagingMessages(
+  batches: MessagingMessageRow[][],
+): MessagingMessageRow[] {
+  const merged: MessagingMessageRow[] = [];
+  const seen = new Set<string>();
+  for (const batch of batches) {
+    for (const m of batch) {
+      const key = `${m.from}:${m.body.slice(0, 160)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(m);
+    }
+  }
+  return merged;
+}
+
+export function deriveThreadReplyState(
+  messages: MessagingMessageRow[],
+): ThreadReplyState {
+  if (!messages.length) {
+    return {
+      lastFrom: null,
+      needsReply: false,
+      lastPreview: "",
+      theirMessageCount: 0,
+      myMessageCount: 0,
+    };
+  }
+  const last = messages[messages.length - 1]!;
+  const theirMessageCount = messages.filter((m) => m.from === "them").length;
+  const myMessageCount = messages.filter((m) => m.from === "me").length;
+  const preview =
+    last.body.length > 180 ? `${last.body.slice(0, 179)}…` : last.body;
+  return {
+    lastFrom: last.from,
+    needsReply: last.from === "them",
+    lastPreview: preview,
+    theirMessageCount,
+    myMessageCount,
+  };
+}
+
 /** Format captured thread for LLM message_context / contact panel. */
 export function formatMessagingMessagesForContext(
   messages: MessagingMessageRow[],
@@ -50,6 +116,208 @@ export function formatMessagingMessagesForContext(
   return text;
 }
 
+type CaptureSessionRow = {
+  id: string;
+  sourceUrl: string;
+  extractedJson: unknown;
+  capturedAt: Date | null;
+  contactId?: string;
+};
+
+function normalizeParticipantName(name: string | null | undefined): string {
+  return (name ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function participantUrlFromJson(json: unknown): string | null {
+  if (!json || typeof json !== "object") return null;
+  const o = json as Record<string, unknown>;
+  for (const key of [
+    "messagingParticipantProfileUrl",
+    "messagingParticipantProfileUrlScraped",
+  ]) {
+    const v = o[key];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+function participantNameFromJson(json: unknown): string | null {
+  if (!json || typeof json !== "object") return null;
+  const v = (json as Record<string, unknown>).messagingParticipantName;
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+function buildMergedThreadFromCaptureRows(
+  contactId: string,
+  rows: CaptureSessionRow[],
+  opts?: { threadKey?: string },
+): MergedMessagingThread | null {
+  if (!rows.length) return null;
+
+  const threadKeyFilter = opts?.threadKey?.trim();
+  const byThread = new Map<
+    string,
+    {
+      threadUrl: string;
+      batches: MessagingMessageRow[][];
+      captureCount: number;
+      firstCapturedAt: Date | null;
+      lastCapturedAt: Date | null;
+    }
+  >();
+
+  for (const row of rows) {
+    const tk = threadKeyFromCapture({
+      sourceUrl: row.sourceUrl,
+      extractedJson: row.extractedJson,
+    });
+    if (threadKeyFilter && tk !== threadKeyFilter) continue;
+    const msgs = messagesFromJson(row.extractedJson);
+    if (!msgs.length) continue;
+
+    let bucket = byThread.get(tk);
+    if (!bucket) {
+      bucket = {
+        threadUrl: row.sourceUrl,
+        batches: [],
+        captureCount: 0,
+        firstCapturedAt: row.capturedAt,
+        lastCapturedAt: row.capturedAt,
+      };
+      byThread.set(tk, bucket);
+    }
+    bucket.batches.push(msgs);
+    bucket.captureCount += 1;
+    bucket.lastCapturedAt = row.capturedAt;
+    if (!bucket.firstCapturedAt) bucket.firstCapturedAt = row.capturedAt;
+  }
+
+  if (!byThread.size) return null;
+
+  let pickKey = threadKeyFilter;
+  if (!pickKey) {
+    let bestAt = 0;
+    for (const [tk, v] of byThread) {
+      const at = v.lastCapturedAt?.getTime() ?? 0;
+      if (at >= bestAt) {
+        bestAt = at;
+        pickKey = tk;
+      }
+    }
+  }
+  if (!pickKey) return null;
+
+  const picked = byThread.get(pickKey);
+  if (!picked) return null;
+
+  const messages = mergeMessagingMessages(picked.batches);
+  if (!messages.length) return null;
+
+  const text = formatMessagingMessagesForContext(messages);
+  return {
+    contactId,
+    threadKey: pickKey,
+    threadUrl: picked.threadUrl,
+    messages,
+    messageCount: messages.length,
+    text,
+    firstCapturedAt: picked.firstCapturedAt,
+    lastCapturedAt: picked.lastCapturedAt,
+    captureCount: picked.captureCount,
+    replyState: deriveThreadReplyState(messages),
+  };
+}
+
+async function findAliasMessagingCaptureRows(
+  contact: {
+    id: string;
+    fullName: string | null;
+    linkedinUrlCanonical: string | null;
+  },
+  limit = 240,
+): Promise<CaptureSessionRow[]> {
+  const canonical = contact.linkedinUrlCanonical?.trim() || null;
+  const canonicalNorm = canonical ? canonicalizeLinkedInUrl(canonical) : null;
+  const nameNorm = normalizeParticipantName(contact.fullName);
+
+  const db = getDb();
+  const recent = await db
+    .select({
+      id: captureSessions.id,
+      contactId: captureSessions.contactId,
+      sourceUrl: captureSessions.sourceUrl,
+      extractedJson: captureSessions.extractedJson,
+      capturedAt: captureSessions.capturedAt,
+    })
+    .from(captureSessions)
+    .where(eq(captureSessions.pageType, "messaging"))
+    .orderBy(desc(captureSessions.capturedAt))
+    .limit(limit);
+
+  return recent
+    .filter((row) => {
+      if (!row.contactId || row.contactId === contact.id) return false;
+      const purl = participantUrlFromJson(row.extractedJson);
+      const pcanon = purl ? canonicalizeLinkedInUrl(purl) : null;
+      if (canonicalNorm && pcanon === canonicalNorm) return true;
+      const pname = normalizeParticipantName(
+        participantNameFromJson(row.extractedJson),
+      );
+      if (nameNorm && pname && pname === nameNorm) return true;
+      return false;
+    })
+    .map(({ id, sourceUrl, extractedJson, capturedAt }) => ({
+      id,
+      sourceUrl,
+      extractedJson,
+      capturedAt,
+    }));
+}
+
+/** Merge all messaging captures for a contact (optionally one thread). */
+export async function getMergedMessagingThreadForContact(
+  contactId: string,
+  opts?: { threadKey?: string; maxCaptures?: number },
+): Promise<MergedMessagingThread | null> {
+  const db = getDb();
+  const lim = Math.min(opts?.maxCaptures ?? 24, 60);
+  const rows = await db
+    .select({
+      id: captureSessions.id,
+      sourceUrl: captureSessions.sourceUrl,
+      extractedJson: captureSessions.extractedJson,
+      capturedAt: captureSessions.capturedAt,
+    })
+    .from(captureSessions)
+    .where(
+      and(
+        eq(captureSessions.contactId, contactId),
+        eq(captureSessions.pageType, "messaging"),
+      ),
+    )
+    .orderBy(asc(captureSessions.capturedAt))
+    .limit(lim);
+
+  return buildMergedThreadFromCaptureRows(contactId, rows, opts);
+}
+
+/** Campaign member view — includes captures saved under a mismatched contact id. */
+export async function getMergedMessagingThreadForCampaignContact(
+  contact: {
+    id: string;
+    fullName: string | null;
+    linkedinUrlCanonical: string | null;
+  },
+  opts?: { threadKey?: string; maxCaptures?: number },
+): Promise<MergedMessagingThread | null> {
+  const direct = await getMergedMessagingThreadForContact(contact.id, opts);
+  if (direct) return direct;
+
+  const aliasRows = await findAliasMessagingCaptureRows(contact);
+  if (!aliasRows.length) return null;
+  return buildMergedThreadFromCaptureRows(contact.id, aliasRows, opts);
+}
+
 /** Latest messaging capture for a contact (extension Capture → Messaging). */
 export async function getLatestMessagingCaptureForContact(
   contactId: string,
@@ -57,31 +325,22 @@ export async function getLatestMessagingCaptureForContact(
   capturedAt: Date;
   messageCount: number;
   text: string;
+  threadKey: string | null;
+  replyState: ThreadReplyState;
 } | null> {
-  const db = getDb();
-  const row = await db.query.captureSessions.findFirst({
-    where: and(
-      eq(captureSessions.contactId, contactId),
-      eq(captureSessions.pageType, "messaging"),
-    ),
-    orderBy: [desc(captureSessions.capturedAt)],
-  });
-  if (!row?.extractedJson) return null;
-
-  const messages = messagesFromJson(row.extractedJson);
-  if (!messages.length) return null;
-
-  const text = formatMessagingMessagesForContext(messages);
-  if (!text.trim()) return null;
+  const merged = await getMergedMessagingThreadForContact(contactId);
+  if (!merged?.text.trim()) return null;
 
   return {
-    capturedAt: row.capturedAt,
-    messageCount: messages.length,
-    text,
+    capturedAt: merged.lastCapturedAt ?? new Date(),
+    messageCount: merged.messageCount,
+    text: merged.text,
+    threadKey: merged.threadKey,
+    replyState: merged.replyState,
   };
 }
 
-/** Pasted thread wins; else stored llm field; else latest messaging capture. */
+/** Pasted thread wins; else stored llm field; else merged messaging capture. */
 export function resolveMessageContextForAnalysis(
   pastedOrStored: string | null | undefined,
   fromCapture: string | null | undefined,

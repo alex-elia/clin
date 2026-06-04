@@ -1,16 +1,22 @@
 import Link from "next/link";
-import { updateInboxThreadAction } from "@/app/actions";
+import { InboxCapturedThreadCard } from "@/components/InboxCapturedThreadCard";
+import { MessagingInboxSnapshotPanel } from "@/components/MessagingInboxSnapshotPanel";
 import {
   listInboxOverview,
   type InboxThreadStatus,
 } from "@/lib/inbox";
 import { getLatestMessagingInboxSnapshot } from "@/lib/messagingInboxSnapshot";
+import {
+  loadThreadAnalysesByContactIds,
+  threadAnalysisKey,
+} from "@/lib/inboxThreadAnalysisStore";
 
 export const dynamic = "force-dynamic";
 
-const FILTERS: { key: "active" | "all" | InboxThreadStatus; label: string }[] =
+const FILTERS: { key: "active" | "all" | InboxThreadStatus | "needs_reply"; label: string }[] =
   [
     { key: "active", label: "Active" },
+    { key: "needs_reply", label: "Needs reply" },
     { key: "open", label: "Open" },
     { key: "snoozed", label: "Snoozed" },
     { key: "done", label: "Done" },
@@ -33,19 +39,39 @@ export default async function InboxPage({
     viewRaw === "open" ||
     viewRaw === "done" ||
     viewRaw === "snoozed" ||
-    viewRaw === "active"
+    viewRaw === "active" ||
+    viewRaw === "needs_reply"
       ? viewRaw
       : "active";
   const contactFilter = sp.contact?.trim() || undefined;
 
-  const rows = await listInboxOverview({
-    statusFilter: view as "active" | "all" | InboxThreadStatus,
-    contactId: contactFilter,
-    limit: 100,
-  });
+  const [rows, needsReplyRows] = await Promise.all([
+    listInboxOverview({
+      statusFilter:
+        view === "needs_reply"
+          ? "active"
+          : (view as "active" | "all" | InboxThreadStatus),
+      contactId: contactFilter,
+      limit: 100,
+      needsReplyOnly: view === "needs_reply",
+    }),
+    view === "needs_reply"
+      ? Promise.resolve([])
+      : listInboxOverview({
+          statusFilter: "active",
+          contactId: contactFilter,
+          limit: 200,
+          needsReplyOnly: true,
+        }),
+  ]);
 
   const listSnapshot = await getLatestMessagingInboxSnapshot();
   const capturedContactIds = new Set(rows.map((r) => r.contactId));
+  const threadAnalyses = loadThreadAnalysesByContactIds(
+    rows.map((r) => ({ contactId: r.contactId, threadKey: r.threadKey })),
+  );
+  const needsReplyCount =
+    view === "needs_reply" ? rows.length : needsReplyRows.length;
 
   return (
     <div className="mx-auto max-w-5xl space-y-8 px-4 py-8">
@@ -55,7 +81,8 @@ export default async function InboxPage({
           Open a 1:1 thread and use{" "}
           <strong className="font-medium">Capture</strong> in the extension, or
           run <strong className="font-medium">Snapshot messaging list</strong> on
-          the inbox. Clin does not poll LinkedIn or send messages.
+          the inbox. Clin merges message history across captures and can suggest
+          replies with your local LLM — it never sends messages on LinkedIn.
         </p>
       </div>
 
@@ -71,84 +98,40 @@ export default async function InboxPage({
             className={chipClass(view === f.key)}
           >
             {f.label}
+            {f.key === "needs_reply" && needsReplyCount > 0
+              ? ` (${needsReplyCount})`
+              : ""}
           </Link>
         ))}
       </div>
 
-      {listSnapshot && listSnapshot.rows.length > 0 ? (
-        <section className="clin-callout">
-          <h2 className="text-sm font-semibold">Messaging list snapshot</h2>
-          <p className="mt-1 text-xs text-clin-muted">
-            {listSnapshot.tileCount} rows · {listSnapshot.parseMode}
-          </p>
-          <ul className="mt-4 max-h-80 space-y-2 overflow-y-auto">
-            {listSnapshot.rows.map((r, i) => (
-              <li
-                key={`${r.participantName ?? "row"}-${i}`}
-                className="clin-input text-sm"
-              >
-                <div className="flex justify-between gap-2">
-                  <span className="font-medium">
-                    {r.contactId ? (
-                      <Link href={`/contacts/${r.contactId}`} className="clin-link">
-                        {r.contactName ?? r.participantName}
-                      </Link>
-                    ) : (
-                      (r.participantName ?? "Unknown")
-                    )}
-                  </span>
-                  {r.timeLabel ? (
-                    <span className="text-xs text-clin-muted">{r.timeLabel}</span>
-                  ) : null}
-                </div>
-                {r.preview ? (
-                  <p className="mt-1 line-clamp-2 text-xs text-clin-muted">{r.preview}</p>
-                ) : null}
-                {r.contactId && capturedContactIds.has(r.contactId) ? (
-                  <span className="text-[11px] text-emerald-700">Thread captured</span>
-                ) : r.contactId ? (
-                  <span className="text-[11px] text-amber-700">Not thread-captured yet</span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </section>
+      {listSnapshot ? (
+        <MessagingInboxSnapshotPanel
+          snapshot={listSnapshot}
+          capturedContactIds={capturedContactIds}
+        />
       ) : null}
 
       <h2 className="text-sm font-semibold">Captured threads</h2>
 
       {rows.length === 0 ? (
-        <p className="text-sm text-clin-muted">No threads yet.</p>
+        <p className="text-sm text-clin-muted">
+          {view === "needs_reply"
+            ? "No threads waiting for your reply."
+            : "No threads yet."}
+        </p>
       ) : (
         <ul className="space-y-4">
           {rows.map((r) => (
-            <li
+            <InboxCapturedThreadCard
               key={`${r.contactId}-${r.threadKey}`}
-              className="clin-card p-4"
-            >
-              <Link href={`/contacts/${r.contactId}`} className="font-medium hover:underline">
-                {r.fullName || r.contactId}
-              </Link>
-              {r.preview ? (
-                <p className="mt-2 line-clamp-3 text-sm text-clin-muted">
-                  {r.preview}
-                </p>
-              ) : null}
-              <form action={updateInboxThreadAction} className="mt-3 flex flex-wrap gap-2">
-                <input type="hidden" name="contactId" value={r.contactId} />
-                <input type="hidden" name="threadKey" value={r.threadKey} />
-                <select name="status" defaultValue={r.state?.status ?? "open"} className="rounded border px-2 py-1 text-sm">
-                  <option value="open">Open</option>
-                  <option value="snoozed">Snooze</option>
-                  <option value="done">Done</option>
-                </select>
-                <input type="number" name="snoozeDays" min={1} max={30} defaultValue={1} className="w-16 rounded border px-2 py-1 text-sm" />
-                <input type="text" name="note" defaultValue={r.state?.note ?? ""} placeholder="Note" className="min-w-[10rem] flex-1 rounded border px-2 py-1 text-sm" />
-                <button type="submit" className="clin-btn-primary text-xs px-3 py-1">
-                  Save
-                </button>
-              </form>
-            </li>
+              row={r}
+              storedAnalysis={
+                threadAnalyses.get(
+                  threadAnalysisKey(r.contactId, r.threadKey),
+                ) ?? null
+              }
+            />
           ))}
         </ul>
       )}

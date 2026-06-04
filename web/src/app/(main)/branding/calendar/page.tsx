@@ -67,7 +67,6 @@ export default async function ContentCalendarPage({
       countScheduledPosts(),
     ]);
   const byDay = postsByLocalDay(postsThisMonthList, year, month);
-  const postsThisMonth = [...byDay.values()].flat();
   const scheduledElsewhere = Math.max(
     0,
     scheduledTotal - postsThisMonthList.length,

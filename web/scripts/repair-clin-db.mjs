@@ -259,6 +259,23 @@ function repairClinSqliteSchema(db) {
     `);
   }
 
+  if (!tableExists(db, "inbox_thread_analysis")) {
+    db.exec(`
+      CREATE TABLE inbox_thread_analysis (
+        id text PRIMARY KEY NOT NULL,
+        contact_id text NOT NULL,
+        thread_key text NOT NULL,
+        analysis_json text NOT NULL,
+        message_count integer NOT NULL,
+        model text,
+        analyzed_at integer NOT NULL,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+      );
+      CREATE UNIQUE INDEX inbox_thread_analysis_contact_key ON inbox_thread_analysis (contact_id, thread_key);
+      CREATE INDEX inbox_thread_analysis_analyzed_idx ON inbox_thread_analysis (analyzed_at);
+    `);
+  }
+
   if (tableExists(db, "content_posts")) {
     addColumnOrExists(
       db,

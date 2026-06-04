@@ -4,6 +4,10 @@
 
 Clin is **open source and community-friendly**: inspect the code, fork it, and adapt it. Data stays on your disk by default. You control which features are on and how fast they run.
 
+> **Trying Clin (not developing)?** Desktop installers for Windows and macOS are **new and lightly tested** — early beta. Download the latest [GitHub Release](https://github.com/alex-elia/clin/releases/latest) (desktop app + extension zip), try it, and [report issues or feedback](https://github.com/alex-elia/clin/issues/new). Install guide: [project site](https://alex-elia.github.io/clin/) (French/English).
+>
+> **Developers:** use Quick start below (`git clone`, `npm run dev`).
+
 ## What you can do
 
 | Area | Capabilities |
@@ -51,6 +55,9 @@ Install [Ollama](https://ollama.com/), pull a model (e.g. `qwen2.5:8b`), and poi
 | `npm run dev` | Start dashboard + API (singleton on port 3000) |
 | `npm run dev:stop` | Stop port 3000 / orphaned Clin dev (from `web/`) |
 | `npm run dev:clean` | Clear `.next` cache then start dev (from `web/`) |
+| `npm run lint` | ESLint (`web/`) |
+| `npm run typecheck` | TypeScript check (`web/`) |
+| `npm run check` | Typecheck + lint (same as pre-commit quality gate) |
 | `npm run build` / `npm run start` | Production build / serve |
 | `npm run build:desktop` | Build standalone runtime for Electron packaging |
 | `npm run dist:desktop:win` | Build Windows portable + zip desktop artifacts |
@@ -62,11 +69,11 @@ Install [Ollama](https://ollama.com/), pull a model (e.g. `qwen2.5:8b`), and poi
 
 Equivalent from `web/`: `cd web && npm install && npm run dev`.
 
-### Desktop packaging (portable)
+### Desktop packaging (portable, beta)
 
-Clin ships as a local desktop wrapper around the same local-first API/SQLite runtime.
+End-user builds ship on [GitHub Releases](https://github.com/alex-elia/clin/releases/latest) (Windows portable, macOS zip, extension zip). Treat them as **early beta** — please [open an issue](https://github.com/alex-elia/clin/issues/new) if something breaks.
 
-From repository root:
+Contributors can build locally from repository root:
 
 ```bash
 npm install
@@ -145,7 +152,7 @@ Anyone can fork and improve Clin. Day-to-day maintenance and roadmap decisions a
 
 ## Contributing
 
-Read [`docs/DESIGN.md`](./docs/DESIGN.md) and [`docs/adr/README.md`](./docs/adr/README.md) before larger changes. For DOM breakage after a LinkedIn UI update, fixes usually land in `extension/background.js`.
+Read [`CONTRIBUTING.md`](./CONTRIBUTING.md) for setup, **pre-commit hooks**, and CI. For architecture, see [`docs/DESIGN.md`](./docs/DESIGN.md) and [`docs/adr/README.md`](./docs/adr/README.md). DOM breakage after a LinkedIn UI update usually means fixes in `extension/background.js`.
 
 Use GitHub Issues for bugs and ideas; open a pull request when you have a focused fix or feature.
 

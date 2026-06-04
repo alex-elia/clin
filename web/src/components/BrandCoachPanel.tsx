@@ -14,7 +14,6 @@ type BrandCoachPanelProps = {
 
 export function BrandCoachPanel({
   postId,
-  compact: _compact,
   onApplyPatch = () => {},
 }: BrandCoachPanelProps) {
   return (

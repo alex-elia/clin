@@ -1,14 +1,11 @@
-import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contentPosts } from "@/db/schema";
 import { updateContentBrandContext } from "@/lib/contentBrandContext";
 import {
   createContentPost,
-  getContentPostById,
   markContentPostPublished,
   updateContentPost,
 } from "@/lib/contentPosts";
-import type { CoachAction } from "@/lib/brandCoachTypes";
 import { coachActionSchema } from "@/lib/brandCoachTypes";
 import { getOrCreateContentBrandContext } from "@/lib/contentBrandContext";
 import { enforceMaxPostsPerWeek } from "@/lib/editorial/enforceMaxPosts";

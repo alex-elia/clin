@@ -19,7 +19,6 @@ import {
   CONTENT_LANGUAGE_PREF_LABELS,
   languageResolutionHint,
   parseContentLanguagePreference,
-  parsePostLanguage,
   postTextForLanguageDetection,
   resolveContentLanguage,
 } from "@/lib/contentLanguage";
@@ -30,7 +29,6 @@ import {
 } from "@/lib/contentPostWorkflow";
 import {
   brandingMediaDownloadUrl,
-  hasRequiredPostImage,
   postFormatRequiresImage,
 } from "@/lib/contentPostMedia";
 import {

@@ -4,6 +4,8 @@
   "private": true,
   "main": "electron/main.cjs",
   "scripts": {
+    "prepare": "husky",
+    "check": "npm run typecheck --prefix web && npm run lint --prefix web",
     "dev": "npm --prefix web run dev",
     "dev:stop": "npm --prefix web run dev:stop",
     "dev:clean": "npm --prefix web run dev:clean",
@@ -18,6 +20,7 @@
     "desktop:start": "electron .",
     "start": "npm --prefix web run start",
     "lint": "npm --prefix web run lint",
+    "typecheck": "npm --prefix web run typecheck",
     "db:repair": "npm --prefix web run db:repair",
     "db:generate": "npm --prefix web run db:generate",
     "db:push": "npm --prefix web run db:push",
@@ -25,7 +28,9 @@
   },
   "devDependencies": {
     "electron": "^37.1.0",
-    "electron-builder": "^26.0.12"
+    "electron-builder": "^26.0.12",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.2"
   },
   "build": {
     "publish": null,

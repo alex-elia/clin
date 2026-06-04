@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { captureSessions } from "@/db/schema";
 import { maybeAutopilotAnalyzeAfterProfileCapture } from "@/lib/autopilot";
+import { maybeAutopilotThreadAnalysisAfterMessagingCapture } from "@/lib/campaignThreadAnalysis";
 import { runCampaignPostCaptureWorkflow } from "@/lib/campaignPostCaptureWorkflow";
 import { ingestCapture } from "@/lib/ingest";
 import { attachImportedContactsToCampaign } from "@/lib/outreachCampaigns";
@@ -77,16 +78,24 @@ export async function POST(req: Request) {
     }
   }
 
-  const { outreachCampaignId, ...capturePayload } = parsed.data;
+  const { outreachCampaignId, outreachMemberId, expectedParticipantProfileUrl, ...capturePayload } =
+    parsed.data;
   const started = Date.now();
 
   try {
-    const result = await ingestCapture(db, capturePayload);
+    const result = await ingestCapture(db, capturePayload, {
+      outreachCampaignId,
+      outreachMemberId,
+      expectedParticipantProfileUrl,
+    });
     await rollCaptureGapAfterSuccess(pace);
     maybeAutopilotAnalyzeAfterProfileCapture(
       result.contactId,
       capturePayload.pageType,
     );
+    if (capturePayload.pageType === "messaging") {
+      maybeAutopilotThreadAnalysisAfterMessagingCapture(result.contactId);
+    }
     const campaignAttach = await attachImportedContactsToCampaign(
       outreachCampaignId,
       [result.contactId],

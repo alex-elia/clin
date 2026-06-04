@@ -63,7 +63,6 @@ export function PostAutopilotPanel({
   const [xp, setXp] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [coachDebug, setCoachDebug] = useState<BrandCoachTurnDebug | null>(null);
-  const [imageGenerated, setImageGenerated] = useState(false);
   const [complementRequest, setComplementRequest] =
     useState<PostAutopilotComplementRequest | null>(null);
   const [complementInput, setComplementInput] = useState("");
@@ -101,7 +100,6 @@ export function PostAutopilotPanel({
     setComplete(false);
     setError(null);
     setCoachDebug(null);
-    setImageGenerated(false);
     setShowSteps(true);
     setComplementRequest(null);
     setComplementInput("");
@@ -184,7 +182,6 @@ export function PostAutopilotPanel({
       return;
     }
 
-    setImageGenerated(result.imageGenerated);
     setComplete(true);
     setXp(POST_AUTOPILOT_TOTAL_XP);
     setShowSteps(false);
@@ -346,7 +343,6 @@ export function PostAutopilotPanel({
               activeStep={activeStep}
               xp={xp}
               running={running}
-              complete={false}
               progressPct={progressPct}
             />
           </div>
@@ -359,7 +355,6 @@ export function PostAutopilotPanel({
               activeStep={null}
               xp={xp}
               running={false}
-              complete
               progressPct={100}
             />
           </div>

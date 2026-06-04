@@ -17,7 +17,6 @@ type PostAutopilotPipelineProps = {
   activeStep: PostAutopilotStepId | null;
   xp: number;
   running: boolean;
-  complete: boolean;
   progressPct: number;
 };
 
@@ -26,7 +25,6 @@ export function PostAutopilotPipeline({
   activeStep,
   xp,
   running,
-  complete,
   progressPct,
 }: PostAutopilotPipelineProps) {
   const level =

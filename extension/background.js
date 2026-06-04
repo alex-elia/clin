@@ -6,6 +6,8 @@
 const DEFAULT_BASE = "http://127.0.0.1:3000";
 const CAPTURE_TIMES_KEY = "clin_capture_timestamps_ms";
 const LAST_ERROR_KEY = "clin_last_pace_message";
+const LAST_OUTREACH_MEMBER_KEY = "clinLastOutreachMember";
+const OUTREACH_MEMBER_CONTEXT_TTL_MS = 45 * 60 * 1000;
 
 async function getApiBase() {
   const { clinApiBase } = await chrome.storage.sync.get(["clinApiBase"]);
@@ -232,6 +234,50 @@ async function applyOutreachCampaignId(payload) {
   return attachCampaignIdToPayload(payload, ctx);
 }
 
+function linkedinVanityFromUrl(url) {
+  if (typeof url !== "string" || !url.trim()) return null;
+  try {
+    const m = new URL(url.trim()).pathname.match(/^\/in\/([^/?#]+)\/?/i);
+    if (!m?.[1] || m[1].toLowerCase() === "me") return null;
+    return decodeURIComponent(m[1]).toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+async function setLastOutreachMemberContext(item) {
+  if (!item?.memberId) return;
+  await chrome.storage.local.set({
+    [LAST_OUTREACH_MEMBER_KEY]: {
+      memberId: item.memberId,
+      contactId: item.contactId,
+      linkedinUrl: item.linkedinUrl,
+      fullName: item.fullName,
+      at: Date.now(),
+    },
+  });
+}
+
+async function getLastOutreachMemberContext() {
+  const stored = await chrome.storage.local.get([LAST_OUTREACH_MEMBER_KEY]);
+  const ctx = stored[LAST_OUTREACH_MEMBER_KEY];
+  if (!ctx || typeof ctx !== "object") return null;
+  const age = Date.now() - (ctx.at || 0);
+  if (age > OUTREACH_MEMBER_CONTEXT_TTL_MS) return null;
+  return ctx;
+}
+
+async function attachMessagingCaptureContext(payload) {
+  let out = await applyOutreachCampaignId(payload);
+  const ctx = await getLastOutreachMemberContext();
+  if (!ctx) return out;
+  if (ctx.memberId) out = { ...out, outreachMemberId: ctx.memberId };
+  if (ctx.linkedinUrl) {
+    out = { ...out, expectedParticipantProfileUrl: ctx.linkedinUrl };
+  }
+  return out;
+}
+
 function isMessagingThreadUrl(url) {
   try {
     const u = new URL(url);
@@ -313,14 +359,136 @@ function isConnectionsListPageUrl(url) {
 
 /** Page world — is a messaging thread UI visible (full page or overlay). */
 function isMessagingDomVisiblePage() {
-  const list =
-    document.querySelector("ul.msg-s-message-list") ||
-    document.querySelector(".msg-s-message-list") ||
-    document.querySelector("[class*='msg-s-message-list']");
+  const list = findMessagingScrollContainer();
+  const header =
+    document.querySelector(".msg-overlay-conversation-bubble-header") ||
+    document.querySelector(".msg-thread__header") ||
+    document.querySelector("[data-test-conversation-header]") ||
+    document.querySelector("[class*='msg-thread'][class*='header']");
+  const composer =
+    document.querySelector('.msg-form__contenteditable[contenteditable="true"]') ||
+    document.querySelector('[data-lexical-editor="true"][contenteditable="true"]');
   return {
-    visible: Boolean(list),
+    visible: Boolean(list || (header && composer)),
     onThreadUrl: /\/messaging\/thread\//i.test(window.location.pathname),
   };
+}
+
+/** Page world — scrollable message list in overlay or full-page thread. */
+function findMessagingScrollContainer() {
+  const selectors = [
+    "ul.msg-s-message-list",
+    ".msg-s-message-list",
+    "[class*='msg-s-message-list']",
+    ".msg-thread__message-list",
+    "[class*='msg-thread'] [role='log']",
+    "[class*='msg-overlay-conversation'] [role='log']",
+  ];
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (el instanceof HTMLElement) return el;
+  }
+  const bubble =
+    document.querySelector(".msg-overlay-conversation-bubble") ||
+    document.querySelector("[class*='msg-overlay-conversation']") ||
+    document.querySelector(".msg-convo-wrapper");
+  if (bubble instanceof HTMLElement) {
+    const scrollables = bubble.querySelectorAll(
+      "[style*='overflow'], [class*='scrollable'], [class*='scroll']",
+    );
+    for (const el of scrollables) {
+      if (el instanceof HTMLElement && el.scrollHeight > el.clientHeight + 20) {
+        return el;
+      }
+    }
+    for (const el of bubble.querySelectorAll("[role='log'], [role='list']")) {
+      if (el instanceof HTMLElement && el.querySelector("li, [class*='message']")) {
+        return el;
+      }
+    }
+  }
+  return null;
+}
+
+/** Page world — thread id / conversation URN from URL, sidebar, or DOM attributes. */
+function resolveMessagingThreadIdFromDom() {
+  let threadId;
+  let conversationUrn;
+  let numericId;
+
+  try {
+    const m = window.location.pathname.match(/\/messaging\/thread\/([^/?#]+)/i);
+    if (m?.[1]) threadId = decodeURIComponent(m[1]);
+  } catch {
+    /* ignore */
+  }
+
+  function scanUrn(raw) {
+    if (!raw || typeof raw !== "string") return;
+    const msgMatch = raw.match(/urn:li:msg_conversation:\(([^)]+)\)/i);
+    if (msgMatch?.[1]) {
+      conversationUrn = `urn:li:msg_conversation:(${msgMatch[1]})`;
+      const part = msgMatch[1].split(",").pop()?.trim().replace(/^["']|["']$/g, "");
+      if (part && !threadId) threadId = part;
+    }
+    const fsMatch = raw.match(/urn:li:fs_conversation:(\d+)/i);
+    if (fsMatch?.[1]) numericId = fsMatch[1];
+  }
+
+  for (const el of document.querySelectorAll(
+    "[data-conversation-urn],[data-thread-urn],[data-conversation-id]",
+  )) {
+    scanUrn(el.getAttribute("data-conversation-urn") || el.getAttribute("data-thread-urn"));
+    if (!threadId) {
+      const cid = el.getAttribute("data-conversation-id");
+      if (cid) threadId = cid.trim();
+    }
+  }
+
+  if (!threadId) {
+    const activeLink =
+      document.querySelector(
+        '.msg-conversation-listitem--active a[href*="/messaging/thread/"]',
+      ) ||
+      document.querySelector('a.msg-thread-listitem--active[href*="/messaging/thread/"]') ||
+      document.querySelector(
+        '[class*="conversation-list-item"][class*="active"] a[href*="/messaging/thread/"]',
+      ) ||
+      document.querySelector('a[href*="/messaging/thread/"][aria-current="page"]');
+    if (activeLink instanceof HTMLAnchorElement && activeLink.href) {
+      const m = activeLink.href.match(/\/messaging\/thread\/([^/?#]+)/i);
+      if (m?.[1]) threadId = decodeURIComponent(m[1]);
+    }
+  }
+
+  if (!threadId) {
+    for (const a of document.querySelectorAll('a[href*="/messaging/thread/"]')) {
+      if (!(a instanceof HTMLAnchorElement)) continue;
+      const active =
+        a.getAttribute("aria-current") === "page" ||
+        a.closest('[class*="active"],[class*="selected"]');
+      if (!active) continue;
+      const m = a.href.match(/\/messaging\/thread\/([^/?#]+)/i);
+      if (m?.[1]) {
+        threadId = decodeURIComponent(m[1]);
+        break;
+      }
+    }
+  }
+
+  if (!conversationUrn && threadId) {
+    const root =
+      document.querySelector(".msg-overlay-conversation-bubble") ||
+      document.querySelector(".msg-convo-wrapper") ||
+      document.querySelector("main");
+    const html = root?.innerHTML?.slice(0, 80_000) || "";
+    const m = html.match(
+      /urn:li:msg_conversation:\((urn:li:fsd_profile:[^,]+,\s*[^)]+)\)/i,
+    );
+    if (m?.[1]) conversationUrn = `urn:li:msg_conversation:(${m[1]})`;
+  }
+
+  return { threadId, conversationUrn, numericId };
 }
 
 /**
@@ -356,20 +524,8 @@ function scrapeMessagingThread() {
   }
 
   let messagingThreadId;
-  try {
-    const u = new URL(window.location.href);
-    const m = u.pathname.match(/\/messaging\/thread\/([^/?#]+)/i);
-    if (m?.[1]) messagingThreadId = decodeURIComponent(m[1]);
-  } catch {
-    /* ignore */
-  }
-  if (!messagingThreadId) {
-    const urnEl = document.querySelector("[data-conversation-urn],[data-thread-urn]");
-    const urn = urnEl?.getAttribute("data-conversation-urn") ||
-      urnEl?.getAttribute("data-thread-urn") || "";
-    const um = urn.match(/msg_conversation[^)]*?,\s*([^)]+)\)/i);
-    if (um?.[1]) messagingThreadId = um[1].trim();
-  }
+  const resolved = resolveMessagingThreadIdFromDom();
+  messagingThreadId = resolved.threadId;
 
   let sourceUrl = window.location.href;
   if (messagingThreadId && !sourceUrl.includes("/messaging/")) {
@@ -461,6 +617,39 @@ function scrapeMessagingThread() {
   lists.forEach((list) => scrapeFromList(list));
   if (lists.length === 0) scrapeFromList(threadRoot);
 
+  if (messagingMessages.length === 0) {
+    const groups = threadRoot.querySelectorAll(
+      "[class*='msg-s-message-group'], [class*='message-group'], [class*='msg__bubble'], li[class*='event-listitem']",
+    );
+    groups.forEach((group) => {
+      const bodyEl =
+        group.querySelector(".msg-s-event-listitem__body") ||
+        group.querySelector("[class*='message-bubble']") ||
+        group.querySelector("[class*='message-content']") ||
+        group.querySelector("[data-lexical-text='true']") ||
+        group.querySelector("p");
+      const text = (bodyEl?.innerText || group.innerText || "").trim();
+      if (!text || text.length < 2) return;
+      if (/^\d{1,2}:\d{2}(\s*(AM|PM))?$/i.test(text)) return;
+      if (/^(today|yesterday|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i.test(text) && text.length < 24) {
+        return;
+      }
+      pushMsg(isSentGroup(group) ? "me" : "them", text);
+    });
+  }
+
+  if (messagingMessages.length === 0) {
+    const bubbleBodies = threadRoot.querySelectorAll(
+      ".msg-s-event-listitem__body, [class*='message-bubble'], [class*='msg-s-event-listitem']",
+    );
+    bubbleBodies.forEach((bodyEl) => {
+      const group = bodyEl.closest("[class*='message-group']") || bodyEl.parentElement;
+      const text = (bodyEl.innerText || "").trim();
+      if (!text || text.length < 2) return;
+      pushMsg(isSentGroup(group) ? "me" : "them", text);
+    });
+  }
+
   const ef = {
     messagingParticipantProfileUrl,
     messagingThreadId,
@@ -509,17 +698,19 @@ async function captureMessagingBundleInPage() {
     const included = Array.isArray(json?.included) ? json.included : [];
     const messages = [];
     const seen = new Set();
-    function pushMsg(from, body) {
+    function pushMsg(from, body, createdAt) {
       const b = String(body || "").replace(/\s+/g, " ").trim();
       if (!b || b.length < 2) return;
       const key = `${from}:${b.slice(0, 100)}`;
       if (seen.has(key)) return;
       seen.add(key);
-      messages.push({ from, body: b.slice(0, 20_000) });
+      messages.push({
+        from,
+        body: b.slice(0, 20_000),
+        createdAt: typeof createdAt === "number" ? createdAt : 0,
+      });
     }
-    for (const item of included) {
-      const type = item?.$type || "";
-      if (!/Event|Message|messaging/i.test(type)) continue;
+    function extractBody(item) {
       const body =
         item?.eventContent?.attributedBody?.text ||
         item?.eventContent?.messageBody?.text ||
@@ -527,13 +718,51 @@ async function captureMessagingBundleInPage() {
         item?.messageBody?.text ||
         (typeof item?.body === "string" ? item.body : undefined) ||
         item?.text?.text;
+      if (body) return body;
+      const ec = item?.eventContent || item?.body;
+      if (ec && typeof ec === "object") {
+        const attr = ec.attributedBody;
+        if (attr?.text) return attr.text;
+        if (typeof ec.text === "string") return ec.text;
+      }
+      return undefined;
+    }
+    function extractFrom(item) {
+      if (item?.fromSelf === true) return "me";
+      if (item?.fromSelf === false) return "them";
+      const sender = item?.sender || item?.from;
+      if (sender && typeof sender === "object") {
+        const profile =
+          sender.participantProfile || sender.profile || sender.member?.miniProfile;
+        if (profile?.publicIdentifier) return "them";
+      }
+      return "unknown";
+    }
+    for (const item of included) {
+      const type = item?.$type || "";
+      if (!/Event|Message|messaging/i.test(type)) continue;
+      const body = extractBody(item);
       if (!body) continue;
-      let from = "unknown";
-      if (item?.fromSelf === true) from = "me";
-      else if (item?.fromSelf === false) from = "them";
-      pushMsg(from, body);
+      const createdAt =
+        item?.createdAt ?? item?.deliveredAt ?? item?.originToken ?? 0;
+      pushMsg(extractFrom(item), body, createdAt);
+    }
+    const gqlElements =
+      json?.data?.messengerMessagesBySyncToken?.elements ||
+      json?.data?.messengerMessages?.elements ||
+      json?.data?.data?.messengerMessages?.elements;
+    if (Array.isArray(gqlElements)) {
+      for (const event of gqlElements) {
+        if (!event || typeof event !== "object") continue;
+        const body = extractBody(event);
+        if (!body) continue;
+        const createdAt = event.createdAt ?? event.deliveredAt ?? 0;
+        pushMsg(extractFrom(event), body, createdAt);
+      }
     }
     if (!messages.length) return null;
+    messages.sort((a, b) => a.createdAt - b.createdAt);
+    const normalized = messages.map(({ from, body }) => ({ from, body }));
     let messagingParticipantProfileUrl;
     let messagingParticipantName;
     for (const item of included) {
@@ -543,58 +772,163 @@ async function captureMessagingBundleInPage() {
         break;
       }
     }
+    const oldestCreatedAt = messages[0]?.createdAt || 0;
     return {
       messagingThreadId: threadId,
       messagingParticipantProfileUrl,
       messagingParticipantName,
-      messagingMessages: messages,
+      messagingMessages: normalized,
       captureMethod: "voyager",
+      oldestCreatedAt,
     };
   }
 
-  const deadline = Date.now() + 6000;
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const list =
-    document.querySelector("ul.msg-s-message-list") ||
-    document.querySelector(".msg-s-message-list");
-  if (list) {
-    for (let i = 0; i < 6 && Date.now() < deadline; i++) {
-      list.scrollTop = list.scrollHeight;
-      await sleep(400);
-      list.scrollTop = 0;
-      await sleep(300);
-    }
-    list.scrollTop = list.scrollHeight;
-    await sleep(250);
+  async function fetchVoyagerThreadPage(conversationKey, beforeCreatedAt) {
+    const base =
+      `https://www.linkedin.com/voyager/api/messaging/conversations/${encodeURIComponent(conversationKey)}/events` +
+      "?keyVersion=LEGACY_INBOX&q=events&count=80";
+    const url =
+      beforeCreatedAt && beforeCreatedAt > 0
+        ? `${base}&createdBefore=${beforeCreatedAt}`
+        : base;
+    const resp = await fetch(url, { headers, credentials: "include" });
+    if (!resp.ok) return null;
+    const json = await resp.json();
+    return parseVoyagerMessages(json, threadId);
   }
 
-  let threadId;
-  try {
-    const m = window.location.pathname.match(/\/messaging\/thread\/([^/?#]+)/i);
-    if (m?.[1]) threadId = decodeURIComponent(m[1]);
-  } catch {
-    /* ignore */
+  async function fetchGraphQLMessages(conversationUrn) {
+    const QUERY_ID = "messengerMessages.21eabeb3ee872254060ef21b793ea7d0";
+    const gqlHeaders = {
+      ...headers,
+      Accept: "application/graphql",
+      "x-li-page-instance": "urn:li:page:d_flagship3_messaging",
+    };
+    const variables = `(conversationUrn:${conversationUrn},count:50)`;
+    const url =
+      `https://www.linkedin.com/voyager/api/voyagerMessagingGraphQL/graphql?queryId=${QUERY_ID}&variables=${encodeURIComponent(variables)}`;
+    try {
+      const resp = await fetch(url, { headers: gqlHeaders, credentials: "include" });
+      if (!resp.ok) return null;
+      const json = await resp.json();
+      return parseVoyagerMessages(json, threadId);
+    } catch {
+      return null;
+    }
+  }
+
+  async function buildConversationUrnIfNeeded(resolved) {
+    if (resolved.conversationUrn?.startsWith("urn:li:msg_conversation:")) {
+      return resolved.conversationUrn;
+    }
+    if (!resolved.threadId || !/^2-/.test(resolved.threadId)) return resolved.conversationUrn;
+    try {
+      const resp = await fetch("https://www.linkedin.com/voyager/api/me", {
+        headers,
+        credentials: "include",
+      });
+      if (!resp.ok) return resolved.conversationUrn;
+      const json = await resp.json();
+      const included = Array.isArray(json?.included) ? json.included : [];
+      let profileUrn;
+      for (const item of included) {
+        const urn = item?.entityUrn || item?.dashEntityUrn;
+        if (typeof urn === "string" && urn.includes("fsd_profile")) {
+          profileUrn = urn;
+          break;
+        }
+      }
+      profileUrn =
+        profileUrn ||
+        json?.data?.entityUrn ||
+        json?.miniProfile?.dashEntityUrn ||
+        json?.miniProfile?.entityUrn;
+      if (profileUrn) {
+        return `urn:li:msg_conversation:(${profileUrn},${resolved.threadId})`;
+      }
+    } catch {
+      /* ignore */
+    }
+    return resolved.conversationUrn;
+  }
+
+  const deadline = Date.now() + 8000;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const list = findMessagingScrollContainer();
+  if (list) {
+    for (let i = 0; i < 8 && Date.now() < deadline; i++) {
+      list.scrollTop = list.scrollHeight;
+      await sleep(450);
+      list.scrollTop = 0;
+      await sleep(350);
+    }
+    list.scrollTop = list.scrollHeight;
+    await sleep(400);
+  }
+
+  const resolved = resolveMessagingThreadIdFromDom();
+  let threadId = resolved.threadId;
+  const conversationIds = [];
+  if (threadId) conversationIds.push(threadId);
+  if (resolved.numericId && resolved.numericId !== threadId) {
+    conversationIds.push(resolved.numericId);
   }
 
   let voyager = null;
   const headers = voyagerHeaders();
-  if (threadId && headers["csrf-token"]) {
-    const urls = [
-      `https://www.linkedin.com/voyager/api/messaging/conversations/${encodeURIComponent(threadId)}/events?count=80`,
-      `https://www.linkedin.com/voyager/api/voyagerMessagingDashMessengerMessages?action=execute&q=findConversation&conversationId=${encodeURIComponent(threadId)}`,
-    ];
-    for (const url of urls) {
+  const conversationUrn = await buildConversationUrnIfNeeded(resolved);
+
+  if (headers["csrf-token"]) {
+    if (conversationUrn?.startsWith("urn:li:msg_conversation:")) {
+      voyager = await fetchGraphQLMessages(conversationUrn);
+    }
+
+    for (const convKey of conversationIds) {
+      if (voyager?.messagingMessages?.length) break;
+      let mergedPage = null;
+      let before = 0;
+      for (let page = 0; page < 4; page++) {
+        const parsed = await fetchVoyagerThreadPage(convKey, before);
+        if (!parsed?.messagingMessages?.length) break;
+        if (!mergedPage) {
+          mergedPage = parsed;
+        } else {
+          const seen = new Set(
+            mergedPage.messagingMessages.map(
+              (m) => `${m.from}:${m.body.slice(0, 100)}`,
+            ),
+          );
+          for (const m of parsed.messagingMessages) {
+            const key = `${m.from}:${m.body.slice(0, 100)}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            mergedPage.messagingMessages.push(m);
+          }
+        }
+        const nextBefore = parsed.oldestCreatedAt;
+        if (!nextBefore || nextBefore === before) break;
+        before = nextBefore;
+        if (mergedPage.messagingMessages.length >= 240) break;
+      }
+      if (mergedPage?.messagingMessages?.length) {
+        voyager = mergedPage;
+        break;
+      }
+    }
+
+    if (!voyager?.messagingMessages?.length && conversationUrn) {
+      const dashUrl =
+        "https://www.linkedin.com/voyager/api/voyagerMessagingDashMessengerMessages" +
+        `?action=execute&q=findConversation&conversationId=${encodeURIComponent(conversationUrn)}`;
       try {
-        const resp = await fetch(url, { headers, credentials: "include" });
-        if (!resp.ok) continue;
-        const json = await resp.json();
-        const parsed = parseVoyagerMessages(json, threadId);
-        if (parsed?.messagingMessages?.length) {
-          voyager = parsed;
-          break;
+        const resp = await fetch(dashUrl, { headers, credentials: "include" });
+        if (resp.ok) {
+          const json = await resp.json();
+          const parsed = parseVoyagerMessages(json, threadId);
+          if (parsed?.messagingMessages?.length) voyager = parsed;
         }
       } catch {
-        /* next */
+        /* ignore */
       }
     }
   }
@@ -607,20 +941,18 @@ async function captureMessagingBundleInPage() {
  * Page world — scroll thread to load older messages before scrape.
  */
 async function prepMessagingThreadForScrape(maxMs) {
-  const deadline = Date.now() + (maxMs || 6000);
+  const deadline = Date.now() + (maxMs || 8000);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const list =
-    document.querySelector("ul.msg-s-message-list") ||
-    document.querySelector(".msg-s-message-list");
+  const list = findMessagingScrollContainer();
   if (!list) return { prepped: false };
-  for (let i = 0; i < 6 && Date.now() < deadline; i++) {
+  for (let i = 0; i < 10 && Date.now() < deadline; i++) {
     list.scrollTop = list.scrollHeight;
-    await sleep(450);
+    await sleep(500);
     list.scrollTop = 0;
-    await sleep(350);
+    await sleep(400);
   }
   list.scrollTop = list.scrollHeight;
-  await sleep(300);
+  await sleep(350);
   return { prepped: true };
 }
 
@@ -692,30 +1024,32 @@ async function fetchMessagingViaVoyagerPage() {
   if (!headers["csrf-token"]) return null;
 
   let threadId;
-  try {
-    const m = window.location.pathname.match(/\/messaging\/thread\/([^/?#]+)/i);
-    if (m?.[1]) threadId = decodeURIComponent(m[1]);
-  } catch {
-    return null;
-  }
+  const resolved = resolveMessagingThreadIdFromDom();
+  threadId = resolved.threadId;
   if (!threadId) return null;
 
-  const urls = [
-    `https://www.linkedin.com/voyager/api/messaging/conversations/${encodeURIComponent(threadId)}/events?count=50`,
-    `https://www.linkedin.com/voyager/api/voyagerMessagingDashMessengerMessages?action=execute&q=findConversation&conversationId=${encodeURIComponent(threadId)}`,
-  ];
+  const conversationKeys = [threadId];
+  if (resolved.numericId && resolved.numericId !== threadId) {
+    conversationKeys.push(resolved.numericId);
+  }
 
-  for (const url of urls) {
-    try {
-      const resp = await fetch(url, { headers, credentials: "include" });
-      if (!resp.ok) continue;
-      const json = await resp.json();
-      const parsed = parsePayload(json, threadId);
-      if (parsed?.messagingMessages?.length) {
-        return { ...parsed, captureMethod: "voyager" };
+  for (const convKey of conversationKeys) {
+    const urls = [
+      `https://www.linkedin.com/voyager/api/messaging/conversations/${encodeURIComponent(convKey)}/events?keyVersion=LEGACY_INBOX&q=events&count=50`,
+      `https://www.linkedin.com/voyager/api/voyagerMessagingDashMessengerMessages?action=execute&q=findConversation&conversationId=${encodeURIComponent(convKey)}`,
+    ];
+    for (const url of urls) {
+      try {
+        const resp = await fetch(url, { headers, credentials: "include" });
+        if (!resp.ok) continue;
+        const json = await resp.json();
+        const parsed = parsePayload(json, threadId);
+        if (parsed?.messagingMessages?.length) {
+          return { ...parsed, captureMethod: "voyager" };
+        }
+      } catch {
+        /* try next */
       }
-    } catch {
-      /* try next */
     }
   }
   return null;
@@ -798,14 +1132,32 @@ function parseVoyagerMessagingPayload(json, threadId) {
 }
 
 /** Service worker — merge Voyager + DOM messaging captures. */
-function mergeMessagingExtractions(voyager, domResult) {
+function mergeMessagingExtractions(voyager, domResult, opts) {
   const dom = domResult?.extractedFields || {};
   const domEf = domResult || {};
-  const pickUrl =
-    voyager?.messagingParticipantProfileUrl ||
-    dom.messagingParticipantProfileUrl;
-  const pickName =
-    voyager?.messagingParticipantName || dom.messagingParticipantName;
+  const expectedVanity = opts?.expectedProfileVanity || null;
+
+  function urlMatchesExpected(url) {
+    if (!expectedVanity || !url) return false;
+    return linkedinVanityFromUrl(url) === expectedVanity;
+  }
+
+  const urlCandidates = [
+    voyager?.messagingParticipantProfileUrl,
+    dom.messagingParticipantProfileUrl,
+  ].filter(Boolean);
+  let pickUrl = urlCandidates[0];
+  if (expectedVanity) {
+    const preferred = urlCandidates.find((u) => urlMatchesExpected(u));
+    if (preferred) pickUrl = preferred;
+    else if (opts?.fallbackProfileUrl) pickUrl = opts.fallbackProfileUrl;
+  }
+
+  const nameCandidates = [
+    voyager?.messagingParticipantName,
+    dom.messagingParticipantName,
+  ].filter(Boolean);
+  const pickName = nameCandidates[0];
   const threadId =
     voyager?.messagingThreadId ||
     dom.messagingThreadId ||
@@ -860,20 +1212,52 @@ function mergeMessagingExtractions(voyager, domResult) {
 }
 
 async function scrapeMessagingFromTab(tabId) {
-  try {
+  const outreachCtx = await getLastOutreachMemberContext();
+  const expectedProfileVanity = linkedinVanityFromUrl(outreachCtx?.linkedinUrl);
+  const mergeOpts = {
+    expectedProfileVanity,
+    fallbackProfileUrl: outreachCtx?.linkedinUrl || undefined,
+  };
+
+  const runCapture = async () => {
     const injected = await chrome.scripting.executeScript({
       target: { tabId },
       func: captureMessagingBundleInPage,
     });
-    const bundle = injected[0]?.result;
+    return injected[0]?.result;
+  };
+
+  const mergeBundle = (bundle) => {
     if (!bundle?.dom && !bundle?.voyager) return undefined;
-    const merged = mergeMessagingExtractions(bundle.voyager, bundle.dom);
+    const merged = mergeMessagingExtractions(bundle.voyager, bundle.dom, mergeOpts);
     const threadId = merged.extractedFields?.messagingThreadId;
     if (bundle.dom?.sourceUrl) merged.sourceUrl = bundle.dom.sourceUrl;
     else if (threadId) {
       merged.sourceUrl = `https://www.linkedin.com/messaging/thread/${encodeURIComponent(threadId)}/`;
     }
     return merged;
+  };
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: prepMessagingThreadForScrape,
+      args: [8000],
+    });
+    await sleep(2000);
+
+    let bundle = await runCapture();
+    let merged = mergeBundle(bundle);
+    if (merged?.extractedFields?.messagingMessages?.length) return merged;
+
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: prepMessagingThreadForScrape,
+      args: [6000],
+    });
+    await sleep(2500);
+    bundle = await runCapture();
+    return mergeBundle(bundle);
   } catch {
     return undefined;
   }
@@ -1382,6 +1766,413 @@ function scrapeLinkedInAnalyticsStructured() {
   return { domOverview, domTopPosts };
 }
 
+/**
+ * Page world — messaging inbox list snapshot (DOM tiles + optional Voyager).
+ */
+async function scrapeMessagingInboxSnapshotInPage() {
+  const kind = "linkedin_messages_inbox_visible";
+  const sourceUrl = window.location.href;
+  const capturedAt = new Date().toISOString();
+
+  function clean(s) {
+    if (!s) return "";
+    return String(s).replace(/\s+/g, " ").trim();
+  }
+
+  function profileUrlFromTile(el) {
+    const links = el.querySelectorAll('a[href*="/in/"]');
+    for (const a of links) {
+      const raw = a.getAttribute("href");
+      if (!raw || raw.includes("/edit/")) continue;
+      try {
+        const abs = new URL(raw, "https://www.linkedin.com");
+        const m = abs.pathname.match(/^\/in\/([^/?#]+)\/?/i);
+        if (m?.[1] && m[1].toLowerCase() !== "me") {
+          return `https://www.linkedin.com/in/${m[1]}/`;
+        }
+      } catch {
+        continue;
+      }
+    }
+    return undefined;
+  }
+
+  function findMessagingListRoot() {
+    const selectors = [
+      "ul.msg-conversations-container__conversations-list",
+      ".msg-conversations-container",
+      "[class*='msg-conversations-container']",
+      "[data-test-messaging-conversations-list]",
+      "[class*='msg-thread-list']",
+      "[class*='messaging-inbox']",
+      "aside [class*='msg-conversations']",
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el) return el;
+    }
+    if (/\/messaging/i.test(sourceUrl)) {
+      const main = document.querySelector("main");
+      const nested =
+        main?.querySelector("ul.msg-conversations-container__conversations-list") ||
+        main?.querySelector("[class*='conversation-list']") ||
+        main?.querySelector("[class*='msg-conversation']");
+      if (nested) return nested;
+    }
+    return null;
+  }
+
+  function parseConversationTileElement(el) {
+    function pickText(selectors) {
+      for (const sel of selectors) {
+        const node = el.querySelector(sel);
+        const t = clean(node?.textContent || "");
+        if (t) return t;
+      }
+      return undefined;
+    }
+
+    function nameFromCheckboxLabel(root) {
+      const label = root.querySelector(
+        "label.msg-selectable-entity__checkbox-label[aria-label]",
+      );
+      const aria = label?.getAttribute("aria-label") || "";
+      const fr = aria.match(
+        /S[ée]lectionner la conversation avec\s+([A-ZÀ-ÖØ-Þ][^.!?]+?)(?:\s*$|[.!?,])/i,
+      );
+      if (fr?.[1]) return clean(fr[1]);
+      const en = aria.match(
+        /Select conversation with\s+([A-ZÀ-ÖØ-Þ][^.!?]+?)(?:\s*$|[.!?,])/i,
+      );
+      if (en?.[1]) return clean(en[1]);
+      return undefined;
+    }
+
+    function isTimeLine(s) {
+      return /^\d{1,2}:\d{2}$/.test(String(s || "").trim());
+    }
+
+    function normalizeSnippet(text, participantName) {
+      if (!text) return undefined;
+      const t = clean(text);
+      const vous = t.match(/^(Vous|You)\s*:\s*(.+)$/i);
+      if (vous?.[2]) return { preview: vous[2].trim(), fromMe: true };
+      const named = t.match(/^([A-ZÀ-ÖØ-Þ][\wÀ-ÿ'.-]+)\s*:\s*(.+)$/);
+      if (named?.[2]) {
+        const tag = named[1].trim();
+        const body = named[2].trim();
+        const full = participantName || "";
+        const fromThem =
+          full &&
+          (full.toLowerCase().startsWith(tag.toLowerCase()) ||
+            tag.toLowerCase() === full.split(/\s+/)[0]?.toLowerCase());
+        return { preview: body, fromMe: !fromThem && /^(vous|you)$/i.test(tag) };
+      }
+      return { preview: t, fromMe: /^(Vous|You)\s*:/i.test(t) };
+    }
+
+    const card =
+      el.classList?.contains("msg-conversation-card")
+        ? el
+        : el.querySelector(".msg-conversation-card") || el;
+
+    const participantName =
+      pickText([
+        ".msg-conversation-listitem__participant-names span",
+        ".msg-conversation-listitem__participant-names",
+        ".msg-conversation-card__participant-names span",
+        ".msg-conversation-card__participant-names",
+        "h3",
+      ]) ||
+      nameFromCheckboxLabel(card) ||
+      clean(card.querySelector(".presence-entity__image[alt]")?.getAttribute("alt"));
+
+    const snippetRaw =
+      pickText([
+        "p.msg-conversation-card__message-snippet",
+        ".msg-conversation-card__message-snippet",
+      ]) || undefined;
+
+    const timeLabel =
+      pickText([
+        "time.msg-conversation-listitem__time-stamp",
+        "time.msg-conversation-card__time-stamp",
+        "time",
+      ]) || undefined;
+
+    const snippetNorm = normalizeSnippet(snippetRaw, participantName);
+    let preview = snippetNorm?.preview;
+    let fromMe = snippetNorm?.fromMe ?? false;
+
+    const rawText = clean(card.innerText || el.innerText);
+    const unread =
+      /\bunread\b/i.test(rawText) ||
+      card.classList?.contains("msg-conversation-card--unread");
+
+    if (!preview && rawText) {
+      const lines = rawText.split(/\n/).map(clean).filter(Boolean);
+      for (const line of lines) {
+        if (line === participantName || isTimeLine(line)) continue;
+        if (/^(Appuyez|Press|Le statut|Status|S[ée]lectionner|Ouvrir la liste)/i.test(line)) {
+          continue;
+        }
+        const norm = normalizeSnippet(line, participantName);
+        if (norm?.preview && norm.preview.length >= 4) {
+          preview = norm.preview;
+          fromMe = norm.fromMe;
+          break;
+        }
+      }
+    }
+
+    if (!preview && snippetRaw) {
+      const norm = normalizeSnippet(snippetRaw, participantName);
+      preview = norm?.preview;
+      fromMe = norm?.fromMe ?? fromMe;
+    }
+
+    const profileUrl = profileUrlFromTile(card);
+    return {
+      participantName,
+      preview: preview?.slice(0, 800),
+      timeLabel,
+      profileUrl,
+      fromMe,
+      unread,
+      previewText: rawText.slice(0, 1200),
+    };
+  }
+
+  function collectTiles(searchRoot) {
+    const tiles = [];
+    const seen = new Set();
+
+    function addTile(parsed) {
+      const hasContent =
+        parsed.participantName ||
+        parsed.preview ||
+        (parsed.previewText && parsed.previewText.length >= 12);
+      if (!hasContent) return;
+      const key = `${parsed.participantName || "?"}:${(parsed.preview || parsed.previewText || "").slice(0, 80)}:${parsed.timeLabel || ""}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      tiles.push(parsed);
+    }
+
+    function collectFromScope(scope) {
+      if (!scope?.querySelectorAll) return 0;
+      let added = 0;
+
+      const ul =
+        scope.matches?.("ul.msg-conversations-container__conversations-list")
+          ? scope
+          : scope.querySelector("ul.msg-conversations-container__conversations-list");
+      const listRoot = ul || scope;
+
+      listRoot.querySelectorAll("li.msg-conversation-listitem").forEach((el) => {
+        if (tiles.length >= 160) return;
+        const before = tiles.length;
+        addTile(parseConversationTileElement(el));
+        if (tiles.length > before) added += 1;
+      });
+      if (added > 0) return added;
+
+      scope.querySelectorAll(".msg-conversation-card").forEach((el) => {
+        if (tiles.length >= 160) return;
+        const before = tiles.length;
+        addTile(parseConversationTileElement(el));
+        if (tiles.length > before) added += 1;
+      });
+      return added;
+    }
+
+    const scopes = [];
+    const globalUl = document.querySelector(
+      "ul.msg-conversations-container__conversations-list",
+    );
+    if (globalUl) scopes.push(globalUl);
+    if (searchRoot && searchRoot !== globalUl) scopes.push(searchRoot);
+    scopes.push(document);
+
+    for (const scope of scopes) {
+      if (collectFromScope(scope) > 0) break;
+    }
+
+    return tiles;
+  }
+
+  function voyagerHeaders() {
+    const cookies = document.cookie.split(";").map((c) => c.trim());
+    const jsession = cookies.find((c) => c.startsWith("JSESSIONID="));
+    let csrf =
+      jsession?.split("=")[1]?.replace(/^"|"$/g, "")?.trim() || "";
+    if (!csrf) {
+      csrf =
+        document.querySelector('meta[name="csrf-token"]')?.getAttribute("content")?.trim() ||
+        "";
+    }
+    return {
+      "csrf-token": csrf,
+      "x-restli-protocol-version": "2.0.0",
+      accept: "application/vnd.linkedin.normalized+json+2.1",
+    };
+  }
+
+  function parseVoyagerInboxList(json) {
+    const included = Array.isArray(json?.included) ? json.included : [];
+    const elements = Array.isArray(json?.elements) ? json.elements : [];
+    const profiles = new Map();
+    for (const item of included) {
+      const id = item?.publicIdentifier;
+      const name = [item?.firstName, item?.lastName].filter(Boolean).join(" ");
+      if (id && name) {
+        profiles.set(item.entityUrn || item.objectUrn || id, {
+          name,
+          profileUrl: `https://www.linkedin.com/in/${id}/`,
+        });
+      }
+    }
+
+    const tiles = [];
+    const seen = new Set();
+    const convs = [
+      ...elements,
+      ...included.filter((i) => /Conversation|conversation/i.test(i?.$type || "")),
+    ];
+
+    for (const conv of convs) {
+      let preview =
+        conv?.lastMessage?.text ||
+        conv?.lastMessage?.body?.text ||
+        conv?.events?.[0]?.body?.text ||
+        conv?.eventContent?.attributedBody?.text;
+      if (!preview && Array.isArray(conv?.events) && conv.events[0]) {
+        preview =
+          conv.events[0]?.body?.text ||
+          conv.events[0]?.eventContent?.attributedBody?.text;
+      }
+      preview = clean(preview || "");
+      if (!preview || preview.length < 2) continue;
+
+      let participantName;
+      let profileUrl;
+      const parts = conv?.participants || conv["*participants"] || conv.participantUrns;
+      if (Array.isArray(parts)) {
+        for (const p of parts) {
+          const urn = typeof p === "string" ? p : p?.entityUrn || p?.profileUrn;
+          const prof = urn ? profiles.get(urn) : null;
+          if (prof) {
+            participantName = prof.name;
+            profileUrl = prof.profileUrl;
+            break;
+          }
+        }
+      }
+      for (const item of included) {
+        if (participantName) break;
+        if (!/MiniProfile|Member|Profile/i.test(item?.$type || "")) continue;
+        if (item?.publicIdentifier && item?.firstName) {
+          participantName = [item.firstName, item.lastName].filter(Boolean).join(" ");
+          profileUrl = `https://www.linkedin.com/in/${item.publicIdentifier}/`;
+          break;
+        }
+      }
+
+      const key = `${participantName || "?"}:${preview.slice(0, 80)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      let timeLabel;
+      const ts = conv?.lastActivityAt || conv?.updatedAt || conv?.createdAt;
+      if (typeof ts === "number" && ts > 1e11) {
+        const diffH = Math.round((Date.now() - ts) / 3_600_000);
+        if (diffH < 48) timeLabel = `${diffH} h`;
+      }
+
+      const text = [participantName, preview].filter(Boolean).join("\n");
+      tiles.push({
+        participantName,
+        preview,
+        previewText: text.slice(0, 1200),
+        profileUrl,
+        timeLabel,
+      });
+      if (tiles.length >= 80) break;
+    }
+    return tiles.length ? tiles : null;
+  }
+
+  async function fetchInboxViaVoyager() {
+    const headers = voyagerHeaders();
+    if (!headers["csrf-token"]) return null;
+    const urls = [
+      "https://www.linkedin.com/voyager/api/messaging/conversations?keyVersion=LEGACY_INBOX&count=40",
+      "https://www.linkedin.com/voyager/api/voyagerMessagingDashConversations?count=40&start=0",
+    ];
+    for (const url of urls) {
+      try {
+        const resp = await fetch(url, { headers, credentials: "include" });
+        if (!resp.ok) continue;
+        const json = await resp.json();
+        const parsed = parseVoyagerInboxList(json);
+        if (parsed?.length) return parsed;
+      } catch {
+        /* next */
+      }
+    }
+    return null;
+  }
+
+  const listRoot = findMessagingListRoot();
+  let tiles = collectTiles(listRoot || document);
+
+  if (tiles.length === 0) {
+    const voyagerTiles = await fetchInboxViaVoyager();
+    if (voyagerTiles?.length) {
+      return {
+        kind,
+        sourceUrl,
+        capturedAt,
+        payload: { voyagerTiles, tileCount: voyagerTiles.length },
+      };
+    }
+  }
+
+  if (tiles.length > 0) {
+    return {
+      kind,
+      sourceUrl,
+      capturedAt,
+      payload: { tiles, tileCount: tiles.length },
+    };
+  }
+
+  const onMessaging = /\/messaging/i.test(sourceUrl);
+  const dumpRoot =
+    document.querySelector("ul.msg-conversations-container__conversations-list") ||
+    document.querySelector(".msg-conversations-container") ||
+    listRoot ||
+    (onMessaging ? document.querySelector("main") : null);
+  let dumpText = dumpRoot ? clean(dumpRoot.innerText || "") : "";
+  if (dumpText.length > 16000) dumpText = `${dumpText.slice(0, 16000)}…`;
+
+  const note = listRoot
+    ? "Conversation rows not matched — dumped messaging sidebar text for server parsing."
+    : onMessaging
+      ? "No messaging sidebar found — scroll the inbox list and snapshot again."
+      : "Not on messaging — open linkedin.com/messaging before snapshot (feed was skipped).";
+
+  return {
+    kind,
+    sourceUrl,
+    capturedAt,
+    payload: {
+      fallbackPlainText: dumpText,
+      note,
+    },
+  };
+}
+
 function scrapeExtensionSnapshot(kindRaw) {
   const kind =
     typeof kindRaw === "string" ? kindRaw : "linkedin_messages_inbox_visible";
@@ -1406,50 +2197,15 @@ function scrapeExtensionSnapshot(kindRaw) {
   const capturedAt = new Date().toISOString();
 
   if (kind === "linkedin_messages_inbox_visible") {
-    function profileUrlFromTile(el) {
-      const links = el.querySelectorAll('a[href*="/in/"]');
-      for (const a of links) {
-        const raw = a.getAttribute("href");
-        if (!raw || raw.includes("/edit/")) continue;
-        try {
-          const abs = new URL(raw, "https://www.linkedin.com");
-          const m = abs.pathname.match(/^\/in\/([^/?#]+)\/?/i);
-          if (m?.[1]) return `https://www.linkedin.com/in/${m[1]}/`;
-        } catch {
-          continue;
-        }
-      }
-      return undefined;
-    }
-    const selectors = [
-      ".msg-conversation-card",
-      "li.msg-conversation-listitem",
-      "[class*='conversation-list-item']",
-    ];
-    const tiles = [];
-    const seen = new Set();
-    for (const sel of selectors) {
-      document.querySelectorAll(sel).forEach((el) => {
-        if (tiles.length >= 160) return;
-        const t = clean(el.innerText);
-        if (!t || t.length < 20) return;
-        const key = t.slice(0, 120);
-        if (seen.has(key)) return;
-        seen.add(key);
-        const tile = { preview: t.slice(0, 1200), len: t.length };
-        const profileUrl = profileUrlFromTile(el);
-        if (profileUrl) tile.profileUrl = profileUrl;
-        tiles.push(tile);
-      });
-    }
-    const payload =
-      tiles.length === 0
-        ? {
-            fallbackPlainText: mainDump(48000),
-            note: "No conversation rows matched — dumped main text.",
-          }
-        : { tiles, tileCount: tiles.length };
-    return { kind, sourceUrl, capturedAt, payload };
+    return {
+      kind,
+      sourceUrl,
+      capturedAt,
+      payload: {
+        error:
+          "Use scrapeMessagingInboxSnapshotInPage() for messaging snapshots.",
+      },
+    };
   }
 
   if (kind === "linkedin_post_analytics_visible") {
@@ -3314,6 +4070,91 @@ function getMessagingHrefFromProfilePage() {
   return null;
 }
 
+/** Page world — click Message on profile when no direct thread href is available. */
+function clickProfileMessageButton() {
+  const selectors = [
+    'a[data-control-name="message"]',
+    '.pvs-profile-actions a[href*="messaging"]',
+    "button.message-anywhere-button",
+    'button.pvs-profile-actions__action[aria-label*="Message"]',
+    'button[aria-label*="Message"]',
+    'button[aria-label*="Envoyer"]',
+  ];
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (el instanceof HTMLAnchorElement && el.href?.includes("messaging")) {
+      el.click();
+      return { clicked: true, method: "link" };
+    }
+    if (el instanceof HTMLButtonElement && !el.disabled) {
+      el.click();
+      return { clicked: true, method: "button" };
+    }
+  }
+  const btn = [...document.querySelectorAll("button, a[role='button']")].find((el) => {
+    const t = (el.getAttribute("aria-label") || el.textContent || "").trim();
+    return /^(message|messager)$/i.test(t) || /envoyer un message/i.test(t);
+  });
+  if (btn) {
+    btn.click();
+    return { clicked: true, method: "scan" };
+  }
+  return { clicked: false };
+}
+
+/** Page world — injected alone for outreach pre-check. */
+function isOutreachComposerVisiblePage() {
+  const selectors = [
+    '.msg-form__contenteditable[contenteditable="true"]',
+    'div.msg-form__msg-content-container [contenteditable="true"]',
+    '[data-lexical-editor="true"]',
+    '[contenteditable="true"][role="textbox"]',
+    ".msg-form__contenteditable",
+  ];
+  for (const sel of selectors) {
+    for (const el of document.querySelectorAll(sel)) {
+      if (!(el instanceof HTMLElement)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) continue;
+      if (r.bottom < 0 || r.top > window.innerHeight) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
+async function ensureMessagingThreadUrlForCapture(tabId) {
+  let tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch {
+    return null;
+  }
+  if (isMessagingThreadUrl(tab.url || "")) return tab;
+
+  let threadUrl = null;
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: resolveMessagingThreadIdFromDom,
+    });
+    if (result?.threadId) {
+      threadUrl = `https://www.linkedin.com/messaging/thread/${encodeURIComponent(result.threadId)}/`;
+    }
+  } catch {
+    return tab;
+  }
+  if (!threadUrl) return tab;
+
+  try {
+    await chrome.tabs.update(tabId, { url: threadUrl });
+    await waitForMessagingThreadTab(tabId, 35000);
+    return await chrome.tabs.get(tabId);
+  } catch {
+    return tab;
+  }
+}
+
 async function waitForMessagingThreadTab(tabId, timeoutMs = 75000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -3345,8 +4186,42 @@ async function waitForMessagingThreadTab(tabId, timeoutMs = 75000) {
   throw new Error("Timed out waiting for messaging thread.");
 }
 
+async function tryAutoCaptureMessagingThread(tabId, root) {
+  try {
+    await sleep(2000);
+    await ensureMessagingThreadUrlForCapture(tabId);
+    const msgPayload = await scrapeMessagingFromTab(tabId);
+    if (
+      !msgPayload?.extractedFields?.messagingMessages?.length ||
+      !msgPayload?.extractedFields?.messagingParticipantProfileUrl
+    ) {
+      return { captured: false };
+    }
+    let pruned;
+    try {
+      pruned = await waitForPaceGapAllowCapture(root);
+    } catch {
+      return { captured: false };
+    }
+    const out = await postMessagingCapturePayload(root, pruned, msgPayload);
+    return { captured: out.ok };
+  } catch {
+    return { captured: false };
+  }
+}
+
+async function clearStaleCaptureLiveStatus() {
+  const stored = await chrome.storage.local.get([LIVE_STATUS_KEY]);
+  const state = stored[LIVE_STATUS_KEY];
+  if (!state || state.scope !== "capture") return;
+  const age = Date.now() - (state.updatedAt || 0);
+  if (state.phase === "running" || state.phase === "waiting" || age > 15_000) {
+    await clearExtensionLiveStatus();
+  }
+}
+
 async function postMessagingCapturePayload(root, pruned, msgPayload) {
-  const capBody = await applyOutreachCampaignId(msgPayload);
+  const capBody = await attachMessagingCaptureContext(msgPayload);
   const res = await fetch(`${root}/api/ingest/capture`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -3727,6 +4602,13 @@ async function runClinPipeline(opts) {
       error: "Turn on Background enrich in Clin → Settings.",
     };
   }
+  await setExtensionLiveStatus({
+    phase: "running",
+    scope: "pipeline",
+    title: "Full orchestration",
+    detail: "Starting paced import and profile capture…",
+    confirmMemberId: null,
+  });
   try {
     await focusAutomationTab(tabId, { suppressFocus });
   } catch {
@@ -3762,8 +4644,22 @@ async function runClinPipeline(opts) {
   for (let r = 0; r < requestedListRounds; r++) {
     if (!(await shouldContinue())) {
       summary.errors.push("Stopped by user.");
+      await setExtensionLiveStatus({
+        phase: "success",
+        scope: "pipeline",
+        title: "Orchestration stopped",
+        detail: "Stopped by user during list import.",
+        confirmMemberId: null,
+      });
       return { ok: true, summary, cancelled: true };
     }
+    await setExtensionLiveStatus({
+      phase: "running",
+      scope: "pipeline",
+      title: "Full orchestration",
+      detail: `Importing list — round ${r + 1} of ${requestedListRounds}…`,
+      confirmMemberId: null,
+    });
     const round = await importConnectionsListRound(tabId, base, r, postScrollMs, {
       suppressFocus,
     });
@@ -3808,8 +4704,24 @@ async function runClinPipeline(opts) {
   for (let e = 0; e < steps; e++) {
     if (!(await shouldContinue())) {
       summary.errors.push("Stopped by user.");
+      await setExtensionLiveStatus({
+        phase: "success",
+        scope: "pipeline",
+        title: "Orchestration stopped",
+        detail: "Stopped by user during profile capture.",
+        confirmMemberId: null,
+      });
       return { ok: true, summary, cancelled: true };
     }
+    await setExtensionLiveStatus({
+      phase: "running",
+      scope: "pipeline",
+      title: "Full orchestration",
+      detail: runCampaignQueueCapture
+        ? `Capturing campaign profile ${e + 1}…`
+        : `Enriching profile ${e + 1}${steps ? ` of ${steps}` : ""}…`,
+      confirmMemberId: null,
+    });
     const step = runCampaignQueueCapture
       ? await captureOneCampaignMemberProfileStep(
           tabId,
@@ -3831,6 +4743,13 @@ async function runClinPipeline(opts) {
     if (step.messagingCaptured) summary.messagingCaptured += 1;
   }
 
+  await setExtensionLiveStatus({
+    phase: "success",
+    scope: "pipeline",
+    title: "Orchestration finished",
+    detail: `${summary.profilesCaptured} profile(s) captured · ${summary.listImported} imported from list`,
+    confirmMemberId: null,
+  });
   return { ok: true, summary };
 }
 
@@ -3962,7 +4881,12 @@ ensureSidePanelOpensOnToolbarClick();
 chrome.runtime.onInstalled.addListener(() => {
   ensureSidePanelOpensOnToolbarClick();
   ensurePendingSelfAlarm();
+  void clearStaleCaptureLiveStatus();
   pollPendingSelfCapture();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  void clearStaleCaptureLiveStatus();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -4008,7 +4932,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
       }
 
-      const [tab] = await chrome.tabs.query({
+      let [tab] = await chrome.tabs.query({
         active: true,
         currentWindow: true,
       });
@@ -4047,9 +4971,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
       const root = base.replace(/\/$/, "");
 
-      const runMessagingCapture =
-        scope === "messaging" ||
-        (scope === "auto" && isMessagingThreadUrl(tab.url));
+      let runMessagingCapture = scope === "messaging";
+      if (scope === "auto") {
+        if (isMessagingThreadUrl(tab.url)) {
+          runMessagingCapture = true;
+        } else {
+          try {
+            const [{ result: vis }] = await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              func: isMessagingDomVisiblePage,
+            });
+            runMessagingCapture = Boolean(vis?.visible);
+          } catch {
+            /* ignore */
+          }
+        }
+      }
 
       if (runMessagingCapture) {
         let canRun = isMessagingThreadUrl(tab.url);
@@ -4068,10 +5005,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse({
             ok: false,
             error:
-              "Open the 1:1 chat: go to linkedin.com/messaging, open the thread (address bar should show /messaging/thread/…), scroll to load messages, then Capture messaging.",
+              "Open the 1:1 chat: go to linkedin.com/messaging, open the thread, scroll to load messages, then click Capture 1:1 thread in the extension.",
           });
           return;
         }
+        tab = (await ensureMessagingThreadUrlForCapture(tab.id)) || tab;
         const msgPayload = await scrapeMessagingFromTab(tab.id);
         if (!msgPayload?.extractedFields?.messagingMessages?.length) {
           sendResponse({
@@ -4089,7 +5027,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           });
           return;
         }
-        const capBody = await applyOutreachCampaignId(msgPayload);
+        const capBody = await attachMessagingCaptureContext(msgPayload);
         const res = await fetch(`${root}/api/ingest/capture`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -4610,6 +5548,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "CLIN_RUN_PIPELINE_STOP") {
     chrome.storage.local.set({ [PIPELINE_RUN_KEY]: false });
+    void setExtensionLiveStatus({
+      phase: "success",
+      scope: "pipeline",
+      title: "Orchestration stopping",
+      detail: "Finishing current step…",
+      confirmMemberId: null,
+    });
     sendResponse({ ok: true });
     return true;
   }
@@ -4644,6 +5589,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       });
     } finally {
       await chrome.storage.local.set({ [PIPELINE_RUN_KEY]: false });
+      const stored = await chrome.storage.local.get([LIVE_STATUS_KEY]);
+      if (stored[LIVE_STATUS_KEY]?.scope === "pipeline" && stored[LIVE_STATUS_KEY]?.phase === "running") {
+        await clearExtensionLiveStatus();
+      }
     }
   })();
 
@@ -4725,10 +5674,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         msg.kind === "linkedin_post_analytics_visible"
           ? "linkedin_post_analytics_visible"
           : "linkedin_messages_inbox_visible";
+      const snapFunc =
+        kind === "linkedin_messages_inbox_visible"
+          ? scrapeMessagingInboxSnapshotInPage
+          : scrapeExtensionSnapshot;
       const [{ result: snap }] = await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: scrapeExtensionSnapshot,
-        args: [kind],
+        func: snapFunc,
+        args: kind === "linkedin_post_analytics_visible" ? [kind] : [],
       });
       if (!snap?.kind) {
         sendResponse({ ok: false, error: "Snapshot returned nothing." });
@@ -4775,6 +5728,44 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 const OUTREACH_RUN_KEY = "clinOutreachRunActive";
 const OUTREACH_RUN_TAB_ID_KEY = "clinOutreachRunTabId";
 const PIPELINE_RUN_KEY = "clinPipelineRunActive";
+const LIVE_STATUS_KEY = "clinExtensionLiveStatus";
+
+/** @typedef {"idle"|"running"|"waiting"|"success"|"error"} LiveStatusPhase */
+/** @typedef {"outreach"|"pipeline"|"capture"|"general"|""} LiveStatusScope */
+
+/**
+ * Persist extension activity for the side panel live status bar.
+ * @param {object} patch
+ */
+async function setExtensionLiveStatus(patch) {
+  const stored = await chrome.storage.local.get([LIVE_STATUS_KEY]);
+  const prev = stored[LIVE_STATUS_KEY] || {};
+  await chrome.storage.local.set({
+    [LIVE_STATUS_KEY]: {
+      phase: "running",
+      scope: "general",
+      title: "Clin",
+      detail: "",
+      confirmMemberId: null,
+      ...prev,
+      ...patch,
+      updatedAt: Date.now(),
+    },
+  });
+}
+
+async function clearExtensionLiveStatus() {
+  await chrome.storage.local.set({
+    [LIVE_STATUS_KEY]: {
+      phase: "idle",
+      scope: "",
+      title: "",
+      detail: "",
+      confirmMemberId: null,
+      updatedAt: Date.now(),
+    },
+  });
+}
 
 function isLinkedInHostUrl(url) {
   return typeof url === "string" && /https?:\/\/([^.]+\.)?linkedin\.com\//i.test(url);
@@ -4818,27 +5809,101 @@ async function resolveOutreachRunTabId(preferredTabId) {
 
 /** Page world — best-effort DM composer fill on LinkedIn messaging. */
 function clinOutreachFillComposer(draftText, autoSend) {
-  const editor =
-    document.querySelector('[contenteditable="true"][role="textbox"]') ||
-    document.querySelector(".msg-form__contenteditable") ||
-    document.querySelector('[data-artdeco-is-focused="true"]');
+  function findEditor() {
+    const selectors = [
+      '.msg-form__contenteditable[contenteditable="true"]',
+      'div.msg-form__msg-content-container [contenteditable="true"]',
+      '[data-lexical-editor="true"]',
+      '[contenteditable="true"][role="textbox"]',
+      ".msg-form__contenteditable",
+    ];
+    const candidates = [];
+    for (const sel of selectors) {
+      for (const el of document.querySelectorAll(sel)) {
+        if (!(el instanceof HTMLElement)) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) continue;
+        if (r.bottom < 0 || r.top > window.innerHeight) continue;
+        candidates.push({ el, area: r.width * r.height });
+      }
+    }
+    candidates.sort((a, b) => b.area - a.area);
+    return candidates[0]?.el || null;
+  }
+
+  function fillEditor(editor, text) {
+    const lexicalRoot =
+      editor.closest('[data-lexical-editor="true"]') ||
+      (editor.getAttribute("data-lexical-editor") === "true" ? editor : null);
+    const lexical = editor.__lexicalEditor || lexicalRoot?.__lexicalEditor;
+    if (lexical && typeof lexical.setEditorState === "function") {
+      try {
+        const newState = lexical.parseEditorState(
+          JSON.stringify({
+            root: {
+              children: [
+                {
+                  children: [
+                    {
+                      detail: 0,
+                      format: 0,
+                      mode: "normal",
+                      text,
+                      type: "text",
+                      version: 1,
+                    },
+                  ],
+                  direction: "ltr",
+                  format: "",
+                  indent: 0,
+                  type: "paragraph",
+                  version: 1,
+                },
+              ],
+              direction: "ltr",
+              format: "",
+              indent: 0,
+              type: "root",
+              version: 1,
+            },
+          }),
+        );
+        lexical.setEditorState(newState);
+        return true;
+      } catch {
+        /* fall through */
+      }
+    }
+    editor.focus();
+    try {
+      document.execCommand("selectAll", false, null);
+      document.execCommand("insertText", false, text);
+      return true;
+    } catch {
+      editor.textContent = text;
+      return true;
+    }
+  }
+
+  const editor = findEditor();
   if (!editor) {
     return { ok: false, error: "Composer not found — open the message thread first." };
   }
-  editor.focus();
-  try {
-    document.execCommand("selectAll", false, null);
-    document.execCommand("insertText", false, draftText);
-  } catch {
-    editor.textContent = draftText;
-  }
+  editor.click?.();
+  fillEditor(editor, draftText);
   if (!autoSend) {
     return { ok: true, sent: false, needsConfirm: true };
   }
+  const formRoot =
+    editor.closest(".msg-form") ||
+    editor.closest('[class*="msg-form"]') ||
+    document;
   const sendBtn =
-    document.querySelector("button.msg-form__send-button") ||
-    [...document.querySelectorAll("button")].find((b) =>
-      /^(send|envoyer)$/i.test((b.textContent || "").trim()),
+    formRoot.querySelector("button.msg-form__send-button:not([disabled])") ||
+    [...formRoot.querySelectorAll("button")].find((b) =>
+      /^(send|envoyer)$/i.test(
+        (b.textContent || b.getAttribute("aria-label") || "").trim(),
+      ),
     );
   if (!sendBtn) {
     return { ok: true, sent: false, needsConfirm: true, error: "Send button not found" };
@@ -4847,8 +5912,99 @@ function clinOutreachFillComposer(draftText, autoSend) {
   return { ok: true, sent: true };
 }
 
+/**
+ * Navigate from profile (or wait on thread URL) until messaging composer is reachable.
+ */
+async function openMessagingForOutreach(tabId, targetUrl) {
+  if (isMessagingThreadUrl(targetUrl) || isMessagingPageUrl(targetUrl)) {
+    try {
+      await waitForMessagingThreadTab(tabId, 45000);
+    } catch {
+      await sleep(3000);
+    }
+    return { ok: true };
+  }
+
+  if (!isLinkedInProfilePageUrl(targetUrl)) {
+    await sleep(4500);
+    return { ok: true };
+  }
+
+  try {
+    await waitForLinkedInProfileTab(tabId, 45000);
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+
+  const [{ result: hasComposer }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: isOutreachComposerVisiblePage,
+  });
+  if (hasComposer) {
+    return { ok: true };
+  }
+
+  let msgUrl = null;
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: getMessagingHrefFromProfilePage,
+    });
+    msgUrl = typeof result === "string" ? result : null;
+  } catch {
+    /* ignore */
+  }
+
+  if (msgUrl) {
+    await chrome.tabs.update(tabId, { url: msgUrl });
+    try {
+      await waitForMessagingThreadTab(tabId, 45000);
+    } catch {
+      return { ok: false, error: "Timed out opening message thread." };
+    }
+    await sleep(1200);
+    return { ok: true };
+  }
+
+  let clicked = false;
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: clickProfileMessageButton,
+    });
+    clicked = Boolean(result?.clicked);
+  } catch {
+    /* ignore */
+  }
+
+  if (clicked) {
+    try {
+      await waitForMessagingThreadTab(tabId, 45000);
+    } catch {
+      return { ok: false, error: "Message opened but thread did not load." };
+    }
+    await sleep(1200);
+    return { ok: true };
+  }
+
+  return {
+    ok: false,
+    error: "Message button not found — connect on LinkedIn or open their thread manually.",
+  };
+}
+
 async function outreachRunStep(tabId, base) {
   const root = base.replace(/\/$/, "");
+  await setExtensionLiveStatus({
+    phase: "running",
+    scope: "outreach",
+    title: "Outreach run",
+    detail: "Loading next ready contact…",
+    confirmMemberId: null,
+  });
   const nextRes = await fetch(`${root}/api/extension/outreach-queue/next`);
   const nextJson = await nextRes.json().catch(() => ({}));
   if (!nextRes.ok) {
@@ -4864,6 +6020,8 @@ async function outreachRunStep(tabId, base) {
   }
 
   const item = nextJson.item;
+  await setLastOutreachMemberContext(item);
+  const contactLabel = item.fullName?.trim() || "contact";
   const url = item.linkedinUrl;
   if (!url) {
     await fetch(`${root}/api/extension/outreach-queue/ack`, {
@@ -4879,10 +6037,49 @@ async function outreachRunStep(tabId, base) {
     return { ok: true, skipped: true };
   }
 
+  await setExtensionLiveStatus({
+    phase: "running",
+    scope: "outreach",
+    title: "Outreach run",
+    detail: `Opening ${contactLabel} on LinkedIn…`,
+    confirmMemberId: null,
+  });
   await chrome.tabs.update(tabId, { url });
-  await new Promise((r) => setTimeout(r, 4500));
+  await setExtensionLiveStatus({
+    phase: "running",
+    scope: "outreach",
+    title: "Outreach run",
+    detail: `Opening message thread for ${contactLabel}…`,
+    confirmMemberId: null,
+  });
+  const opened = await openMessagingForOutreach(tabId, url);
+  if (!opened.ok) {
+    await setExtensionLiveStatus({
+      phase: "waiting",
+      scope: "outreach",
+      title: "Outreach — needs you",
+      detail: opened.error || "Could not open messaging for this contact.",
+      confirmMemberId: item.memberId,
+    });
+    return {
+      ok: true,
+      item,
+      needsConfirm: true,
+      hint: opened.error || "Could not open messaging for this contact.",
+    };
+  }
+  await sleep(800);
 
   const autoSend = item.sendMode === "auto";
+  await setExtensionLiveStatus({
+    phase: "running",
+    scope: "outreach",
+    title: "Outreach run",
+    detail: autoSend
+      ? `Inserting draft and sending to ${contactLabel}…`
+      : `Inserting draft for ${contactLabel}…`,
+    confirmMemberId: null,
+  });
   const [{ result: fill }] = await chrome.scripting.executeScript({
     target: { tabId },
     func: clinOutreachFillComposer,
@@ -4890,6 +6087,13 @@ async function outreachRunStep(tabId, base) {
   });
 
   if (!fill?.ok) {
+    await setExtensionLiveStatus({
+      phase: "waiting",
+      scope: "outreach",
+      title: "Outreach — needs you",
+      detail: fill?.error || "Open messaging for this contact, then confirm send.",
+      confirmMemberId: item.memberId,
+    });
     return {
       ok: true,
       item,
@@ -4908,9 +6112,26 @@ async function outreachRunStep(tabId, base) {
         action: "dm",
       }),
     });
+    void tryAutoCaptureMessagingThread(tabId, root);
+    await setExtensionLiveStatus({
+      phase: "success",
+      scope: "outreach",
+      title: "Outreach — sent",
+      detail: `Message sent to ${contactLabel}. Waiting for pace gap before next contact.`,
+      confirmMemberId: null,
+    });
     return { ok: true, item, sent: true };
   }
 
+  await setExtensionLiveStatus({
+    phase: "waiting",
+    scope: "outreach",
+    title: "Outreach — confirm send",
+    detail: autoSend
+      ? `Draft inserted for ${contactLabel}. Auto-send did not complete — click Send on LinkedIn, then Confirm below.`
+      : `Draft inserted for ${contactLabel}. Click Send on LinkedIn, then Confirm below.`,
+    confirmMemberId: item.memberId,
+  });
   return {
     ok: true,
     item,
@@ -4925,6 +6146,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       [OUTREACH_RUN_KEY]: false,
       [OUTREACH_RUN_TAB_ID_KEY]: null,
     });
+    void clearExtensionLiveStatus();
     sendResponse({ ok: true });
     return true;
   }
@@ -4976,6 +6198,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             action: "dm",
           }),
         });
+        const tabId = await resolveOutreachRunTabId(msg.tabId);
+        if (typeof tabId === "number") {
+          void tryAutoCaptureMessagingThread(tabId, root);
+        }
+        await setExtensionLiveStatus({
+          phase: "success",
+          scope: "outreach",
+          title: "Outreach — sent",
+          detail: "Marked sent. Next contact after pace gap.",
+          confirmMemberId: null,
+        });
         sendResponse({ ok: true });
       } catch (e) {
         sendResponse({
@@ -5005,6 +6238,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         [OUTREACH_RUN_KEY]: true,
         [OUTREACH_RUN_TAB_ID_KEY]: runTabId,
       });
+      await setExtensionLiveStatus({
+        phase: "running",
+        scope: "outreach",
+        title: "Outreach run",
+        detail: "Starting outreach run…",
+        confirmMemberId: null,
+      });
       const base = await getApiBase();
       let steps = 0;
       const maxSteps = Math.min(20, Number(msg.maxSteps) || 5);
@@ -5022,6 +6262,23 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         await chrome.storage.local.set({ [OUTREACH_RUN_TAB_ID_KEY]: tabId });
         const step = await outreachRunStep(tabId, base);
         if (step.done) {
+          if (step.reason === "pace_wait") {
+            await setExtensionLiveStatus({
+              phase: "running",
+              scope: "outreach",
+              title: "Outreach — pace wait",
+              detail: `Waiting ${Math.ceil((step.waitMs || 0) / 1000)}s before next send…`,
+              confirmMemberId: null,
+            });
+          } else {
+            await setExtensionLiveStatus({
+              phase: "success",
+              scope: "outreach",
+              title: "Outreach run finished",
+              detail: step.reason === "queue_empty" ? "Queue empty." : String(step.reason || "Done."),
+              confirmMemberId: null,
+            });
+          }
           sendResponse({ ok: true, done: true, reason: step.reason });
           return;
         }

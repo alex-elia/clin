@@ -7,7 +7,6 @@ import { runBrandCoachTurn } from "@/lib/brandCoach";
 import type { CoachAction } from "@/lib/brandCoachTypes";
 import {
   assessBriefGaps,
-  appendBriefSupplement,
   classifyCoachTurn,
   getComposeCoachPrompt,
   hasPostTextForImage,

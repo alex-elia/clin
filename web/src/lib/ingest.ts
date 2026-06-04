@@ -11,6 +11,10 @@ import type { getDb } from "@/db";
 import { backfillContactFieldsFromLatestProfileCapture } from "@/lib/contactProfileBackfill";
 import { normalizeExtractedPersonFields } from "@/lib/linkedinNormalize";
 import { mergePersonFields } from "@/lib/personFieldMerge";
+import {
+  type MessagingCaptureContext,
+  resolveMessagingCaptureTargetContact,
+} from "@/lib/messagingCaptureResolve";
 import { canonicalizeLinkedInUrl, normalizeCompany } from "@/lib/url";
 import { SCORE_RULE_VERSION, scoreContact } from "@/lib/scoring";
 
@@ -262,13 +266,17 @@ function syncPersistContact(
   return "created";
 }
 
-export async function ingestCapture(db: Db, input: IngestInput) {
+export async function ingestCapture(
+  db: Db,
+  input: IngestInput,
+  ctx?: MessagingCaptureContext,
+) {
   if (!ALLOWED_SCHEMA.has(input.schemaVersion)) {
     throw new Error(`Unsupported schemaVersion: ${input.schemaVersion}`);
   }
 
   if (input.pageType === "messaging") {
-    return ingestMessagingCapture(db, input);
+    return ingestMessagingCapture(db, input, ctx);
   }
 
   if (input.pageType === "posts") {
@@ -353,49 +361,83 @@ export async function ingestCapture(db: Db, input: IngestInput) {
   };
 }
 
-async function ingestMessagingCapture(db: Db, input: IngestInput) {
+async function ingestMessagingCapture(
+  db: Db,
+  input: IngestInput,
+  ctx?: MessagingCaptureContext,
+) {
   const purl = input.extractedFields.messagingParticipantProfileUrl?.trim();
   if (!purl) {
     throw new Error(
       "Messaging capture requires messagingParticipantProfileUrl (their /in/… link).",
     );
   }
-  const canonical = canonicalizeLinkedInUrl(purl);
-  if (!canonical || !isProfileCanonicalUrl(canonical)) {
+  const scrapedCanonical = canonicalizeLinkedInUrl(purl);
+  if (!scrapedCanonical || !isProfileCanonicalUrl(scrapedCanonical)) {
     throw new Error("Could not parse participant profile URL.");
   }
 
-  const now = input.capturedAt ? new Date(input.capturedAt) : new Date();
-  const existing = await findContactByCanonical(db, canonical);
-
   const participantName =
     input.extractedFields.messagingParticipantName?.trim() || undefined;
-  const extractedFields = {
-    messagingParticipantProfileUrl: canonical,
+
+  const { contact: targetContact, resolvedVia } =
+    await resolveMessagingCaptureTargetContact(db, {
+      ...ctx,
+      scrapedProfileUrl: purl,
+      participantName,
+    });
+
+  const now = input.capturedAt ? new Date(input.capturedAt) : new Date();
+  const existing =
+    targetContact ?? (await findContactByCanonical(db, scrapedCanonical));
+
+  const profileCanonical =
+    existing?.linkedinUrlCanonical?.trim() || scrapedCanonical;
+
+  const extractedFields: Record<string, unknown> = {
+    messagingParticipantProfileUrl: profileCanonical,
     messagingThreadId: input.extractedFields.messagingThreadId,
     messagingParticipantName: participantName,
     messagingMessages: input.extractedFields.messagingMessages ?? [],
   };
+  if (
+    scrapedCanonical !== profileCanonical ||
+    (resolvedVia && resolvedVia !== "scrapedUrl" && resolvedVia !== "scrapedUrlOnCampaign")
+  ) {
+    extractedFields.messagingParticipantProfileUrlScraped = scrapedCanonical;
+    if (resolvedVia) extractedFields.messagingCaptureResolvedVia = resolvedVia;
+  }
 
   const fieldPresence = {
     messagingParticipantProfileUrl: true,
-    messagingMessages: Boolean(extractedFields.messagingMessages.length > 0),
+    messagingMessages: Boolean(
+      (extractedFields.messagingMessages as unknown[]).length > 0,
+    ),
   };
   const confidence =
     input.confidence ??
-    (extractedFields.messagingMessages.length >= 3 ? 0.85 : 0.65);
+    ((extractedFields.messagingMessages as unknown[]).length >= 3 ? 0.85 : 0.65);
 
   const merged: Partial<typeof contacts.$inferInsert> = {
-    linkedinUrlCanonical: canonical,
-    linkedinUrlRaw: purl,
-    fullName: participantName ?? existing?.fullName ?? null,
     lastSeenAt: now,
     lastUpdatedAt: now,
+    fullName: participantName ?? existing?.fullName ?? null,
   };
+  if (!existing) {
+    merged.linkedinUrlCanonical = scrapedCanonical;
+    merged.linkedinUrlRaw = purl;
+  } else if (!existing.linkedinUrlCanonical?.trim()) {
+    merged.linkedinUrlCanonical = scrapedCanonical;
+    merged.linkedinUrlRaw = purl;
+  }
 
   const baseForScore: Partial<ContactRow> = {
     ...(existing ?? {}),
     ...merged,
+    linkedinUrlCanonical:
+      merged.linkedinUrlCanonical ??
+      existing?.linkedinUrlCanonical ??
+      scrapedCanonical,
     lastSeenAt: now,
   };
   const scores = scoreContact(baseForScore);
@@ -408,18 +450,24 @@ async function ingestMessagingCapture(db: Db, input: IngestInput) {
       captureSourceUrl: input.sourceUrl,
       confidence,
       fieldPresence,
-      extractedJson: extractedFields as Record<string, unknown>,
+      extractedJson: extractedFields,
       existing,
       merged,
       scores,
     });
   });
 
-  const row = await db.query.contacts.findFirst({
-    where: eq(contacts.linkedinUrlCanonical, canonical),
-  });
+  const row =
+    existing ??
+    (await db.query.contacts.findFirst({
+      where: eq(contacts.linkedinUrlCanonical, scrapedCanonical),
+    }));
 
-  return { contactId: row!.id, canonicalUrl: canonical, scores };
+  return {
+    contactId: row!.id,
+    canonicalUrl: row!.linkedinUrlCanonical ?? profileCanonical,
+    scores,
+  };
 }
 
 async function ingestPostsCapture(db: Db, input: IngestInput) {
