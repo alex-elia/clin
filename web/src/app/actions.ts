@@ -504,7 +504,7 @@ export async function generateOutreachBatchAction(formData: FormData) {
       ? "No rows to generate (need draft status + empty draft)."
       : "No rows ready — capture detailed profiles first (About or Experience on LinkedIn), or check “Allow weak profile”.";
     redirect(
-      `/campaigns/${campaignId}?batchInfo=${encodeURIComponent(hint)}`,
+      `/campaigns/${campaignId}?tab=exec&batchInfo=${encodeURIComponent(hint)}`,
     );
   }
   let ok = 0;
@@ -517,11 +517,10 @@ export async function generateOutreachBatchAction(formData: FormData) {
   revalidatePath(`/campaigns/${campaignId}`);
   if (firstErr && ok === 0) {
     redirect(
-      `/campaigns/${campaignId}?draftErr=${encodeURIComponent(firstErr.slice(0, 500))}`,
+      `/campaigns/${campaignId}?tab=exec&draftErr=${encodeURIComponent(firstErr.slice(0, 500))}`,
     );
   }
-  const q = new URLSearchParams();
-  q.set("batchOk", String(ok));
+  const q = new URLSearchParams({ tab: "exec", batchOk: String(ok) });
   if (firstErr) q.set("draftWarn", firstErr.slice(0, 300));
   redirect(`/campaigns/${campaignId}?${q.toString()}`);
 }
@@ -534,10 +533,10 @@ export async function generateOneOutreachDraftAction(formData: FormData) {
   revalidatePath(`/campaigns/${campaignId}`);
   if (!result.ok) {
     redirect(
-      `/campaigns/${campaignId}?draftErr=${encodeURIComponent(result.error.slice(0, 500))}`,
+      `/campaigns/${campaignId}?tab=exec&draftErr=${encodeURIComponent(result.error.slice(0, 500))}`,
     );
   }
-  redirect(`/campaigns/${campaignId}?draftOk=1`);
+  redirect(`/campaigns/${campaignId}?tab=exec&draftOk=1`);
 }
 
 export async function saveCampaignMemberDraftAction(formData: FormData) {
@@ -592,6 +591,51 @@ export async function updateMemberReplyOutcomeAction(formData: FormData) {
     "@/lib/campaignMemberOutreach"
   );
   await updateMemberReplyOutcome(memberId, outcome, noteRaw || null);
+  revalidatePath(`/campaigns/${campaignId}`);
+}
+
+export async function syncMemberReplyFromThreadAction(formData: FormData) {
+  const campaignId = String(formData.get("campaignId") ?? "").trim();
+  const memberId = String(formData.get("memberId") ?? "").trim();
+  if (!campaignId || !memberId) return;
+  const m = await findMemberById(memberId);
+  if (!m || m.campaignId !== campaignId) return;
+  const { getMergedMessagingThreadForContact } = await import(
+    "@/lib/messagingContext"
+  );
+  const { inferReplyOutcomeFromThread } = await import(
+    "@/lib/campaignMemberMessaging"
+  );
+  const { updateMemberReplyOutcome } = await import(
+    "@/lib/campaignMemberOutreach"
+  );
+  const thread = await getMergedMessagingThreadForContact(m.contactId);
+  const outcome = inferReplyOutcomeFromThread(thread);
+  const preview = thread?.replyState.lastPreview?.trim() ?? "";
+  const note =
+    outcome === "replied" && preview
+      ? preview.slice(0, 500)
+      : outcome === "no_reply"
+        ? "No reply detected in latest capture."
+        : null;
+  await updateMemberReplyOutcome(memberId, outcome, note);
+
+  if (thread) {
+    const { getThreadAnalysis, isThreadAnalysisStale } = await import(
+      "@/lib/inboxThreadAnalysisStore"
+    );
+    const stored = getThreadAnalysis(m.contactId, thread.threadKey);
+    if (isThreadAnalysisStale(stored, thread.messageCount)) {
+      const { runInboxThreadAnalysis, getCampaignThreadSalesContext } =
+        await import("@/lib/inboxThreadAnalysis");
+      await runInboxThreadAnalysis({
+        contactId: m.contactId,
+        threadKey: thread.threadKey,
+        campaignContext: await getCampaignThreadSalesContext(m.contactId),
+      });
+    }
+  }
+
   revalidatePath(`/campaigns/${campaignId}`);
 }
 

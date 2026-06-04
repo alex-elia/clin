@@ -111,7 +111,7 @@ export default async function SettingsPage() {
           </h3>
           <p className="text-sm text-[var(--clin-muted)]">
             Optional runner for ready campaign messages. Account risk is yours —
-            start with manual confirm (you paste and click Send on LinkedIn).
+            auto-send is the default; turn off for manual confirm (you click Send on LinkedIn).
           </p>
           <label className="flex cursor-pointer items-start gap-3 text-sm">
             <input
@@ -131,10 +131,10 @@ export default async function SettingsPage() {
               defaultValue={outreachSend.sendMode}
               className="mt-1 w-full rounded-md border border-[var(--clin-border)] px-3 py-2"
             >
+              <option value="auto">Auto-send (default)</option>
               <option value="manual_confirm">
                 Manual — copy draft, you click Send
               </option>
-              <option value="auto">Auto-send (high risk)</option>
             </select>
           </label>
           <div className="grid gap-4 sm:grid-cols-2">

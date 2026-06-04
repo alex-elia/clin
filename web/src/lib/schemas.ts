@@ -44,6 +44,8 @@ export const capturePayloadSchema = z
     }),
     fieldPresence: z.record(z.string(), z.boolean()).optional(),
     outreachCampaignId: z.string().min(1).optional(),
+    outreachMemberId: z.string().min(1).optional(),
+    expectedParticipantProfileUrl: z.string().url().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.pageType !== "messaging") return;
@@ -158,6 +160,9 @@ export const inboxAnalyzeBodySchema = z
   .object({
     contactId: z.string().min(1),
     threadKey: z.string().min(1).optional(),
+    pastedThreadText: z.string().max(32_000).optional(),
+    persistPastedThread: z.boolean().optional(),
+    forceRefresh: z.boolean().optional(),
   })
   .strict();
 

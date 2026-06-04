@@ -2,7 +2,6 @@ import { getOrCreateContentBrandContext } from "@/lib/contentBrandContext";
 import type { ContentPostRow } from "@/lib/contentPosts";
 import {
   parseContentLanguagePreference,
-  postTextForLanguageDetection,
   resolveContentLanguage,
 } from "@/lib/contentLanguage";
 import { completeChat, getLlmConfig } from "@/lib/llm/completeChat";

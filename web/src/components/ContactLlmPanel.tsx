@@ -9,7 +9,6 @@ import {
   outreachFitHint,
   pickLatestAnalysisView,
   SUGGESTED_ACTION_LABELS,
-  type LlmAnalysisView,
 } from "@/lib/contactLlmDisplay";
 import { appendTranscriptToText } from "@/lib/speechRecognition";
 

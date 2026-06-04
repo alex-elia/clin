@@ -1,5 +1,4 @@
 import type { ContentMediaItem, ContentMediaJson } from "@/db/schema";
-import type { ContentPostFormat } from "@/lib/contentPostsShared";
 import type { PostImageStyle } from "@/lib/postImageStyle";
 
 export type ExtensionPostImage = {

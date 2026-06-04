@@ -55,6 +55,9 @@ Install [Ollama](https://ollama.com/), pull a model (e.g. `qwen2.5:8b`), and poi
 | `npm run dev` | Start dashboard + API (singleton on port 3000) |
 | `npm run dev:stop` | Stop port 3000 / orphaned Clin dev (from `web/`) |
 | `npm run dev:clean` | Clear `.next` cache then start dev (from `web/`) |
+| `npm run lint` | ESLint (`web/`) |
+| `npm run typecheck` | TypeScript check (`web/`) |
+| `npm run check` | Typecheck + lint (same as pre-commit quality gate) |
 | `npm run build` / `npm run start` | Production build / serve |
 | `npm run build:desktop` | Build standalone runtime for Electron packaging |
 | `npm run dist:desktop:win` | Build Windows portable + zip desktop artifacts |
@@ -149,7 +152,7 @@ Anyone can fork and improve Clin. Day-to-day maintenance and roadmap decisions a
 
 ## Contributing
 
-Read [`docs/DESIGN.md`](./docs/DESIGN.md) and [`docs/adr/README.md`](./docs/adr/README.md) before larger changes. For DOM breakage after a LinkedIn UI update, fixes usually land in `extension/background.js`.
+Read [`CONTRIBUTING.md`](./CONTRIBUTING.md) for setup, **pre-commit hooks**, and CI. For architecture, see [`docs/DESIGN.md`](./docs/DESIGN.md) and [`docs/adr/README.md`](./docs/adr/README.md). DOM breakage after a LinkedIn UI update usually means fixes in `extension/background.js`.
 
 Use GitHub Issues for bugs and ideas; open a pull request when you have a focused fix or feature.
 

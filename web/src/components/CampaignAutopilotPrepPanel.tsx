@@ -90,7 +90,7 @@ export function CampaignAutopilotPrepPanel({
     } finally {
       setBusy(false);
     }
-  }, [brief, canRun, campaignId, applyFields, suggestDb, verifyMembers, runPipeline, router]);
+  }, [brief, canRun, campaignId, applyFields, suggestDb, selectedAdds, verifyMembers, runPipeline, router]);
 
   const runWithAdds = useCallback(async () => {
     if (!canRun) return;

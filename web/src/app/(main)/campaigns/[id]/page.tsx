@@ -1,7 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CampaignAutopilotPrepPanel } from "@/components/CampaignAutopilotPrepPanel";
+import {
+  CampaignDetailTabNav,
+  campaignDetailTabHref,
+  parseCampaignDetailTab,
+} from "@/components/CampaignDetailTabNav";
 import { CampaignFormFields } from "@/components/CampaignFormFields";
+import { CampaignMemberMessagingPanel } from "@/components/CampaignMemberMessagingPanel";
 import { CampaignOrchestrateButton } from "@/components/CampaignOrchestrateButton";
 import { CampaignMemberIcpCheckButton } from "@/components/CampaignMemberIcpCheckButton";
 import {
@@ -21,9 +27,19 @@ import {
   setCaptureTargetAndActiveExtensionAction,
   setCaptureTargetCampaignAction,
   updateCampaignAction,
-  updateMemberReplyOutcomeAction,
 } from "@/app/actions";
+import {
+  getCampaignMessagingSummary,
+  loadLatestMessagingThreadsByContactId,
+  memberNeedsMessagingReply,
+} from "@/lib/campaignMemberMessaging";
 import { loadMemberOutreachExtras } from "@/lib/campaignMemberOutreach";
+import { listContactLlmExtensionsMap } from "@/lib/contactSqlExtras";
+import {
+  loadThreadAnalysesByContactIds,
+  threadAnalysisKey,
+} from "@/lib/inboxThreadAnalysisStore";
+import { MANUAL_PASTE_THREAD_KEY } from "@/lib/pastedThreadText";
 import {
   enrichCampaignMembers,
   enrichedMemberMatchesFilter,
@@ -42,9 +58,11 @@ import {
 export const dynamic = "force-dynamic";
 
 function memberFilterHref(campaignId: string, key: MemberReadinessFilter) {
-  return key === "all"
-    ? `/campaigns/${campaignId}`
-    : `/campaigns/${campaignId}?memberFilter=${key}`;
+  return campaignDetailTabHref(
+    campaignId,
+    "exec",
+    key === "all" ? undefined : key,
+  );
 }
 
 function filterChipClass(active: boolean) {
@@ -69,6 +87,8 @@ const MEMBER_FILTER_CHIPS: { key: MemberReadinessFilter; label: string }[] = [
   { key: "has_draft", label: "Has draft" },
   { key: "extension_ready", label: "Ready (extension)" },
   { key: "done", label: "Sent / skipped" },
+  { key: "needs_messaging_reply", label: "Awaiting reply" },
+  { key: "needs_thread_capture", label: "Need thread" },
   { key: "icp_strong", label: "ICP strong" },
   { key: "icp_partial", label: "ICP partial" },
   { key: "icp_weak", label: "ICP weak" },
@@ -88,6 +108,7 @@ export default async function CampaignDetailPage({
     batchInfo?: string;
     draftWarn?: string;
     memberFilter?: string;
+    tab?: string;
   }>;
 }) {
   const { id } = await params;
@@ -106,10 +127,45 @@ export default async function CampaignDetailPage({
   const outreachExtras = await loadMemberOutreachExtras(
     membersRaw.map((r) => r.member.id),
   );
+  const llmByContactId = listContactLlmExtensionsMap(
+    membersRaw.map((r) => r.contact.id),
+  );
+  const messagingByContactId = await loadLatestMessagingThreadsByContactId(
+    membersRaw.map((r) => ({
+      id: r.contact.id,
+      fullName: r.contact.fullName,
+      linkedinUrlCanonical: r.contact.linkedinUrlCanonical,
+    })),
+  );
+  const filterCtx = { messagingByContactId, outreachExtras };
+  const messagingSummary = getCampaignMessagingSummary(
+    membersEnriched,
+    messagingByContactId,
+    outreachExtras,
+  );
+  const threadAnalysisPairs = membersRaw.flatMap((r) => {
+    const pairs: { contactId: string; threadKey: string }[] = [];
+    const thread = messagingByContactId.get(r.contact.id);
+    if (thread) {
+      pairs.push({ contactId: r.contact.id, threadKey: thread.threadKey });
+    }
+    const pasted = llmByContactId.get(r.contact.id)?.llmMessageContext?.trim();
+    if (pasted && pasted.length >= 40) {
+      pairs.push({
+        contactId: r.contact.id,
+        threadKey: MANUAL_PASTE_THREAD_KEY,
+      });
+    }
+    return pairs;
+  });
+  const threadAnalyses = loadThreadAnalysesByContactIds(threadAnalysisPairs);
   const memberFilter = parseMemberReadinessFilter(sp.memberFilter);
-  const filterCounts = readinessFilterCounts(membersEnriched);
+  const tab = parseCampaignDetailTab(sp, {
+    hasMembers: membersEnriched.length > 0,
+  });
+  const filterCounts = readinessFilterCounts(membersEnriched, filterCtx);
   const members = membersEnriched.filter((m) =>
-    enrichedMemberMatchesFilter(m, memberFilter),
+    enrichedMemberMatchesFilter(m, memberFilter, filterCtx),
   );
   const nextCapture = pickNextProfileCaptureTarget(membersEnriched);
   const openMembers = membersEnriched.filter(
@@ -126,7 +182,7 @@ export default async function CampaignDetailPage({
   const wfReady = openMembers.filter((m) => m.member.status === "ready").length;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div>
         <Link
           href="/campaigns"
@@ -142,7 +198,14 @@ export default async function CampaignDetailPage({
         ) : null}
         {sp.draftOk === "1" ? (
           <p className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100">
-            Draft regenerated — check the text area below.
+            Draft regenerated — see the member in{" "}
+            <Link
+              href={campaignDetailTabHref(id, "exec")}
+              className="font-medium underline"
+            >
+              Execution
+            </Link>
+            .
           </p>
         ) : null}
         {sp.batchInfo ? (
@@ -172,217 +235,187 @@ export default async function CampaignDetailPage({
         ) : null}
       </div>
 
-      <section className="clin-callout">
-        <h2 className="text-sm font-semibold text-clin-text">Practical flow</h2>
-        <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-clin-muted">
-          <li>
-            Refine <strong className="font-medium">name + context</strong> below (what you want local AI to respect for every message).
-          </li>
-          <li>
-            <strong className="font-medium">Capture LinkedIn into this campaign</strong> (button below). Then search
-            LinkedIn, open profiles or list pages, and use <strong className="font-medium">Capture</strong> in the
-            extension — Clin adds each person here. On profiles, scroll <strong className="font-medium">About</strong>,{" "}
-            <strong className="font-medium">Experience</strong>, and <strong className="font-medium">Education</strong>{" "}
-            into view first so more detail is stored; LinkedIn DMs are not visible to Clin.
-          </li>
-          <li>
-            Use <strong className="font-medium">Regenerate (LLM)</strong> on a member row or generate from the extension
-            on an open profile.
-          </li>
-          <li>
-            Edit drafts, then <strong className="font-medium">Ready for extension</strong>. Use{" "}
-            <strong className="font-medium">Capture target + active for Outreach tab</strong> above so the extension
-            lists ready sends. The extension <strong className="font-medium">fetches</strong> from your local API when
-            you open or refresh it.
-          </li>
-          <li>
-            After you send on LinkedIn yourself, click <strong className="font-medium">Mark sent (manual)</strong> on the
-            member row below (or the same button in the extension Outreach tab). Use <strong className="font-medium">Skip</strong>{" "}
-            if you will not message them.
-          </li>
-        </ol>
-      </section>
+      <CampaignDetailTabNav campaignId={id} activeTab={tab} />
 
-      <CampaignAutopilotPrepPanel campaignId={id} />
+      {tab === "prep" ? (
+        <div className="space-y-6 pt-2">
+          <CampaignAutopilotPrepPanel campaignId={id} />
 
-      <section className="clin-callout">
-        <h2 className="text-sm font-semibold text-clin-text">
-          Workflow status (capture {"->"} ICP {"->"} draft {"->"} ready)
-        </h2>
-        <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-5">
-          <div className="rounded border border-red-200 bg-red-50 px-3 py-2 dark:border-red-900 dark:bg-red-950/30">
-            <p className="text-xs uppercase tracking-wide text-red-700 dark:text-red-300">
-              Need profile
-            </p>
-            <p className="mt-1 text-lg font-semibold text-red-900 dark:text-red-100">
-              {wfNeedProfile}
-            </p>
-          </div>
-          <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900 dark:bg-amber-950/30">
-            <p className="text-xs uppercase tracking-wide text-amber-700 dark:text-amber-300">
-              Need ICP check
-            </p>
-            <p className="mt-1 text-lg font-semibold text-amber-900 dark:text-amber-100">
-              {wfNeedIcp}
-            </p>
-          </div>
-          <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2 dark:border-blue-900 dark:bg-blue-950/30">
-            <p className="text-xs uppercase tracking-wide text-blue-700 dark:text-blue-300">
-              Need draft
-            </p>
-            <p className="mt-1 text-lg font-semibold text-blue-900 dark:text-blue-100">
-              {wfNeedDraft}
-            </p>
-          </div>
-          <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 dark:border-emerald-900 dark:bg-emerald-950/30">
-            <p className="text-xs uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
-              Ready for extension
-            </p>
-            <p className="mt-1 text-lg font-semibold text-emerald-900 dark:text-emerald-100">
-              {wfReady}
-            </p>
-          </div>
-          <div className="rounded border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
-            <p className="text-xs uppercase tracking-wide text-zinc-600 dark:text-zinc-300">
-              Open members
-            </p>
-            <p className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-              {openMembers.length}
-            </p>
-          </div>
-        </div>
-        <p className="mt-2 text-xs text-clin-muted">
-          New profile captures now auto-run ICP analysis; when fit is strong/partial,
-          Clin auto-generates a draft.
-        </p>
-        <CampaignOrchestrateButton campaignId={id} />
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold">Campaign details</h2>
-        <form action={updateCampaignAction} className="space-y-4 clin-card p-4">
-          <CampaignFormFields
-            submitLabel="Save"
-            defaultName={campaign.name}
-            defaultContext={campaign.contextText}
-            defaultIcp={campaign.icpText ?? ""}
-            defaultWriter={campaign.writerInstructions ?? ""}
-            defaultSystemOverride={campaign.systemPromptOverride ?? ""}
-            hiddenCampaignId={id}
-          />
-          <p className="text-xs text-clin-muted">
-            Per-contact draft logs:{" "}
-            <code className="clin-code">[clin:outreach-draft]</code> in the dev
-            terminal.
-          </p>
-        </form>
-      </section>
-
-      <section className="rounded-lg border border-sky-200 bg-sky-50/60 p-4 dark:border-sky-900 dark:bg-sky-950/30">
-        <h2 className="text-sm font-semibold text-clin-text">
-          Extension: capture LinkedIn into this campaign
-        </h2>
-        <p className="mt-1 text-sm text-clin-muted">
-          While this is set, every profile or list <strong className="font-medium">Capture</strong> from the Clin
-          extension tags new/updated people into <strong className="font-medium">this</strong> list (server adds them
-          after ingest). Use LinkedIn search, Sales Nav lists, or connections — same capture button as usual.
-        </p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <form action={setCaptureTargetCampaignAction}>
-            <input type="hidden" name="campaignId" value={id} />
-            <button
-              type="submit"
-              disabled={isCaptureTarget}
-              className="rounded-md bg-sky-800 px-3 py-2 text-sm font-medium text-white disabled:opacity-40 dark:bg-sky-600"
-            >
-              Set as capture target
-            </button>
-          </form>
-          {isCaptureTarget ? (
-            <form action={clearCaptureTargetCampaignAction}>
-              <button
-                type="submit"
-                className="clin-btn-secondary text-sm px-3 py-2"
-              >
-                Clear capture target
-              </button>
+          <section className="space-y-3">
+            <h2 className="text-sm font-semibold">Campaign details</h2>
+            <form action={updateCampaignAction} className="space-y-4 clin-card p-4">
+              <CampaignFormFields
+                submitLabel="Save"
+                defaultName={campaign.name}
+                defaultContext={campaign.contextText}
+                defaultIcp={campaign.icpText ?? ""}
+                defaultWriter={campaign.writerInstructions ?? ""}
+                defaultSystemOverride={campaign.systemPromptOverride ?? ""}
+                hiddenCampaignId={id}
+              />
             </form>
-          ) : null}
-          <form action={setCaptureTargetAndActiveExtensionAction}>
-            <input type="hidden" name="campaignId" value={id} />
-            <button
-              type="submit"
-              className="rounded-md border border-sky-600 px-3 py-2 text-sm font-medium text-sky-900 dark:border-sky-500 dark:text-sky-100"
-            >
-              Capture target + active for Outreach tab
-            </button>
-          </form>
-        </div>
-      </section>
+          </section>
 
-      <section className="clin-card p-4">
-        <h3 className="text-sm font-semibold">Capture queue & readiness</h3>
-        <p className="mt-1 text-xs text-clin-muted">
-          Set this campaign as <strong className="font-medium">capture target</strong> above, then open each LinkedIn
-          profile from the links below (or use <strong className="font-medium">Open next</strong> in the extension).
-          Scroll About and Experience, then <strong className="font-medium">Capture</strong>. Filter the member list by
-          pipeline state. Counts below ignore people already marked <strong className="font-medium">sent</strong> or{" "}
-          <strong className="font-medium">skipped</strong>.
-        </p>
-        {membersEnriched.length > 0 ? (
-          <div className="mt-3 space-y-2 text-xs text-clin-muted">
-            <p>
-              Profiles:{" "}
-              <strong className="text-clin-text">
-                {filterCounts.need_profile} missing
-              </strong>
-              ,{" "}
-              <strong className="text-clin-text">
-                {filterCounts.thin_profile} thin
-              </strong>
-              ,{" "}
-              <strong className="text-clin-text">
-                {filterCounts.profile_ok} detailed
-              </strong>
-              . Drafts:{" "}
-              <strong className="text-clin-text">
-                {filterCounts.need_draft} empty
-              </strong>
-              ,{" "}
-              <strong className="text-clin-text">
-                {filterCounts.has_draft} with text
-              </strong>
-              .
+          <section className="rounded-lg border border-sky-200 bg-sky-50/60 p-4 dark:border-sky-900 dark:bg-sky-950/30">
+            <h2 className="text-sm font-semibold text-clin-text">
+              Extension: capture LinkedIn into this campaign
+            </h2>
+            <p className="mt-1 text-sm text-clin-muted">
+              While this is set, every <strong className="font-medium">Capture (auto)</strong> from
+              the Clin extension adds people to this list.
             </p>
-            {nextCapture ? (
-              <p>
-                <a
-                  href={nextCapture.profileUrl}
-                  target="_blank"
-                  rel="noreferrer"
+            <div className="mt-3 flex flex-wrap gap-2">
+              <form action={setCaptureTargetCampaignAction}>
+                <input type="hidden" name="campaignId" value={id} />
+                <button
+                  type="submit"
+                  disabled={isCaptureTarget}
+                  className="rounded-md bg-sky-800 px-3 py-2 text-sm font-medium text-white disabled:opacity-40 dark:bg-sky-600"
+                >
+                  Set as capture target
+                </button>
+              </form>
+              {isCaptureTarget ? (
+                <form action={clearCaptureTargetCampaignAction}>
+                  <button
+                    type="submit"
+                    className="clin-btn-secondary text-sm px-3 py-2"
+                  >
+                    Clear capture target
+                  </button>
+                </form>
+              ) : null}
+              <form action={setCaptureTargetAndActiveExtensionAction}>
+                <input type="hidden" name="campaignId" value={id} />
+                <button
+                  type="submit"
+                  className="rounded-md border border-sky-600 px-3 py-2 text-sm font-medium text-sky-900 dark:border-sky-500 dark:text-sky-100"
+                >
+                  Capture target + active for Outreach tab
+                </button>
+              </form>
+            </div>
+          </section>
+        </div>
+      ) : (
+        <div className="space-y-6 pt-2">
+          <section className="clin-card p-4">
+            <h2 className="text-sm font-semibold">Capture queue &amp; readiness</h2>
+            <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-5">
+              <div className="rounded border border-red-200 bg-red-50 px-3 py-2 dark:border-red-900 dark:bg-red-950/30">
+                <p className="text-xs uppercase tracking-wide text-red-700 dark:text-red-300">
+                  Need profile
+                </p>
+                <p className="mt-1 text-lg font-semibold text-red-900 dark:text-red-100">
+                  {wfNeedProfile}
+                </p>
+              </div>
+              <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900 dark:bg-amber-950/30">
+                <p className="text-xs uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                  Need ICP
+                </p>
+                <p className="mt-1 text-lg font-semibold text-amber-900 dark:text-amber-100">
+                  {wfNeedIcp}
+                </p>
+              </div>
+              <div className="rounded border border-blue-200 bg-blue-50 px-3 py-2 dark:border-blue-900 dark:bg-blue-950/30">
+                <p className="text-xs uppercase tracking-wide text-blue-700 dark:text-blue-300">
+                  Need draft
+                </p>
+                <p className="mt-1 text-lg font-semibold text-blue-900 dark:text-blue-100">
+                  {wfNeedDraft}
+                </p>
+              </div>
+              <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 dark:border-emerald-900 dark:bg-emerald-950/30">
+                <p className="text-xs uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+                  Ready
+                </p>
+                <p className="mt-1 text-lg font-semibold text-emerald-900 dark:text-emerald-100">
+                  {wfReady}
+                </p>
+              </div>
+              <div className="rounded border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+                <p className="text-xs uppercase tracking-wide text-zinc-600 dark:text-zinc-300">
+                  Open
+                </p>
+                <p className="mt-1 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+                  {openMembers.length}
+                </p>
+              </div>
+            </div>
+            {membersEnriched.length > 0 ? (
+              <div className="mt-3 space-y-2 text-xs text-clin-muted">
+                <p>
+                  Profiles:{" "}
+                  <strong className="text-clin-text">
+                    {filterCounts.need_profile} missing
+                  </strong>
+                  ,{" "}
+                  <strong className="text-clin-text">
+                    {filterCounts.thin_profile} thin
+                  </strong>
+                  ,{" "}
+                  <strong className="text-clin-text">
+                    {filterCounts.profile_ok} detailed
+                  </strong>
+                  . Drafts:{" "}
+                  <strong className="text-clin-text">
+                    {filterCounts.need_draft} empty
+                  </strong>
+                  ,{" "}
+                  <strong className="text-clin-text">
+                    {filterCounts.has_draft} with text
+                  </strong>
+                  .
+                </p>
+                {nextCapture ? (
+                  <p>
+                    <a
+                      href={nextCapture.profileUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="clin-link font-medium"
+                    >
+                      Open next profile to capture
+                    </a>
+                    {nextCapture.fullName ? (
+                      <span className="text-clin-muted"> — {nextCapture.fullName}</span>
+                    ) : null}
+                  </p>
+                ) : (
+                  <p className="text-emerald-700 dark:text-emerald-400">
+                    No open members need a richer capture.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-clin-muted">
+                No members yet — set this campaign as capture target in{" "}
+                <Link
+                  href={campaignDetailTabHref(id, "prep")}
                   className="clin-link font-medium"
                 >
-                  Open next profile to capture
-                </a>
-                {nextCapture.fullName ? (
-                  <span className="text-clin-muted"> — {nextCapture.fullName}</span>
-                ) : null}
-              </p>
-            ) : (
-              <p className="text-emerald-700 dark:text-emerald-400">
-                No open members need a richer capture — everyone left is detailed, or the rest are sent/skipped, or the
-                list is empty.
+                  Preparation
+                </Link>
+                , then capture from LinkedIn.
               </p>
             )}
-          </div>
-        ) : null}
-      </section>
+            <div className="mt-4">
+              <CampaignOrchestrateButton campaignId={id} />
+            </div>
+          </section>
 
-      <section>
+          <section>
         <h2 className="text-sm font-semibold">
           Members ({members.length}
           {memberFilter !== "all" ? ` / ${membersEnriched.length} total` : ""})
         </h2>
+        {messagingSummary.sentCount > 0 ? (
+          <p className="mt-1 text-xs text-clin-muted">
+            {messagingSummary.sentCount} sent · {messagingSummary.needsReply} awaiting
+            reply · {messagingSummary.needsCapture} need thread capture
+          </p>
+        ) : null}
         {membersEnriched.length > 0 ? (
           <div className="mt-2 flex flex-wrap gap-2">
             {MEMBER_FILTER_CHIPS.map(({ key, label }) => (
@@ -424,6 +457,14 @@ export default async function CampaignDetailPage({
               const draft = member.draftOutreach ?? "";
               const hasDraft = draft.trim().length > 0;
               const extras = outreachExtras.get(member.id);
+              const thread = messagingByContactId.get(contact.id) ?? null;
+              const needsReply =
+                member.status === "sent" &&
+                memberNeedsMessagingReply({
+                  memberStatus: member.status,
+                  thread,
+                  extras,
+                });
               return (
                 <div
                   key={`${member.id}-${member.updatedAt.getTime()}`}
@@ -467,6 +508,16 @@ export default async function CampaignDetailPage({
                           ICP not checked
                         </span>
                       )}
+                      {member.status === "sent" && !thread ? (
+                        <span className="clin-pill border-sky-400/50 text-xs text-sky-900 dark:text-sky-100">
+                          Need thread
+                        </span>
+                      ) : null}
+                      {needsReply ? (
+                        <span className="clin-pill border-amber-400/50 text-xs text-amber-900 dark:text-amber-100">
+                          Awaiting reply
+                        </span>
+                      ) : null}
                     </div>
                     <div className="flex min-w-0 flex-col items-end gap-1 text-right">
                       <p className="max-w-md truncate text-xs text-clin-muted">
@@ -529,44 +580,6 @@ export default async function CampaignDetailPage({
                         timeStyle: "short",
                       })}
                     </p>
-                  ) : null}
-                  {member.status === "sent" || member.status === "skipped" ? (
-                    <form
-                      action={updateMemberReplyOutcomeAction}
-                      className="mt-2 flex flex-wrap items-end gap-2"
-                    >
-                      <input type="hidden" name="campaignId" value={id} />
-                      <input type="hidden" name="memberId" value={member.id} />
-                      <label className="text-xs">
-                        <span className="font-medium text-clin-text">Reply</span>
-                        <select
-                          name="replyOutcome"
-                          defaultValue={extras?.messageReplyOutcome ?? "unknown"}
-                          className="mt-0.5 clin-select text-xs"
-                        >
-                          <option value="unknown">Unknown</option>
-                          <option value="replied">Replied</option>
-                          <option value="no_reply">No reply yet</option>
-                          <option value="not_applicable">N/A</option>
-                        </select>
-                      </label>
-                      <label className="min-w-[12rem] flex-1 text-xs">
-                        <span className="font-medium text-clin-text">Note</span>
-                        <input
-                          name="messageOutcomeNote"
-                          type="text"
-                          defaultValue={extras?.messageOutcomeNote ?? ""}
-                          placeholder="Optional"
-                          className="mt-0.5 clin-input text-xs"
-                        />
-                      </label>
-                      <button
-                        type="submit"
-                        className="clin-btn-secondary text-xs px-2 py-1"
-                      >
-                        Save outcome
-                      </button>
-                    </form>
                   ) : null}
                   <div className="mt-2 flex flex-wrap gap-2">
                     <CampaignMemberIcpCheckButton
@@ -634,12 +647,38 @@ export default async function CampaignDetailPage({
                     ) : null}
                     <RemoveFromCampaignForm campaignId={id} memberId={member.id} />
                   </div>
+                  <CampaignMemberMessagingPanel
+                    campaignId={id}
+                    memberId={member.id}
+                    contactId={contact.id}
+                    contactName={contact.fullName || contact.id}
+                    memberStatus={member.status}
+                    thread={thread}
+                    extras={extras}
+                    storedCaptureAnalysis={
+                      thread
+                        ? threadAnalyses.get(
+                            threadAnalysisKey(contact.id, thread.threadKey),
+                          ) ?? null
+                        : null
+                    }
+                    storedPastedAnalysis={
+                      threadAnalyses.get(
+                        threadAnalysisKey(contact.id, MANUAL_PASTE_THREAD_KEY),
+                      ) ?? null
+                    }
+                    initialPastedThread={
+                      llmByContactId.get(contact.id)?.llmMessageContext ?? ""
+                    }
+                  />
                 </div>
               );
             })
           )}
         </div>
       </section>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { randomInt, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { appSettings } from "@/db/schema";
@@ -30,7 +30,7 @@ export type OutreachSendSettings = {
 
 const SEND_DEFAULTS: OutreachSendSettings = {
   enabled: false,
-  sendMode: "manual_confirm",
+  sendMode: "auto",
   minSecondsBetweenSends: 120,
   sendMaxPerDay: 15,
   sendJitterPercent: 35,

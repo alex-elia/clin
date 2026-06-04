@@ -1,32 +1,17 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { captureSessions } from "@/db/schema";
-
-export type MessagingMessageRow = {
-  from: "me" | "them" | "unknown";
-  body: string;
-};
-
-export type ThreadReplyState = {
-  lastFrom: "me" | "them" | "unknown" | null;
-  needsReply: boolean;
-  lastPreview: string;
-  theirMessageCount: number;
-  myMessageCount: number;
-};
-
-export type MergedMessagingThread = {
-  contactId: string;
-  threadKey: string;
-  threadUrl: string;
-  messages: MessagingMessageRow[];
-  messageCount: number;
-  text: string;
-  firstCapturedAt: Date | null;
-  lastCapturedAt: Date | null;
-  captureCount: number;
-  replyState: ThreadReplyState;
-};
+import { canonicalizeLinkedInUrl } from "@/lib/url";
+export type {
+  MergedMessagingThread,
+  MessagingMessageRow,
+  ThreadReplyState,
+} from "@/lib/messagingTypes";
+import type {
+  MergedMessagingThread,
+  MessagingMessageRow,
+  ThreadReplyState,
+} from "@/lib/messagingTypes";
 
 export function threadKeyFromCapture(row: {
   sourceUrl: string;
@@ -131,30 +116,42 @@ export function formatMessagingMessagesForContext(
   return text;
 }
 
-/** Merge all messaging captures for a contact (optionally one thread). */
-export async function getMergedMessagingThreadForContact(
-  contactId: string,
-  opts?: { threadKey?: string; maxCaptures?: number },
-): Promise<MergedMessagingThread | null> {
-  const db = getDb();
-  const lim = Math.min(opts?.maxCaptures ?? 24, 60);
-  const rows = await db
-    .select({
-      id: captureSessions.id,
-      sourceUrl: captureSessions.sourceUrl,
-      extractedJson: captureSessions.extractedJson,
-      capturedAt: captureSessions.capturedAt,
-    })
-    .from(captureSessions)
-    .where(
-      and(
-        eq(captureSessions.contactId, contactId),
-        eq(captureSessions.pageType, "messaging"),
-      ),
-    )
-    .orderBy(asc(captureSessions.capturedAt))
-    .limit(lim);
+type CaptureSessionRow = {
+  id: string;
+  sourceUrl: string;
+  extractedJson: unknown;
+  capturedAt: Date | null;
+  contactId?: string;
+};
 
+function normalizeParticipantName(name: string | null | undefined): string {
+  return (name ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function participantUrlFromJson(json: unknown): string | null {
+  if (!json || typeof json !== "object") return null;
+  const o = json as Record<string, unknown>;
+  for (const key of [
+    "messagingParticipantProfileUrl",
+    "messagingParticipantProfileUrlScraped",
+  ]) {
+    const v = o[key];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+function participantNameFromJson(json: unknown): string | null {
+  if (!json || typeof json !== "object") return null;
+  const v = (json as Record<string, unknown>).messagingParticipantName;
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+function buildMergedThreadFromCaptureRows(
+  contactId: string,
+  rows: CaptureSessionRow[],
+  opts?: { threadKey?: string },
+): MergedMessagingThread | null {
   if (!rows.length) return null;
 
   const threadKeyFilter = opts?.threadKey?.trim();
@@ -229,6 +226,96 @@ export async function getMergedMessagingThreadForContact(
     captureCount: picked.captureCount,
     replyState: deriveThreadReplyState(messages),
   };
+}
+
+async function findAliasMessagingCaptureRows(
+  contact: {
+    id: string;
+    fullName: string | null;
+    linkedinUrlCanonical: string | null;
+  },
+  limit = 240,
+): Promise<CaptureSessionRow[]> {
+  const canonical = contact.linkedinUrlCanonical?.trim() || null;
+  const canonicalNorm = canonical ? canonicalizeLinkedInUrl(canonical) : null;
+  const nameNorm = normalizeParticipantName(contact.fullName);
+
+  const db = getDb();
+  const recent = await db
+    .select({
+      id: captureSessions.id,
+      contactId: captureSessions.contactId,
+      sourceUrl: captureSessions.sourceUrl,
+      extractedJson: captureSessions.extractedJson,
+      capturedAt: captureSessions.capturedAt,
+    })
+    .from(captureSessions)
+    .where(eq(captureSessions.pageType, "messaging"))
+    .orderBy(desc(captureSessions.capturedAt))
+    .limit(limit);
+
+  return recent
+    .filter((row) => {
+      if (!row.contactId || row.contactId === contact.id) return false;
+      const purl = participantUrlFromJson(row.extractedJson);
+      const pcanon = purl ? canonicalizeLinkedInUrl(purl) : null;
+      if (canonicalNorm && pcanon === canonicalNorm) return true;
+      const pname = normalizeParticipantName(
+        participantNameFromJson(row.extractedJson),
+      );
+      if (nameNorm && pname && pname === nameNorm) return true;
+      return false;
+    })
+    .map(({ id, sourceUrl, extractedJson, capturedAt }) => ({
+      id,
+      sourceUrl,
+      extractedJson,
+      capturedAt,
+    }));
+}
+
+/** Merge all messaging captures for a contact (optionally one thread). */
+export async function getMergedMessagingThreadForContact(
+  contactId: string,
+  opts?: { threadKey?: string; maxCaptures?: number },
+): Promise<MergedMessagingThread | null> {
+  const db = getDb();
+  const lim = Math.min(opts?.maxCaptures ?? 24, 60);
+  const rows = await db
+    .select({
+      id: captureSessions.id,
+      sourceUrl: captureSessions.sourceUrl,
+      extractedJson: captureSessions.extractedJson,
+      capturedAt: captureSessions.capturedAt,
+    })
+    .from(captureSessions)
+    .where(
+      and(
+        eq(captureSessions.contactId, contactId),
+        eq(captureSessions.pageType, "messaging"),
+      ),
+    )
+    .orderBy(asc(captureSessions.capturedAt))
+    .limit(lim);
+
+  return buildMergedThreadFromCaptureRows(contactId, rows, opts);
+}
+
+/** Campaign member view — includes captures saved under a mismatched contact id. */
+export async function getMergedMessagingThreadForCampaignContact(
+  contact: {
+    id: string;
+    fullName: string | null;
+    linkedinUrlCanonical: string | null;
+  },
+  opts?: { threadKey?: string; maxCaptures?: number },
+): Promise<MergedMessagingThread | null> {
+  const direct = await getMergedMessagingThreadForContact(contact.id, opts);
+  if (direct) return direct;
+
+  const aliasRows = await findAliasMessagingCaptureRows(contact);
+  if (!aliasRows.length) return null;
+  return buildMergedThreadFromCaptureRows(contact.id, aliasRows, opts);
 }
 
 /** Latest messaging capture for a contact (extension Capture → Messaging). */

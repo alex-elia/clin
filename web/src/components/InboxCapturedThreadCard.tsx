@@ -3,8 +3,15 @@ import { updateInboxThreadAction } from "@/app/actions";
 import { InboxMessageHistory } from "@/components/InboxMessageHistory";
 import { InboxThreadCoach } from "@/components/InboxThreadCoach";
 import type { InboxOverviewRow } from "@/lib/inbox";
+import type { StoredThreadAnalysis } from "@/lib/inboxThreadAnalysisTypes";
 
-export function InboxCapturedThreadCard({ row }: { row: InboxOverviewRow }) {
+export function InboxCapturedThreadCard({
+  row,
+  storedAnalysis,
+}: {
+  row: InboxOverviewRow;
+  storedAnalysis?: StoredThreadAnalysis | null;
+}) {
   return (
     <li className="clin-card p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -48,6 +55,17 @@ export function InboxCapturedThreadCard({ row }: { row: InboxOverviewRow }) {
         needsReply={row.needsReply}
         messageCount={row.messageCount}
         captureCount={row.captureCount}
+        stored={
+          storedAnalysis
+            ? {
+                analysis: storedAnalysis.analysis,
+                analyzedAt: storedAnalysis.analyzedAt.toISOString(),
+                model: storedAnalysis.model,
+                messageCount: storedAnalysis.messageCount,
+              }
+            : null
+        }
+        autoRun={!storedAnalysis?.analysis}
       />
 
       <form action={updateInboxThreadAction} className="mt-3 flex flex-wrap gap-2">

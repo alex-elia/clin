@@ -42,6 +42,8 @@ export async function POST(req: Request) {
         runInboxThreadAnalysis({
           contactId: parsed.data.contactId,
           threadKey: parsed.data.threadKey,
+          pastedThreadText: parsed.data.pastedThreadText,
+          persistPastedThread: parsed.data.persistPastedThread,
           settings: llm,
         }),
       { contactId: parsed.data.contactId },

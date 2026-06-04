@@ -1,22 +1,162 @@
 const DEFAULT_BASE = "http://127.0.0.1:3000";
+const LIVE_STATUS_KEY = "clinExtensionLiveStatus";
 
 const baseInput = document.getElementById("base");
 const activityEl = document.getElementById("activity");
 const outreachEl = document.getElementById("outreach");
 const brandingPostsEl = document.getElementById("branding-posts");
 const dashLink = document.getElementById("dash-link");
+const liveStatusBar = document.getElementById("live-status-bar");
+const liveStatusTitle = document.getElementById("live-status-title");
+const liveStatusDetail = document.getElementById("live-status-detail");
+const liveStatusActions = document.getElementById("live-status-actions");
+
+let liveStatusFadeTimer = null;
 
 function getBase() {
   return (baseInput.value.trim() || DEFAULT_BASE).replace(/\/$/, "");
 }
 
-function setStatus(text, cls) {
-  activityEl.textContent = text;
-  const base = "activity";
-  if (cls === "ok") activityEl.className = `${base} is-ok`;
-  else if (cls === "err") activityEl.className = `${base} is-err`;
-  else activityEl.className = base;
+async function readLiveStatusFromStorage() {
+  const stored = await chrome.storage.local.get([LIVE_STATUS_KEY]);
+  return stored[LIVE_STATUS_KEY] || null;
 }
+
+function renderLiveStatus(state) {
+  if (!liveStatusBar) return;
+  const phase = state?.phase || "idle";
+  const title = (state?.title || "").trim();
+  const detail = (state?.detail || "").trim();
+
+  if (phase === "idle" || (!title && !detail)) {
+    liveStatusBar.className = "live-status is-hidden";
+    liveStatusTitle.textContent = "";
+    liveStatusDetail.textContent = "";
+    liveStatusActions?.replaceChildren();
+    return;
+  }
+
+  liveStatusBar.className = `live-status is-${phase}`;
+  liveStatusTitle.textContent = title;
+  liveStatusDetail.textContent = detail;
+  liveStatusActions?.replaceChildren();
+
+  if (state?.confirmMemberId) {
+    const confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.className = "btn btn-primary";
+    confirmBtn.textContent = "Confirm sent";
+    confirmBtn.addEventListener("click", async () => {
+      const ack = await chrome.runtime.sendMessage({
+        type: "CLIN_OUTREACH_CONFIRM_SENT",
+        memberId: state.confirmMemberId,
+      });
+      if (ack?.ok) {
+        setLiveStatus({
+          phase: "success",
+          scope: "outreach",
+          title: "Outreach — sent",
+          detail: "Marked sent.",
+          persist: true,
+        });
+        loadReadyOutreach();
+      } else {
+        setLiveStatus({
+          phase: "error",
+          scope: "outreach",
+          title: "Confirm failed",
+          detail: ack?.error || "Ack failed.",
+          persist: true,
+        });
+      }
+    });
+    liveStatusActions.appendChild(confirmBtn);
+  }
+}
+
+function setLiveStatus(opts) {
+  const state = {
+    phase: opts.phase || "running",
+    scope: opts.scope || "general",
+    title: opts.title || "Clin",
+    detail: opts.detail || "",
+    confirmMemberId: opts.confirmMemberId || null,
+    updatedAt: Date.now(),
+  };
+  renderLiveStatus(state);
+  if (opts.persist) {
+    chrome.storage.local.set({ [LIVE_STATUS_KEY]: state });
+  }
+  if (liveStatusFadeTimer) clearTimeout(liveStatusFadeTimer);
+  const shouldFade =
+    (opts.phase === "success" || opts.phase === "error") &&
+    !opts.confirmMemberId &&
+    (opts.scope === "capture" || !opts.persist);
+  if (shouldFade) {
+    liveStatusFadeTimer = setTimeout(() => {
+      if (opts.scope === "capture") {
+        void chrome.storage.local.remove(LIVE_STATUS_KEY);
+      }
+      renderLiveStatus({ phase: "idle", title: "", detail: "" });
+    }, opts.phase === "error" ? 8000 : 5000);
+  }
+}
+
+async function syncLiveStatusFromStorage() {
+  const state = await readLiveStatusFromStorage();
+  if (!state || state.phase === "idle") {
+    renderLiveStatus({ phase: "idle", title: "", detail: "" });
+    return;
+  }
+  const age = Date.now() - (state.updatedAt || 0);
+  const staleCapture =
+    state.scope === "capture" &&
+    (state.phase === "running" || state.phase === "waiting") &&
+    age > 90_000;
+  const staleSuccess =
+    state.scope === "capture" &&
+    state.phase === "success" &&
+    age > 12_000;
+  if (staleCapture || staleSuccess) {
+    await chrome.storage.local.remove(LIVE_STATUS_KEY);
+    renderLiveStatus({ phase: "idle", title: "", detail: "" });
+    return;
+  }
+  renderLiveStatus(state);
+}
+
+function setStatus(text, cls) {
+  if (activityEl) {
+    activityEl.textContent = text;
+    const base = "activity";
+    if (cls === "ok") activityEl.className = `${base} is-ok`;
+    else if (cls === "err") activityEl.className = `${base} is-err`;
+    else activityEl.className = base;
+  }
+  void (async () => {
+    const cur = await readLiveStatusFromStorage();
+    if (
+      cur?.phase === "running" &&
+      (cur.scope === "outreach" || cur.scope === "pipeline")
+    ) {
+      return;
+    }
+    setLiveStatus({
+      phase: cls === "err" ? "error" : cls === "ok" ? "success" : "running",
+      scope: "general",
+      title: cls === "err" ? "Error" : cls === "ok" ? "Done" : "Working",
+      detail: text,
+    });
+  })();
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !changes[LIVE_STATUS_KEY]) return;
+  void syncLiveStatusFromStorage();
+});
+
+void syncLiveStatusFromStorage();
+setInterval(() => void syncLiveStatusFromStorage(), 1500);
 
 function isMessageChannelClosedError(message) {
   if (typeof message !== "string") return false;
@@ -58,6 +198,7 @@ function initTabs() {
       activate(btn.dataset.panel);
       if (btn.dataset.panel === "data") void refreshCampaignUi();
       if (btn.dataset.panel === "branding") void loadReadyBranding();
+      if (btn.dataset.panel === "outreach") void loadOutreachSendSettings();
     });
   });
   settingsGear?.addEventListener("click", () => activate("settings"));
@@ -212,10 +353,10 @@ function sendManualSnapshotMessage(kind) {
 }
 
 document.getElementById("snapshot-messaging")?.addEventListener("click", async () => {
-  setStatus("Snapshotting messaging list…");
+  setStatus("Snapshotting inbox list…");
   const resp = await sendManualSnapshotMessage("linkedin_messages_inbox_visible");
   if (resp.ok) {
-    setStatus(`Messaging list saved (${resp.id?.slice(0, 8) ?? "ok"}). See Clin → Inbox.`, "ok");
+    setStatus(`Inbox list saved. See Clin → Inbox.`, "ok");
   } else {
     setStatus(resp.error || "Snapshot failed.", "err");
   }
@@ -235,6 +376,7 @@ chrome.storage.sync.get(["clinApiBase"], (r) => {
   baseInput.value = r.clinApiBase || DEFAULT_BASE;
   syncDashHref();
   loadReadyOutreach();
+  loadOutreachSendSettings();
   loadReadyBranding();
   void refreshCampaignUi();
   void refreshPipelineStatus();
@@ -251,13 +393,17 @@ document.getElementById("save").addEventListener("click", () => {
     setStatus("Saved API base.", "ok");
     syncDashHref();
     loadReadyOutreach();
+    void loadOutreachSendSettings();
     loadReadyBranding();
     void refreshCampaignUi();
   });
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") void refreshCampaignUi();
+  if (document.visibilityState === "visible") {
+    void refreshCampaignUi();
+    void syncLiveStatusFromStorage();
+  }
 });
 
 document.getElementById("ping").addEventListener("click", async () => {
@@ -329,18 +475,26 @@ function sendCaptureMessage(scope = "auto") {
 
 function campaignAttachLine(d) {
   const ca = d?.campaignAttach;
-  if (!ca?.membersAdded) return "";
+  if (!ca?.attachedToCampaignId) return "";
   const name = ca.campaignName ? ` “${ca.campaignName}”` : "";
-  return `\nCampaign${name}: +${ca.membersAdded} in this list.`;
+  if (ca.membersAdded) {
+    return `\nCampaign${name}: +${ca.membersAdded} member(s).`;
+  }
+  return `\nLinked to campaign${name} (contact already in campaign).`;
 }
 
 function applyCaptureSuccess(resp) {
   clearPaceCountdown();
   if (resp.mode === "messaging" && resp.data) {
     const n = resp.data?.messageCount ?? "?";
+    const ca = resp.data?.campaignAttach;
+    const campaignHint = ca?.attachedToCampaignId
+      ? `\nSee Clin → Campaigns${ca.campaignName ? ` → “${ca.campaignName}”` : ""} for follow-up.`
+      : "\nSet a capture-target campaign in Clin if this contact should appear in campaign follow-up.";
     setStatus(
       `Thread saved (${n} messages).\nContact: ${resp.data?.contactId || "?"}` +
-        campaignAttachLine(resp.data),
+        campaignAttachLine(resp.data) +
+        campaignHint,
       "ok",
     );
     return;
@@ -421,21 +575,49 @@ async function runCaptureFlow(scope = "auto") {
     scope === "posts"
       ? "posts"
       : scope === "messaging"
-        ? "messaging"
+        ? "1:1 thread"
         : scope === "profile"
           ? "profile"
           : scope === "connections"
             ? "list"
             : "tab";
   setStatus(`Capturing ${scopeLabel}…`);
+  setLiveStatus({
+    phase: "running",
+    scope: "capture",
+    title: "Capture",
+    detail: `Capturing ${scopeLabel}…`,
+  });
   const resp = await sendCaptureMessage(scope);
   if (resp.ok) {
+    const n =
+      resp.mode === "messaging"
+        ? resp.data?.messageCount
+        : resp.mode === "posts"
+          ? resp.data?.postCount
+          : null;
+    const detail =
+      resp.mode === "messaging" && n != null
+        ? `Thread saved (${n} messages).`
+        : "Saved to Clin.";
+    setLiveStatus({
+      phase: "success",
+      scope: "capture",
+      title: "Capture saved",
+      detail,
+    });
     applyCaptureSuccess(resp);
     void refreshCampaignUi();
     return;
   }
   if (resp.paceKind === "gap" && resp.paceWaitSeconds > 0) {
     let sec = resp.paceWaitSeconds;
+    setLiveStatus({
+      phase: "waiting",
+      scope: "capture",
+      title: "Pace wait",
+      detail: `Next capture in ${sec}s…`,
+    });
     setStatus(
       `Pace limit: next import in ${sec}s (countdown)…\nThen capture retries automatically — same rule as Clin /settings.`,
       "err",
@@ -447,6 +629,12 @@ async function runCaptureFlow(scope = "auto") {
         void runCaptureFlow(scope);
         return;
       }
+      setLiveStatus({
+        phase: "waiting",
+        scope: "capture",
+        title: "Pace wait",
+        detail: `Next capture in ${sec}s…`,
+      });
       setStatus(
         `Pace limit: next import in ${sec}s…\n(auto-retry when this hits 0)`,
         "err",
@@ -455,6 +643,12 @@ async function runCaptureFlow(scope = "auto") {
     return;
   }
   clearPaceCountdown();
+  setLiveStatus({
+    phase: "error",
+    scope: "capture",
+    title: "Capture failed",
+    detail: resp.error || "Capture failed.",
+  });
   setStatus(resp.error || "Capture failed.", "err");
 }
 
@@ -466,9 +660,6 @@ document.getElementById("cap-profile")?.addEventListener("click", () => {
 });
 document.getElementById("cap-posts")?.addEventListener("click", () => {
   void runCaptureFlow("posts");
-});
-document.getElementById("cap-messaging")?.addEventListener("click", () => {
-  void runCaptureFlow("messaging");
 });
 document.getElementById("cap-list")?.addEventListener("click", () => {
   void runCaptureFlow("connections");
@@ -579,15 +770,21 @@ async function runFullCampaignCaptureFlow() {
   const canImportListFromTab = Boolean(tab.url && isConnectionsListPageUrl(tab.url));
 
   if (canImportListFromTab) {
-    setStatus(
-      `Pipeline: ${listRounds} list round(s) with auto-scroll, then campaign profiles one-by-one… ${suppressFocus ? "Background mode on (no foreground focus)." : "Clin will focus the LinkedIn tab."}`,
-      "",
-    );
+    setLiveStatus({
+      phase: "running",
+      scope: "pipeline",
+      title: "Full orchestration",
+      detail: `Starting — ${listRounds} list round(s), then campaign profiles…`,
+      persist: true,
+    });
   } else {
-    setStatus(
-      "Resuming campaign capture: list import skipped (current tab is not a people list). Clin will continue individual profile captures.",
-      "",
-    );
+    setLiveStatus({
+      phase: "running",
+      scope: "pipeline",
+      title: "Full orchestration",
+      detail: "Resuming campaign profile capture (list import skipped)…",
+      persist: true,
+    });
   }
 
   const resp = await new Promise((resolve) => {
@@ -687,6 +884,7 @@ document.getElementById("pipeline-stop")?.addEventListener("click", async () => 
 
 document.getElementById("refresh-outreach").addEventListener("click", () => {
   loadReadyOutreach();
+  void loadOutreachSendSettings();
 });
 
 const pipelineStatusEl = document.getElementById("pipeline-status");
@@ -1210,11 +1408,57 @@ function renderOutreachCard(it, base) {
   return card;
 }
 
-const outreachRunStatus = document.getElementById("outreach-run-status");
+const outreachAutoSendEl = document.getElementById("outreach-auto-send");
+const outreachSendModeHintEl = document.getElementById("outreach-send-mode-hint");
 
-function setOutreachRunStatus(text) {
-  if (outreachRunStatus) outreachRunStatus.textContent = text || "";
+function syncOutreachSendModeUi(sendMode) {
+  const auto = sendMode === "auto";
+  if (outreachAutoSendEl) outreachAutoSendEl.checked = auto;
+  if (outreachSendModeHintEl) {
+    outreachSendModeHintEl.textContent = auto
+      ? "Clin will click Send after inserting each draft."
+      : "When off, click Send on LinkedIn, then Confirm sent in the bar above.";
+  }
 }
+
+async function loadOutreachSendSettings() {
+  const base = getBase();
+  try {
+    const res = await fetch(`${base}/api/extension/outreach-send-settings`);
+    if (!res.ok) return;
+    const json = await res.json();
+    syncOutreachSendModeUi(json?.outreachSend?.sendMode ?? "auto");
+  } catch {
+    syncOutreachSendModeUi("auto");
+  }
+}
+
+async function saveOutreachSendMode(autoSend) {
+  const base = getBase();
+  const sendMode = autoSend ? "auto" : "manual_confirm";
+  syncOutreachSendModeUi(sendMode);
+  try {
+    const res = await fetch(`${base}/api/extension/outreach-send-settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sendMode }),
+    });
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      setStatus(json?.error || `Save failed (${res.status})`, "err");
+      await loadOutreachSendSettings();
+      return;
+    }
+    setStatus(autoSend ? "Auto-send enabled." : "Manual send mode — confirm after you send.", "ok");
+  } catch (e) {
+    setStatus(String(e), "err");
+    await loadOutreachSendSettings();
+  }
+}
+
+outreachAutoSendEl?.addEventListener("change", () => {
+  void saveOutreachSendMode(outreachAutoSendEl.checked);
+});
 
 async function loadExtensionBrand() {
   const base = getBase();
@@ -1233,52 +1477,68 @@ loadExtensionBrand();
 
 document.getElementById("outreach-run-stop")?.addEventListener("click", async () => {
   await chrome.runtime.sendMessage({ type: "CLIN_OUTREACH_RUN_STOP" });
-  setOutreachRunStatus("Run stopped.");
+  setLiveStatus({
+    phase: "success",
+    scope: "outreach",
+    title: "Outreach run stopped",
+    detail: "Run stopped.",
+    persist: true,
+  });
 });
 
 document.getElementById("outreach-run-start")?.addEventListener("click", async () => {
-  setOutreachRunStatus("Starting outreach run…");
+  setLiveStatus({
+    phase: "running",
+    scope: "outreach",
+    title: "Outreach run",
+    detail: "Starting outreach run…",
+    persist: true,
+  });
   const res = await chrome.runtime.sendMessage({
     type: "CLIN_OUTREACH_RUN_START",
     maxSteps: 5,
   });
   if (chrome.runtime.lastError) {
-    setOutreachRunStatus(chrome.runtime.lastError.message);
+    setLiveStatus({
+      phase: "error",
+      scope: "outreach",
+      title: "Outreach run failed",
+      detail: chrome.runtime.lastError.message,
+      persist: true,
+    });
     return;
   }
   if (!res?.ok) {
-    setOutreachRunStatus(res?.error || "Run failed.");
+    setLiveStatus({
+      phase: "error",
+      scope: "outreach",
+      title: "Outreach run failed",
+      detail: res?.error || "Run failed.",
+      persist: true,
+    });
     return;
   }
   if (res.paused && res.item?.memberId) {
-    setOutreachRunStatus(
-      `${res.hint || "Confirm send on LinkedIn."} Then click Confirm below.`,
-    );
-    const confirmBtn = document.createElement("button");
-    confirmBtn.type = "button";
-    confirmBtn.className = "btn btn-primary";
-    confirmBtn.style.marginTop = "8px";
-    confirmBtn.textContent = "Confirm sent";
-    confirmBtn.addEventListener("click", async () => {
-      const ack = await chrome.runtime.sendMessage({
-        type: "CLIN_OUTREACH_CONFIRM_SENT",
-        memberId: res.item.memberId,
-      });
-      if (ack?.ok) {
-        setOutreachRunStatus("Marked sent.");
-        loadReadyOutreach();
-      } else {
-        setOutreachRunStatus(ack?.error || "Ack failed.");
-      }
-    });
-    outreachRunStatus?.appendChild(confirmBtn);
+    void syncLiveStatusFromStorage();
     return;
   }
   if (res.done) {
-    setOutreachRunStatus(`Done: ${res.reason || "queue empty"}.`);
+    setLiveStatus({
+      phase: "success",
+      scope: "outreach",
+      title: "Outreach run finished",
+      detail: res.reason === "queue_empty" ? "Queue empty." : String(res.reason || "Done."),
+      persist: true,
+    });
     loadReadyOutreach();
     return;
   }
-  setOutreachRunStatus("Run finished.");
+  setLiveStatus({
+    phase: "success",
+    scope: "outreach",
+    title: "Outreach run finished",
+    detail: "Run finished.",
+    persist: true,
+  });
   loadReadyOutreach();
 });

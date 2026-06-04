@@ -160,11 +160,24 @@ export type MemberReadinessFilter =
   | "has_draft"
   | "extension_ready"
   | "done"
+  | "needs_messaging_reply"
+  | "needs_thread_capture"
   | "icp_strong"
   | "icp_partial"
   | "icp_weak"
   | "icp_unknown"
   | "icp_unchecked";
+
+export type MemberReadinessFilterContext = {
+  messagingByContactId?: Map<
+    string,
+    import("@/lib/messagingContext").MergedMessagingThread
+  >;
+  outreachExtras?: Map<
+    string,
+    import("@/lib/campaignMemberOutreach").MemberOutreachExtras
+  >;
+};
 
 export function parseMemberReadinessFilter(
   raw: string | undefined,
@@ -178,6 +191,8 @@ export function parseMemberReadinessFilter(
     "has_draft",
     "extension_ready",
     "done",
+    "needs_messaging_reply",
+    "needs_thread_capture",
     "icp_strong",
     "icp_partial",
     "icp_weak",
@@ -193,6 +208,7 @@ export function parseMemberReadinessFilter(
 export function enrichedMemberMatchesFilter(
   row: EnrichedCampaignMember,
   filter: MemberReadinessFilter,
+  ctx?: MemberReadinessFilterContext,
 ): boolean {
   if (filter === "all") return true;
   const draft = (row.member.draftOutreach ?? "").trim();
@@ -215,6 +231,17 @@ export function enrichedMemberMatchesFilter(
       return open && st === "ready";
     case "done":
       return st === "sent" || st === "skipped";
+    case "needs_messaging_reply": {
+      if (st !== "sent") return false;
+      const thread = ctx?.messagingByContactId?.get(row.contact.id) ?? null;
+      const extras = ctx?.outreachExtras?.get(row.member.id);
+      if (extras?.messageReplyOutcome === "replied") return false;
+      if (thread?.replyState.needsReply) return true;
+      if (thread?.replyState.lastFrom === "them") return true;
+      return false;
+    }
+    case "needs_thread_capture":
+      return st === "sent" && !ctx?.messagingByContactId?.get(row.contact.id);
     case "icp_strong":
       return row.icpMatch === "strong";
     case "icp_partial":
@@ -273,6 +300,7 @@ export function countProfileDepths(rows: EnrichedCampaignMember[]): {
 
 export function readinessFilterCounts(
   rows: EnrichedCampaignMember[],
+  ctx?: MemberReadinessFilterContext,
 ): Record<MemberReadinessFilter, number> {
   return {
     all: rows.length,
@@ -302,6 +330,12 @@ export function readinessFilterCounts(
     done: rows.filter(
       (m) =>
         m.member.status === "sent" || m.member.status === "skipped",
+    ).length,
+    needs_messaging_reply: rows.filter((m) =>
+      enrichedMemberMatchesFilter(m, "needs_messaging_reply", ctx),
+    ).length,
+    needs_thread_capture: rows.filter((m) =>
+      enrichedMemberMatchesFilter(m, "needs_thread_capture", ctx),
     ).length,
     icp_strong: rows.filter((m) => m.icpMatch === "strong").length,
     icp_partial: rows.filter((m) => m.icpMatch === "partial").length,

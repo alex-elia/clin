@@ -173,6 +173,102 @@
         color: var(--accent-dim);
       }
 
+      .live-status {
+        flex-shrink: 0;
+        padding: 10px 14px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+      }
+
+      .live-status.is-hidden {
+        display: none;
+      }
+
+      .live-status.is-running {
+        background: linear-gradient(180deg, var(--accent-soft), var(--surface));
+        border-bottom-color: rgba(79, 195, 161, 0.35);
+      }
+
+      .live-status.is-waiting {
+        background: #fffbeb;
+        border-bottom-color: #fde68a;
+      }
+
+      .live-status.is-success {
+        background: var(--ok-bg);
+        border-bottom-color: rgba(22, 101, 52, 0.15);
+      }
+
+      .live-status.is-error {
+        background: var(--err-bg);
+        border-bottom-color: rgba(180, 35, 24, 0.15);
+      }
+
+      .live-status-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+      }
+
+      .live-status-spinner {
+        flex-shrink: 0;
+        width: 14px;
+        height: 14px;
+        margin-top: 2px;
+        border: 2px solid var(--border);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: live-spin 0.8s linear infinite;
+      }
+
+      .live-status.is-success .live-status-spinner,
+      .live-status.is-error .live-status-spinner,
+      .live-status.is-waiting .live-status-spinner,
+      .live-status.is-idle .live-status-spinner {
+        display: none;
+      }
+
+      @keyframes live-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .live-status-copy {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .live-status-title {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--text);
+        line-height: 1.35;
+      }
+
+      .live-status-detail {
+        margin: 3px 0 0;
+        font-size: 11px;
+        line-height: 1.45;
+        color: var(--muted);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .live-status-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 8px;
+      }
+
+      .live-status-actions .btn {
+        margin: 0;
+        padding: 6px 10px;
+        font-size: 11px;
+      }
+
       main {
         flex: 1;
         min-height: 0;
@@ -491,6 +587,17 @@
         </button>
       </nav>
 
+      <div id="live-status-bar" class="live-status is-hidden" aria-live="polite" aria-atomic="true">
+        <div class="live-status-row">
+          <span id="live-status-spinner" class="live-status-spinner" aria-hidden="true"></span>
+          <div class="live-status-copy">
+            <p id="live-status-title" class="live-status-title"></p>
+            <p id="live-status-detail" class="live-status-detail"></p>
+          </div>
+        </div>
+        <div id="live-status-actions" class="live-status-actions"></div>
+      </div>
+
       <main>
         <section id="panel-data" class="panel is-active" role="tabpanel">
           <p class="section-title">Capture &amp; analysis</p>
@@ -517,8 +624,12 @@
             Open next profile (capture queue)
           </button>
           <button id="cap" type="button" class="btn btn-primary">
-            Capture tab (auto)
+            Capture (auto)
           </button>
+          <p class="hint">
+            Detects the active tab: profile, <strong>open message thread</strong>, posts, or
+            people list — one button.
+          </p>
           <button id="cap-campaign-full" type="button" class="btn btn-secondary">
             Capture full campaign (paced)
           </button>
@@ -529,19 +640,21 @@
             <button id="cap-posts" type="button" class="btn btn-secondary btn-scope">
               Posts
             </button>
-            <button id="cap-messaging" type="button" class="btn btn-secondary btn-scope">
-              Messaging
-            </button>
             <button id="cap-list" type="button" class="btn btn-secondary btn-scope">
               List
             </button>
           </div>
-          <button id="snapshot-messaging" type="button" class="btn btn-secondary">
-            Snapshot messaging list
-          </button>
-          <button id="snapshot-analytics" type="button" class="btn btn-secondary">
-            Snapshot post analytics
-          </button>
+          <details class="sub-block">
+            <summary class="section-title" style="cursor: pointer">Optional snapshots</summary>
+            <div style="margin-top: 10px">
+              <button id="snapshot-messaging" type="button" class="btn btn-secondary">
+                Snapshot inbox list
+              </button>
+              <button id="snapshot-analytics" type="button" class="btn btn-secondary">
+                Snapshot post analytics
+              </button>
+            </div>
+          </details>
           <button id="campaign-gen-draft" type="button" class="btn btn-secondary">
             Generate campaign draft (this profile)
           </button>
@@ -591,8 +704,8 @@
         <section id="panel-outreach" class="panel" role="tabpanel" hidden>
           <p class="section-title">Ready to send</p>
           <p class="hint">
-            Loads <strong>ready</strong> items from your active <strong>Campaign</strong> (Clin → Campaigns) and
-            approved rows from <strong>Decisions</strong>. You paste on LinkedIn yourself; mark sent or skip here.
+            Loads <strong>ready</strong> items from your active <strong>Campaign</strong> (Clin → Campaigns).
+            With <strong>Auto-send</strong> on, Clin clicks Send after inserting the draft; otherwise you send on LinkedIn and confirm here.
           </p>
           <button id="refresh-outreach" type="button" class="btn btn-secondary">
             Refresh list
@@ -605,7 +718,16 @@
               Stop run
             </button>
           </div>
-          <p id="outreach-run-status" class="hint" aria-live="polite"></p>
+          <label class="field" style="margin-top: 10px; text-transform: none; letter-spacing: 0; font-weight: 500">
+            <span style="margin-bottom: 4px">Send mode</span>
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 12px">
+              <input id="outreach-auto-send" type="checkbox" checked />
+              Auto-send after draft is inserted
+            </label>
+            <span id="outreach-send-mode-hint" class="hint" style="margin-top: 4px; display: block">
+              When off, click Send on LinkedIn, then Confirm sent in the bar above.
+            </span>
+          </label>
           <div id="outreach"></div>
         </section>
 

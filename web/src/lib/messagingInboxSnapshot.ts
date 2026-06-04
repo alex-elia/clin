@@ -3,7 +3,6 @@ import { getDb } from "@/db";
 import { contacts, extensionSnapshots } from "@/db/schema";
 import {
   mergeStructuredTile,
-  parseMessagingTileText,
 } from "@/lib/messagingInboxTileParse";
 import { canonicalizeLinkedInUrl } from "@/lib/url";
 

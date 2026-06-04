@@ -1,4 +1,4 @@
-import type { MessagingMessageRow } from "@/lib/messagingContext";
+import type { MessagingMessageRow } from "@/lib/messagingTypes";
 
 export function InboxMessageHistory({
   messages,

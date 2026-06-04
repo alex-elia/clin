@@ -6,6 +6,10 @@ import {
   type InboxThreadStatus,
 } from "@/lib/inbox";
 import { getLatestMessagingInboxSnapshot } from "@/lib/messagingInboxSnapshot";
+import {
+  loadThreadAnalysesByContactIds,
+  threadAnalysisKey,
+} from "@/lib/inboxThreadAnalysisStore";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +67,9 @@ export default async function InboxPage({
 
   const listSnapshot = await getLatestMessagingInboxSnapshot();
   const capturedContactIds = new Set(rows.map((r) => r.contactId));
+  const threadAnalyses = loadThreadAnalysesByContactIds(
+    rows.map((r) => ({ contactId: r.contactId, threadKey: r.threadKey })),
+  );
   const needsReplyCount =
     view === "needs_reply" ? rows.length : needsReplyRows.length;
 
@@ -116,7 +123,15 @@ export default async function InboxPage({
       ) : (
         <ul className="space-y-4">
           {rows.map((r) => (
-            <InboxCapturedThreadCard key={`${r.contactId}-${r.threadKey}`} row={r} />
+            <InboxCapturedThreadCard
+              key={`${r.contactId}-${r.threadKey}`}
+              row={r}
+              storedAnalysis={
+                threadAnalyses.get(
+                  threadAnalysisKey(r.contactId, r.threadKey),
+                ) ?? null
+              }
+            />
           ))}
         </ul>
       )}

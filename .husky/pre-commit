@@ -1,0 +1,8 @@
+#!/usr/bin/env sh
+set -e
+
+# Fast: ESLint on staged web files only
+npm exec lint-staged
+
+# Whole-project TypeScript (catches cross-file breaks)
+npm run typecheck --prefix web
