@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { DailyTasksPanel } from "@/components/DailyTasksPanel";
 import { HomeCoachPanel } from "@/components/HomeCoachPanel";
 import { getDb } from "@/db";
+import { getDailyReminderSummary } from "@/lib/dailyReminder";
 import { getHomeDashboardData } from "@/lib/homeDashboard";
 import { getOrCreateContentBrandContext } from "@/lib/contentBrandContext";
 
@@ -8,9 +10,10 @@ export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
   getDb();
-  const [dash, brand] = await Promise.all([
+  const [dash, brand, dailyTasks] = await Promise.all([
     getHomeDashboardData(),
     getOrCreateContentBrandContext(),
+    getDailyReminderSummary(),
   ]);
 
   const pipelineActive =
@@ -71,6 +74,8 @@ export default async function HomePage() {
           </p>
         ) : null}
       </header>
+
+      <DailyTasksPanel summary={dailyTasks} />
 
       <section aria-label="Your workflow">
         <h2 className="clin-section-title">How Clin fits your week</h2>

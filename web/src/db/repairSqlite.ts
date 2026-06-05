@@ -106,6 +106,14 @@ export function repairClinSqliteSchema(db: Database.Database): void {
     );
     addColumnOrExists(
       db,
+      "ALTER TABLE outreach_campaign_members ADD COLUMN closed_at integer",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaign_members ADD COLUMN close_reason text",
+    );
+    addColumnOrExists(
+      db,
       "ALTER TABLE outreach_campaign_members ADD COLUMN icp_match text",
     );
     addColumnOrExists(

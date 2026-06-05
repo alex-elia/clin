@@ -64,8 +64,38 @@ export function maybeAutopilotThreadAnalysisAfterMessagingCapture(
         )
         .get(contactId) as { id: string } | undefined;
 
-      if (member?.id && outcome === "replied") {
-        await updateMemberReplyOutcome(member.id, "replied", note);
+      if (member?.id) {
+        const stage = out.analysis.thread_stage;
+        const action = out.analysis.recommended_action;
+        let replyOutcome: string = outcome;
+        let outcomeNote = note;
+
+        if (stage === "ghosted" || stage === "closed") {
+          replyOutcome = "ghosted";
+          outcomeNote =
+            out.analysis.action_rationale?.slice(0, 500) ||
+            out.analysis.sales_rationale?.slice(0, 500) ||
+            note;
+        } else if (
+          action === "mark_done" ||
+          action === "no_reply_needed" ||
+          out.analysis.strategy_verdict === "no_reply"
+        ) {
+          outcomeNote =
+            out.analysis.action_rationale?.slice(0, 500) ||
+            out.analysis.sales_rationale?.slice(0, 500) ||
+            note;
+        }
+
+        if (replyOutcome === "replied" || replyOutcome === "ghosted") {
+          await updateMemberReplyOutcome(
+            member.id,
+            replyOutcome,
+            outcomeNote,
+          );
+        } else if (outcomeNote && action === "mark_done") {
+          await updateMemberReplyOutcome(member.id, outcome, outcomeNote);
+        }
       }
     } catch (err) {
       console.error(

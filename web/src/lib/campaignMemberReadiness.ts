@@ -2,6 +2,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db";
 import { captureSessions, contacts, outreachCampaignMembers } from "@/db/schema";
 import { readMemberIcpFromRow } from "@/lib/campaignMemberIcp";
+import { adviseEndCampaign } from "@/lib/campaignMemberWorkflowShared";
 import type {
   CampaignMemberIcpMatch,
   CampaignMemberIcpRecommendedAction,
@@ -121,10 +122,10 @@ export type EnrichedCampaignMember = CampaignMemberRowLite & {
   icpCheckedAt: Date | null;
 };
 
-/** Still in the outreach pipeline (not marked sent/skipped after manual LinkedIn send). */
+/** Still in the outreach pipeline (not sent, skipped, or closed). */
 export function memberPipelineOpen(m: EnrichedCampaignMember): boolean {
   const st = m.member.status;
-  return st !== "sent" && st !== "skipped";
+  return st !== "sent" && st !== "skipped" && st !== "closed";
 }
 
 export async function enrichCampaignMembers(
@@ -157,9 +158,12 @@ export type MemberReadinessFilter =
   | "thin_profile"
   | "profile_ok"
   | "need_draft"
-  | "has_draft"
+  | "review_draft"
   | "extension_ready"
   | "done"
+  | "conversation_active"
+  | "campaign_ended"
+  | "suggest_end"
   | "needs_messaging_reply"
   | "needs_thread_capture"
   | "icp_strong"
@@ -177,6 +181,10 @@ export type MemberReadinessFilterContext = {
     string,
     import("@/lib/campaignMemberOutreach").MemberOutreachExtras
   >;
+  threadAnalysisByContactId?: Map<
+    string,
+    import("@/lib/inboxThreadAnalysisTypes").InboxThreadAnalysis | null
+  >;
 };
 
 export function parseMemberReadinessFilter(
@@ -188,9 +196,12 @@ export function parseMemberReadinessFilter(
     "thin_profile",
     "profile_ok",
     "need_draft",
-    "has_draft",
+    "review_draft",
     "extension_ready",
     "done",
+    "conversation_active",
+    "campaign_ended",
+    "suggest_end",
     "needs_messaging_reply",
     "needs_thread_capture",
     "icp_strong",
@@ -199,6 +210,7 @@ export function parseMemberReadinessFilter(
     "icp_unknown",
     "icp_unchecked",
   ];
+  if (raw === "has_draft") return "review_draft";
   if (raw && allowed.includes(raw as MemberReadinessFilter)) {
     return raw as MemberReadinessFilter;
   }
@@ -225,12 +237,27 @@ export function enrichedMemberMatchesFilter(
       return open && row.profileDepth === "ok";
     case "need_draft":
       return open && st === "draft" && !hasDraft;
-    case "has_draft":
-      return open && hasDraft;
+    case "review_draft":
+      return open && hasDraft && st !== "ready";
     case "extension_ready":
       return open && st === "ready";
     case "done":
       return st === "sent" || st === "skipped";
+    case "conversation_active":
+      return st === "sent";
+    case "campaign_ended":
+      return st === "closed";
+    case "suggest_end": {
+      if (st !== "sent") return false;
+      const extras = ctx?.outreachExtras?.get(row.member.id);
+      const analysis =
+        ctx?.threadAnalysisByContactId?.get(row.contact.id) ?? null;
+      return adviseEndCampaign({
+        memberStatus: st,
+        extras,
+        threadAnalysis: analysis,
+      }).suggest;
+    }
     case "needs_messaging_reply": {
       if (st !== "sent") return false;
       const thread = ctx?.messagingByContactId?.get(row.contact.id) ?? null;
@@ -319,10 +346,11 @@ export function readinessFilterCounts(
         m.member.status === "draft" &&
         !(m.member.draftOutreach ?? "").trim().length,
     ).length,
-    has_draft: rows.filter(
+    review_draft: rows.filter(
       (m) =>
         memberPipelineOpen(m) &&
-        (m.member.draftOutreach ?? "").trim().length > 0,
+        (m.member.draftOutreach ?? "").trim().length > 0 &&
+        m.member.status !== "ready",
     ).length,
     extension_ready: rows.filter(
       (m) => memberPipelineOpen(m) && m.member.status === "ready",
@@ -330,6 +358,11 @@ export function readinessFilterCounts(
     done: rows.filter(
       (m) =>
         m.member.status === "sent" || m.member.status === "skipped",
+    ).length,
+    conversation_active: rows.filter((m) => m.member.status === "sent").length,
+    campaign_ended: rows.filter((m) => m.member.status === "closed").length,
+    suggest_end: rows.filter((m) =>
+      enrichedMemberMatchesFilter(m, "suggest_end", ctx),
     ).length,
     needs_messaging_reply: rows.filter((m) =>
       enrichedMemberMatchesFilter(m, "needs_messaging_reply", ctx),

@@ -107,6 +107,8 @@ export async function saveAutomationForm(formData: FormData) {
       formData.get("automationAutoEnrichAfterList") === "on",
     autoCaptureMessagingInEnrich:
       formData.get("automationAutoCaptureMessaging") === "on",
+    autoCapturePostsInEnrich:
+      formData.get("automationAutoCapturePosts") === "on",
     maxPerDay: readInt("automationMaxPerDay"),
     minGapSeconds: readInt("automationMinGapSeconds"),
     maxGapSeconds: readInt("automationMaxGapSeconds"),
@@ -585,7 +587,13 @@ export async function updateMemberReplyOutcomeAction(formData: FormData) {
   if (!campaignId || !memberId) return;
   const m = await findMemberById(memberId);
   if (!m || m.campaignId !== campaignId) return;
-  const allowed = new Set(["unknown", "replied", "no_reply", "not_applicable"]);
+  const allowed = new Set([
+    "unknown",
+    "replied",
+    "no_reply",
+    "ghosted",
+    "not_applicable",
+  ]);
   const outcome = allowed.has(replyOutcome) ? replyOutcome : "unknown";
   const { updateMemberReplyOutcome } = await import(
     "@/lib/campaignMemberOutreach"
@@ -636,6 +644,32 @@ export async function syncMemberReplyFromThreadAction(formData: FormData) {
     }
   }
 
+  revalidatePath(`/campaigns/${campaignId}`);
+}
+
+export async function closeCampaignMemberAction(formData: FormData) {
+  const campaignId = String(formData.get("campaignId") ?? "").trim();
+  const memberId = String(formData.get("memberId") ?? "").trim();
+  const closeReason = String(formData.get("closeReason") ?? "manual").trim();
+  const noteRaw = String(formData.get("messageOutcomeNote") ?? "").trim();
+  if (!campaignId || !memberId) return;
+  const m = await findMemberById(memberId);
+  if (!m || m.campaignId !== campaignId) return;
+  if (m.status !== "sent") return;
+  const allowed = new Set([
+    "manual",
+    "ghosted",
+    "won",
+    "lost",
+    "not_fit",
+    "other",
+  ]);
+  const reason = allowed.has(closeReason) ? closeReason : "manual";
+  const { closeCampaignMember } = await import("@/lib/campaignMemberOutreach");
+  await closeCampaignMember(memberId, {
+    closeReason: reason,
+    note: noteRaw || null,
+  });
   revalidatePath(`/campaigns/${campaignId}`);
 }
 

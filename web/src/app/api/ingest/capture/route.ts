@@ -2,9 +2,7 @@ import { count, desc, gte } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { captureSessions } from "@/db/schema";
-import { maybeAutopilotAnalyzeAfterProfileCapture } from "@/lib/autopilot";
 import { maybeAutopilotThreadAnalysisAfterMessagingCapture } from "@/lib/campaignThreadAnalysis";
-import { runCampaignPostCaptureWorkflow } from "@/lib/campaignPostCaptureWorkflow";
 import { ingestCapture } from "@/lib/ingest";
 import { attachImportedContactsToCampaign } from "@/lib/outreachCampaigns";
 import {
@@ -12,11 +10,21 @@ import {
   getPaceSettings,
   rollCaptureGapAfterSuccess,
 } from "@/lib/pace";
+import { maybeRunPostCaptureAnalysis } from "@/lib/postCaptureAnalysis";
 import { capturePayloadSchema } from "@/lib/schemas";
 import { trackFeatureEvent } from "@/lib/telemetry/orchestration";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const ANALYSIS_PAGE_TYPES = new Set([
+  "profile",
+  "posts",
+  "messaging",
+  "company",
+  "company_jobs",
+  "web_page",
+]);
 
 export async function POST(req: Request) {
   let body: unknown;
@@ -78,8 +86,14 @@ export async function POST(req: Request) {
     }
   }
 
-  const { outreachCampaignId, outreachMemberId, expectedParticipantProfileUrl, ...capturePayload } =
-    parsed.data;
+  const {
+    outreachCampaignId,
+    outreachMemberId,
+    expectedParticipantProfileUrl,
+    captureChainComplete,
+    ...capturePayload
+  } = parsed.data;
+  const chainComplete = captureChainComplete !== false;
   const started = Date.now();
 
   try {
@@ -89,29 +103,40 @@ export async function POST(req: Request) {
       expectedParticipantProfileUrl,
     });
     await rollCaptureGapAfterSuccess(pace);
-    maybeAutopilotAnalyzeAfterProfileCapture(
-      result.contactId,
-      capturePayload.pageType,
-    );
-    if (capturePayload.pageType === "messaging") {
-      maybeAutopilotThreadAnalysisAfterMessagingCapture(result.contactId);
-    }
+
     const campaignAttach = await attachImportedContactsToCampaign(
       outreachCampaignId,
       [result.contactId],
     );
-    let campaignWorkflow: Awaited<
-      ReturnType<typeof runCampaignPostCaptureWorkflow>
-    > | null = null;
-    if (
-      capturePayload.pageType === "profile" &&
-      campaignAttach.attachedToCampaignId
-    ) {
-      campaignWorkflow = await runCampaignPostCaptureWorkflow({
-        campaignId: campaignAttach.attachedToCampaignId,
-        contactId: result.contactId,
+
+    if (capturePayload.pageType === "messaging") {
+      maybeAutopilotThreadAnalysisAfterMessagingCapture(result.contactId);
+    }
+
+    if (!chainComplete) {
+      trackFeatureEvent("capture_ingest", {
+        ok: true,
+        durationMs: Date.now() - started,
+        meta: {
+          pageType: capturePayload.pageType,
+          contactId: result.contactId,
+          analysisDeferred: true,
+        },
+      });
+      return NextResponse.json({
+        ...result,
+        campaignAttach,
+        analysisDeferred: true,
       });
     }
+
+    if (ANALYSIS_PAGE_TYPES.has(capturePayload.pageType)) {
+      maybeRunPostCaptureAnalysis({
+        contactId: result.contactId,
+        campaignId: campaignAttach.attachedToCampaignId,
+      });
+    }
+
     trackFeatureEvent("capture_ingest", {
       ok: true,
       durationMs: Date.now() - started,
@@ -120,7 +145,7 @@ export async function POST(req: Request) {
         contactId: result.contactId,
       },
     });
-    return NextResponse.json({ ...result, campaignAttach, campaignWorkflow });
+    return NextResponse.json({ ...result, campaignAttach });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Ingest failed";
     trackFeatureEvent("capture_ingest", {

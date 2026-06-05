@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { outreachCampaignMembers } from "@/db/schema";
+import type { ContactContextBundle } from "@/lib/contactContextBundle";
 import type { CampaignIcpMatch } from "@/lib/campaignIcpMatch";
 import { checkContactAgainstCampaignIcp } from "@/lib/campaignIcpMatch";
 import type {
@@ -64,10 +65,12 @@ export async function runAndPersistMemberIcpCheck(opts: {
   campaignId: string;
   memberId: string;
   contactId: string;
+  contextBundle?: ContactContextBundle;
 }): Promise<CampaignIcpMatch & { checkedAt: string }> {
   const check = await checkContactAgainstCampaignIcp({
     campaignId: opts.campaignId,
     contactId: opts.contactId,
+    contextBundle: opts.contextBundle,
   });
   await persistMemberIcpCheck(opts.memberId, check);
   return { ...check, checkedAt: new Date().toISOString() };

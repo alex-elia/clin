@@ -4,6 +4,10 @@ import { contacts, outreachCampaigns } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { extractJsonObjectFromModelText } from "@/lib/llmAnalysis";
 import { completeChat, getLlmConfig } from "@/lib/llm/completeChat";
+import {
+  buildContactContextBundle,
+  type ContactContextBundle,
+} from "@/lib/contactContextBundle";
 import { getLatestProfileContextForOutreach } from "@/lib/profileCaptureContext";
 import { getUserContextForLlm, userContextHasLlmSignal } from "@/lib/userContext";
 
@@ -20,9 +24,18 @@ export const campaignIcpMatchSchema = z.object({
 
 export type CampaignIcpMatch = z.infer<typeof campaignIcpMatchSchema>;
 
+function profileContextFromBundle(bundle: ContactContextBundle): string {
+  const parts = [
+    bundle.profile_context,
+    bundle.company_intel_context,
+  ].filter(Boolean);
+  return parts.join("\n\n");
+}
+
 export async function checkContactAgainstCampaignIcp(opts: {
   campaignId: string;
   contactId: string;
+  contextBundle?: ContactContextBundle;
 }): Promise<CampaignIcpMatch> {
   const db = getDb();
   const [campaign, contact] = await Promise.all([
@@ -40,7 +53,12 @@ export async function checkContactAgainstCampaignIcp(opts: {
   const icp =
     campaign.icpText?.trim() ||
     campaign.contextText.trim().slice(0, 2000);
-  const profileCtx = await getLatestProfileContextForOutreach(contact.id);
+  const bundle =
+    opts.contextBundle ?? (await buildContactContextBundle(contact.id));
+  const profileCtx =
+    bundle.profile_context || bundle.company_intel_context
+      ? profileContextFromBundle(bundle)
+      : await getLatestProfileContextForOutreach(contact.id);
   const owner = await getUserContextForLlm();
 
   const user = JSON.stringify(

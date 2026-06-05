@@ -4334,7 +4334,113 @@ async function tryCaptureMessagingAfterProfile(tabId, root, profileUrl) {
     : { captured: false, error: out2.error };
 }
 
-async function postProfileCaptureForTab(tabId, root, pruned) {
+function profileRecentActivityUrl(profileUrl) {
+  if (typeof profileUrl !== "string" || !profileUrl.trim()) return null;
+  try {
+    const u = new URL(profileUrl);
+    const m = u.pathname.match(/\/in\/([^/]+)/i);
+    if (!m?.[1]) return null;
+    return `https://www.linkedin.com/in/${m[1]}/recent-activity/all/`;
+  } catch {
+    return null;
+  }
+}
+
+async function postPostsCapturePayload(root, pruned, postsPayload, chainOpts = {}) {
+  const ctx = await getExtensionCampaignContext(root);
+  let capBody = attachCampaignIdToPayload(postsPayload, ctx);
+  if (chainOpts.captureChainStep) {
+    capBody = { ...capBody, captureChainStep: chainOpts.captureChainStep };
+  }
+  if (chainOpts.captureChainComplete !== undefined) {
+    capBody = { ...capBody, captureChainComplete: chainOpts.captureChainComplete };
+  }
+  const res = await fetch(`${root.replace(/\/$/, "")}/api/ingest/capture`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(capBody),
+  });
+  const text = await res.text();
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    json = { raw: text };
+  }
+  if (!res.ok) {
+    return { ok: false, error: json?.error || text || `HTTP ${res.status}` };
+  }
+  await recordBatchCaptureSuccess(pruned, 1);
+  return { ok: true, json };
+}
+
+/**
+ * After profile capture during enrich: open recent activity and capture posts.
+ */
+async function tryCapturePostsAfterProfile(tabId, root, profileUrl) {
+  const automation = await fetchAutomationSettings(root);
+  if (!automation?.autoCapturePostsInEnrich) {
+    return { captured: false, reason: "disabled" };
+  }
+
+  const activityUrl = profileRecentActivityUrl(profileUrl);
+  if (!activityUrl) return { captured: false, reason: "no_profile_url" };
+
+  try {
+    await chrome.tabs.update(tabId, { url: activityUrl });
+    await sleep(2000 + Math.floor(Math.random() * 2000));
+  } catch (e) {
+    return {
+      captured: false,
+      error: e instanceof Error ? e.message : String(e),
+    };
+  }
+
+  const postsPayload = await scrapePostsFromTab(tabId);
+  if (!postsPayload?.extractedFields?.profilePosts?.length) {
+    if (profileUrl) {
+      try {
+        await chrome.tabs.update(tabId, { url: profileUrl });
+      } catch {
+        /* ignore */
+      }
+    }
+    return { captured: false, reason: "no_posts" };
+  }
+
+  if (!postsPayload.extractedFields.targetProfileUrl && profileUrl) {
+    postsPayload.extractedFields.targetProfileUrl = profileUrl;
+  }
+
+  let pruned;
+  try {
+    pruned = await waitForPaceGapAllowCapture(root);
+  } catch (e) {
+    return { captured: false, error: e instanceof Error ? e.message : String(e) };
+  }
+
+  const out = await postPostsCapturePayload(root, pruned, postsPayload, {
+    captureChainStep: "posts",
+    captureChainComplete: true,
+  });
+
+  if (profileUrl) {
+    try {
+      await chrome.tabs.update(tabId, { url: profileUrl });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return out.ok
+    ? {
+        captured: true,
+        postCount: postsPayload.extractedFields.profilePosts.length,
+      }
+    : { captured: false, error: out.error };
+}
+
+async function postProfileCaptureForTab(tabId, root, pruned, chainOpts = {}) {
   const tab = await chrome.tabs.get(tabId);
   if (!isLinkedInProfilePageUrl(tab.url)) {
     return { ok: false, error: "Not on a profile page." };
@@ -4353,7 +4459,13 @@ async function postProfileCaptureForTab(tabId, root, pruned) {
     return { ok: false, error: "Extractor returned nothing." };
   }
   const ctx = await getExtensionCampaignContext(root);
-  const capBody = attachCampaignIdToPayload(result, ctx);
+  let capBody = attachCampaignIdToPayload(result, ctx);
+  if (chainOpts.captureChainStep) {
+    capBody = { ...capBody, captureChainStep: chainOpts.captureChainStep };
+  }
+  if (chainOpts.captureChainComplete !== undefined) {
+    capBody = { ...capBody, captureChainComplete: chainOpts.captureChainComplete };
+  }
   const res = await fetch(`${root}/api/ingest/capture`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -4539,7 +4651,12 @@ async function enrichOneProfileStep(tabId, base, firstOpen, opts = {}) {
       done: false,
     };
   }
-  const out = await postProfileCaptureForTab(tabId, root, pruned);
+  const automation = await fetchAutomationSettings(base);
+  const postsEnabled = Boolean(automation?.autoCapturePostsInEnrich);
+  const out = await postProfileCaptureForTab(tabId, root, pruned, {
+    captureChainStep: "profile",
+    captureChainComplete: !postsEnabled,
+  });
   if (!out.ok) {
     await postAutomationAck(base, next.contact.id, "error");
     return { ok: false, error: out.error || "Profile capture failed.", done: false };
@@ -4554,6 +4671,19 @@ async function enrichOneProfileStep(tabId, base, firstOpen, opts = {}) {
     };
   }
   await postAutomationAck(base, next.contact.id, "ok");
+
+  let posts = { captured: false };
+  if (postsEnabled) {
+    try {
+      posts = await tryCapturePostsAfterProfile(
+        tabId,
+        root,
+        next.contact.linkedinUrl,
+      );
+    } catch {
+      /* posts are optional */
+    }
+  }
 
   let messaging = { captured: false };
   try {
@@ -4571,6 +4701,7 @@ async function enrichOneProfileStep(tabId, base, firstOpen, opts = {}) {
     done: false,
     contactName: next.contact.fullName,
     profileDepth: next.contact.profileDepth,
+    postsCaptured: Boolean(posts.captured),
     messagingCaptured: Boolean(messaging.captured),
   };
 }
@@ -4794,7 +4925,12 @@ async function captureOneCampaignMemberProfileStep(
       error: e instanceof Error ? e.message : String(e),
     };
   }
-  const out = await postProfileCaptureForTab(tabId, root, pruned);
+  const automation = await fetchAutomationSettings(base);
+  const postsEnabled = Boolean(automation?.autoCapturePostsInEnrich);
+  const out = await postProfileCaptureForTab(tabId, root, pruned, {
+    captureChainStep: "profile",
+    captureChainComplete: !postsEnabled,
+  });
   if (!out.ok) {
     return {
       ok: false,
@@ -4802,7 +4938,21 @@ async function captureOneCampaignMemberProfileStep(
       error: out.error || "Campaign profile capture failed.",
     };
   }
-  return { ok: true, done: false, messagingCaptured: false };
+  let postsCaptured = false;
+  if (postsEnabled) {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      const posts = await tryCapturePostsAfterProfile(
+        tabId,
+        root,
+        tab.url?.includes("/in/") ? tab.url : nextProfileUrl,
+      );
+      postsCaptured = Boolean(posts.captured);
+    } catch {
+      /* optional */
+    }
+  }
+  return { ok: true, done: false, postsCaptured, messagingCaptured: false };
 }
 
 async function pollPendingSelfCapture() {

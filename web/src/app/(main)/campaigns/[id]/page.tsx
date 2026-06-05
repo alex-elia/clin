@@ -10,8 +10,9 @@ import { CampaignFormFields } from "@/components/CampaignFormFields";
 import { CampaignMemberMessagingPanel } from "@/components/CampaignMemberMessagingPanel";
 import { CampaignOrchestrateButton } from "@/components/CampaignOrchestrateButton";
 import { CampaignMemberIcpCheckButton } from "@/components/CampaignMemberIcpCheckButton";
+import { RecommendationPanel } from "@/components/RecommendationPanel";
+import { pickContactPlaybookFromEnvelope } from "@/lib/contactPlaybook";
 import {
-  ICP_ACTION_LABELS,
   ICP_MATCH_LABELS,
   icpMatchBadgeClass,
 } from "@/lib/campaignMemberIcpShared";
@@ -34,6 +35,11 @@ import {
   memberNeedsMessagingReply,
 } from "@/lib/campaignMemberMessaging";
 import { loadMemberOutreachExtras } from "@/lib/campaignMemberOutreach";
+import {
+  deriveMemberWorkflowPhase,
+  WORKFLOW_PHASE_LABELS,
+  workflowPhaseBadgeClass,
+} from "@/lib/campaignMemberWorkflowShared";
 import { listContactLlmExtensionsMap } from "@/lib/contactSqlExtras";
 import {
   loadThreadAnalysesByContactIds,
@@ -84,9 +90,12 @@ const MEMBER_FILTER_CHIPS: { key: MemberReadinessFilter; label: string }[] = [
   { key: "thin_profile", label: "Thin profile" },
   { key: "profile_ok", label: "Profile OK" },
   { key: "need_draft", label: "Need draft" },
-  { key: "has_draft", label: "Has draft" },
-  { key: "extension_ready", label: "Ready (extension)" },
+  { key: "review_draft", label: "Review draft" },
+  { key: "extension_ready", label: "Ready for extension" },
   { key: "done", label: "Sent / skipped" },
+  { key: "conversation_active", label: "In outreach" },
+  { key: "suggest_end", label: "Suggest end" },
+  { key: "campaign_ended", label: "Ended" },
   { key: "needs_messaging_reply", label: "Awaiting reply" },
   { key: "needs_thread_capture", label: "Need thread" },
   { key: "icp_strong", label: "ICP strong" },
@@ -137,12 +146,6 @@ export default async function CampaignDetailPage({
       linkedinUrlCanonical: r.contact.linkedinUrlCanonical,
     })),
   );
-  const filterCtx = { messagingByContactId, outreachExtras };
-  const messagingSummary = getCampaignMessagingSummary(
-    membersEnriched,
-    messagingByContactId,
-    outreachExtras,
-  );
   const threadAnalysisPairs = membersRaw.flatMap((r) => {
     const pairs: { contactId: string; threadKey: string }[] = [];
     const thread = messagingByContactId.get(r.contact.id);
@@ -159,6 +162,28 @@ export default async function CampaignDetailPage({
     return pairs;
   });
   const threadAnalyses = loadThreadAnalysesByContactIds(threadAnalysisPairs);
+  const threadAnalysisByContactId = new Map<
+    string,
+    import("@/lib/inboxThreadAnalysisTypes").InboxThreadAnalysis | null
+  >();
+  for (const row of membersRaw) {
+    const thread = messagingByContactId.get(row.contact.id);
+    if (!thread) continue;
+    const stored = threadAnalyses.get(
+      threadAnalysisKey(row.contact.id, thread.threadKey),
+    );
+    threadAnalysisByContactId.set(row.contact.id, stored?.analysis ?? null);
+  }
+  const filterCtx = {
+    messagingByContactId,
+    outreachExtras,
+    threadAnalysisByContactId,
+  };
+  const messagingSummary = getCampaignMessagingSummary(
+    membersEnriched,
+    messagingByContactId,
+    outreachExtras,
+  );
   const memberFilter = parseMemberReadinessFilter(sp.memberFilter);
   const tab = parseCampaignDetailTab(sp, {
     hasMembers: membersEnriched.length > 0,
@@ -169,7 +194,10 @@ export default async function CampaignDetailPage({
   );
   const nextCapture = pickNextProfileCaptureTarget(membersEnriched);
   const openMembers = membersEnriched.filter(
-    (m) => m.member.status !== "sent" && m.member.status !== "skipped",
+    (m) =>
+      m.member.status !== "sent" &&
+      m.member.status !== "skipped" &&
+      m.member.status !== "closed",
   );
   const wfNeedProfile = openMembers.filter((m) => m.profileDepth !== "ok").length;
   const wfNeedIcp = openMembers.filter((m) => !m.icpCheckedAt).length;
@@ -179,7 +207,14 @@ export default async function CampaignDetailPage({
   const wfNeedDraft = wfFitToDraft.filter(
     (m) => !(m.member.draftOutreach ?? "").trim(),
   ).length;
-  const wfReady = openMembers.filter((m) => m.member.status === "ready").length;
+  const wfReviewDraft = openMembers.filter(
+    (m) =>
+      (m.member.draftOutreach ?? "").trim().length > 0 &&
+      m.member.status !== "ready",
+  ).length;
+  const wfExtensionReady = openMembers.filter(
+    (m) => m.member.status === "ready",
+  ).length;
 
   return (
     <div className="space-y-6">
@@ -301,7 +336,7 @@ export default async function CampaignDetailPage({
         <div className="space-y-6 pt-2">
           <section className="clin-card p-4">
             <h2 className="text-sm font-semibold">Capture queue &amp; readiness</h2>
-            <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-5">
+            <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-6">
               <div className="rounded border border-red-200 bg-red-50 px-3 py-2 dark:border-red-900 dark:bg-red-950/30">
                 <p className="text-xs uppercase tracking-wide text-red-700 dark:text-red-300">
                   Need profile
@@ -328,10 +363,18 @@ export default async function CampaignDetailPage({
               </div>
               <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 dark:border-emerald-900 dark:bg-emerald-950/30">
                 <p className="text-xs uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
-                  Ready
+                  Review draft
                 </p>
                 <p className="mt-1 text-lg font-semibold text-emerald-900 dark:text-emerald-100">
-                  {wfReady}
+                  {wfReviewDraft}
+                </p>
+              </div>
+              <div className="rounded border border-violet-200 bg-violet-50 px-3 py-2 dark:border-violet-900 dark:bg-violet-950/30">
+                <p className="text-xs uppercase tracking-wide text-violet-700 dark:text-violet-300">
+                  Ready for extension
+                </p>
+                <p className="mt-1 text-lg font-semibold text-violet-900 dark:text-violet-100">
+                  {wfExtensionReady}
                 </p>
               </div>
               <div className="rounded border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
@@ -364,7 +407,11 @@ export default async function CampaignDetailPage({
                   </strong>
                   ,{" "}
                   <strong className="text-clin-text">
-                    {filterCounts.has_draft} with text
+                    {filterCounts.review_draft} to review
+                  </strong>
+                  ,{" "}
+                  <strong className="text-clin-text">
+                    {filterCounts.extension_ready} ready for extension
                   </strong>
                   .
                 </p>
@@ -410,10 +457,18 @@ export default async function CampaignDetailPage({
           Members ({members.length}
           {memberFilter !== "all" ? ` / ${membersEnriched.length} total` : ""})
         </h2>
-        {messagingSummary.sentCount > 0 ? (
+        {messagingSummary.sentCount > 0 || messagingSummary.endedCount > 0 ? (
           <p className="mt-1 text-xs text-clin-muted">
-            {messagingSummary.sentCount} sent · {messagingSummary.needsReply} awaiting
-            reply · {messagingSummary.needsCapture} need thread capture
+            {messagingSummary.sentCount} in outreach
+            {messagingSummary.endedCount > 0
+              ? ` · ${messagingSummary.endedCount} ended`
+              : ""}
+            {messagingSummary.needsReply > 0
+              ? ` · ${messagingSummary.needsReply} awaiting reply`
+              : ""}
+            {messagingSummary.needsCapture > 0
+              ? ` · ${messagingSummary.needsCapture} need thread capture`
+              : ""}
           </p>
         ) : null}
         {membersEnriched.length > 0 ? (
@@ -451,12 +506,17 @@ export default async function CampaignDetailPage({
                 lastProfileCapturedAt,
                 icpMatch,
                 icpRationale,
-                icpRecommendedAction,
                 icpCheckedAt,
               } = row;
               const draft = member.draftOutreach ?? "";
               const hasDraft = draft.trim().length > 0;
               const extras = outreachExtras.get(member.id);
+              const llmExt = llmByContactId.get(contact.id);
+              const contactPlaybook = pickContactPlaybookFromEnvelope(
+                contact.id,
+                llmExt?.llmProvisionalJson,
+                llmExt?.llmRefinedJson,
+              );
               const thread = messagingByContactId.get(contact.id) ?? null;
               const needsReply =
                 member.status === "sent" &&
@@ -465,6 +525,21 @@ export default async function CampaignDetailPage({
                   thread,
                   extras,
                 });
+              const captureAnalysis = thread
+                ? (threadAnalyses.get(
+                    threadAnalysisKey(contact.id, thread.threadKey),
+                  )?.analysis ?? null)
+                : null;
+              const workflowPhase = deriveMemberWorkflowPhase({
+                memberStatus: member.status,
+                extras,
+                thread,
+                threadAnalysis: captureAnalysis,
+              });
+              const isPostSend =
+                member.status === "sent" ||
+                member.status === "skipped" ||
+                member.status === "closed";
               return (
                 <div
                   key={`${member.id}-${member.updatedAt.getTime()}`}
@@ -479,8 +554,19 @@ export default async function CampaignDetailPage({
                         {contact.fullName || contact.id}
                       </Link>
                       <span className="clin-pill text-xs">
-                        {member.status}
+                        {member.status === "ready"
+                          ? "ready for extension"
+                          : member.status === "closed"
+                            ? "campaign ended"
+                            : member.status}
                       </span>
+                      {isPostSend ? (
+                        <span
+                          className={`rounded px-1.5 py-0.5 text-xs font-medium ${workflowPhaseBadgeClass(workflowPhase)}`}
+                        >
+                          {WORKFLOW_PHASE_LABELS[workflowPhase]}
+                        </span>
+                      ) : null}
                       <span
                         className={`rounded px-1.5 py-0.5 text-xs font-medium ${profileDepthBadgeClass(profileDepth)}`}
                         title="From latest LinkedIn profile Capture in Clin"
@@ -544,34 +630,40 @@ export default async function CampaignDetailPage({
                       ) : null}
                     </div>
                   </div>
-                  {icpRationale ? (
-                    <div className="mt-3 rounded-md border border-[var(--clin-border)] bg-[var(--clin-surface-muted)]/40 px-3 py-2 text-sm">
-                      {icpRecommendedAction ? (
-                        <p className="text-xs font-medium text-[var(--clin-text)]">
-                          {ICP_ACTION_LABELS[icpRecommendedAction]}
-                        </p>
-                      ) : null}
-                      <p className="mt-0.5 text-[var(--clin-muted)]">{icpRationale}</p>
-                    </div>
-                  ) : null}
-                  <form action={saveCampaignMemberDraftAction} className="mt-3 space-y-2">
-                    <input type="hidden" name="campaignId" value={id} />
-                    <input type="hidden" name="memberId" value={member.id} />
-                    <textarea
-                      name="draftOutreach"
-                      rows={5}
-                      defaultValue={draft}
-                      className="w-full clin-input text-sm"
+                  {contactPlaybook || icpRationale ? (
+                    <RecommendationPanel
+                      className="mt-3"
+                      playbook={contactPlaybook}
+                      icpRationale={icpRationale}
                     />
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="submit"
-                        className="clin-btn-secondary text-xs px-2 py-1"
-                      >
-                        Save draft
-                      </button>
-                    </div>
-                  </form>
+                  ) : null}
+                  {member.status !== "closed" ? (
+                    <form
+                      action={saveCampaignMemberDraftAction}
+                      className="mt-3 space-y-2"
+                    >
+                      <input type="hidden" name="campaignId" value={id} />
+                      <input type="hidden" name="memberId" value={member.id} />
+                      <textarea
+                        name="draftOutreach"
+                        rows={5}
+                        defaultValue={draft}
+                        className="w-full clin-input text-sm"
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="submit"
+                          className="clin-btn-secondary text-xs px-2 py-1"
+                        >
+                          Save draft
+                        </button>
+                      </div>
+                    </form>
+                  ) : draft.trim() ? (
+                    <p className="mt-3 whitespace-pre-wrap rounded-lg border border-clin-border bg-clin-surface-muted/30 p-3 text-sm text-clin-muted">
+                      {draft}
+                    </p>
+                  ) : null}
                   {extras?.messageSentAt ? (
                     <p className="mt-2 text-xs text-clin-muted">
                       Sent (recorded):{" "}
@@ -582,6 +674,8 @@ export default async function CampaignDetailPage({
                     </p>
                   ) : null}
                   <div className="mt-2 flex flex-wrap gap-2">
+                    {member.status !== "closed" ? (
+                      <>
                     <CampaignMemberIcpCheckButton
                       campaignId={id}
                       memberId={member.id}
@@ -605,7 +699,7 @@ export default async function CampaignDetailPage({
                           disabled={!hasDraft}
                           className="rounded-md bg-emerald-700 px-2 py-1 text-xs text-white disabled:opacity-40"
                         >
-                          Ready for extension
+                          Review draft
                         </button>
                       </form>
                     ) : (
@@ -643,6 +737,8 @@ export default async function CampaignDetailPage({
                             Skip
                           </button>
                         </form>
+                      </>
+                    ) : null}
                       </>
                     ) : null}
                     <RemoveFromCampaignForm campaignId={id} memberId={member.id} />

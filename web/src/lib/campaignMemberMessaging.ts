@@ -1,6 +1,12 @@
-import type { MemberOutreachExtras } from "@/lib/campaignMemberOutreach";
+import type { MemberOutreachExtras } from "@/lib/campaignMemberOutreachShared";
 import type { EnrichedCampaignMember } from "@/lib/campaignMemberReadiness";
-export { REPLY_OUTCOME_LABELS } from "@/lib/campaignMemberMessagingShared";
+import { memberNeedsMessagingReply } from "@/lib/campaignMemberMessagingShared";
+
+export {
+  REPLY_OUTCOME_LABELS,
+  inferReplyOutcomeFromThread,
+  memberNeedsMessagingReply,
+} from "@/lib/campaignMemberMessagingShared";
 import {
   getMergedMessagingThreadForCampaignContact,
   type MergedMessagingThread,
@@ -8,6 +14,7 @@ import {
 
 export type CampaignMessagingSummary = {
   sentCount: number;
+  endedCount: number;
   withThread: number;
   needsReply: number;
   needsCapture: number;
@@ -38,43 +45,23 @@ export async function loadLatestMessagingThreadsByContactId(
   return map;
 }
 
-export function inferReplyOutcomeFromThread(
-  thread: MergedMessagingThread | null | undefined,
-): "replied" | "no_reply" | "unknown" {
-  if (!thread?.messages.length) return "unknown";
-  const { lastFrom, theirMessageCount, myMessageCount } = thread.replyState;
-  if (theirMessageCount === 0 && myMessageCount > 0) return "no_reply";
-  if (lastFrom === "them") return "replied";
-  if (lastFrom === "me" && theirMessageCount > 0) return "no_reply";
-  return "unknown";
-}
-
-export function memberNeedsMessagingReply(input: {
-  memberStatus: string;
-  thread: MergedMessagingThread | null | undefined;
-  extras?: MemberOutreachExtras;
-}): boolean {
-  if (input.memberStatus !== "sent") return false;
-  if (input.thread?.replyState.needsReply) return true;
-  if (input.extras?.messageReplyOutcome === "replied") return false;
-  if (input.thread && inferReplyOutcomeFromThread(input.thread) === "replied") {
-    return true;
-  }
-  return false;
-}
-
 export function getCampaignMessagingSummary(
   members: EnrichedCampaignMember[],
   messagingByContactId: Map<string, MergedMessagingThread>,
   outreachExtras: Map<string, MemberOutreachExtras>,
 ): CampaignMessagingSummary {
   let sentCount = 0;
+  let endedCount = 0;
   let withThread = 0;
   let needsReply = 0;
   let needsCapture = 0;
   let markedReplied = 0;
 
   for (const row of members) {
+    if (row.member.status === "closed") {
+      endedCount += 1;
+      continue;
+    }
     if (row.member.status !== "sent") continue;
     sentCount += 1;
     const thread = messagingByContactId.get(row.contact.id) ?? null;
@@ -96,6 +83,7 @@ export function getCampaignMessagingSummary(
 
   return {
     sentCount,
+    endedCount,
     withThread,
     needsReply,
     needsCapture,

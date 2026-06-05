@@ -7,6 +7,11 @@ import { parseScoreReasons } from "@/lib/scoreExplain";
 import { completeChat } from "@/lib/llm/completeChat";
 import type { LlmConfig } from "@/lib/llm/types";
 import {
+  buildContactContextBundle,
+  formatContactContextBundleForPrompt,
+  type ContactContextBundle,
+} from "@/lib/contactContextBundle";
+import {
   getUserContextForLlm,
   userContextHasLlmSignal,
   type UserContextForLlm,
@@ -48,6 +53,16 @@ export const llmAnalysisOutputSchema = z.object({
       recommendation: z.enum(["reach_out", "nurture", "skip", "unclear"]),
       rationale: z.string(),
       icp_signals: z.array(z.string()).nullish(),
+    })
+    .nullish(),
+  reasoning_steps: z.array(z.string()).nullish(),
+  strategic_assessment: z.union([z.string(), z.record(z.string(), z.unknown())]).nullish(),
+  posts_signals: z
+    .object({
+      topics: z.array(z.string()).nullish(),
+      hiring_or_role_change: z.boolean().nullish(),
+      engagement_hook: z.string().nullish(),
+      suggested_comment_angle: z.string().nullish(),
     })
     .nullish(),
   /** Primary cleaning bucket for Clin's review board (always include when scoring). */
@@ -136,12 +151,23 @@ export async function inferAnalysisTier(
   return "provisional";
 }
 
-function buildSystemPrompt(includeOwnerContext: boolean): string {
+function buildSystemPrompt(
+  includeOwnerContext: boolean,
+  salesCoachBlock?: string,
+): string {
+  const coachSection = salesCoachBlock
+    ? `\n\n${salesCoachBlock}\n`
+    : "";
+
   const base = `You are a local networking assistant for a user's LinkedIn contacts database (Clin).
 You primarily see fields the user captured locally — not live LinkedIn data.
 
-If your runtime exposes web search or URL fetch tools, you may use a brief search to clarify the contact's current company or industry when Company or Headline names an organization (e.g. one query: "<company> what they do"). Use results only to tighten business relevance (b) and rationale—never invent private facts. If no tools are available or search is empty, rely only on the JSON payload below.
+Work in two layers:
+1) STRATEGIC — assess fit, relationship, company timing (hiring/news from COMPANY_INTEL), risks.
+2) TACTICAL — pick cleaning_plan bucket, playbook sentence, and suggested_actions.
 
+If your runtime exposes web search or URL fetch tools, you may use a brief search to clarify the contact's current company or industry when Company or Headline names an organization (e.g. one query: "<company> what they do"). Use results only to tighten business relevance (b) and rationale—never invent private facts. If no tools are available or search is empty, rely only on the JSON payload below.
+${coachSection}
 Respond with a single JSON object (no markdown) matching this shape:
 {
   "scores": { "r": 0-100, "b": 0-100, "c": 0-100 },
@@ -151,6 +177,9 @@ Respond with a single JSON object (no markdown) matching this shape:
   "message_read": "optional: brief read on tone/recency if messages were provided",
   "connection_stewardship": { "recommendation": "keep" | "consider_removing" | "unclear", "rationale": "string" },
   "outreach_fit": { "recommendation": "reach_out" | "nurture" | "skip" | "unclear", "rationale": "string", "icp_signals": ["short strings"] },
+  "reasoning_steps": ["optional 2-4 short bullets — internal reasoning"],
+  "strategic_assessment": "optional 2-3 sentences — strategic layer only",
+  "posts_signals": { "topics": ["string"], "hiring_or_role_change": boolean, "engagement_hook": "string", "suggested_comment_angle": "string" },
   "cleaning_plan": { "bucket": "enrich_first" | "needs_review" | "review_remove" | "reach_out_dm" | "engage_comment" | "nurture_light" | "keep_passive", "confidence": "low" | "medium" | "high", "rationale": "string", "playbook": "one short next step for the user" }
 }
 
@@ -182,7 +211,7 @@ You MUST include "cleaning_plan" on every response:
 - enrich_first: list-only or missing About/Experience — user should capture more on LinkedIn first.
 - review_remove: stewardship or cleanup suggests pruning the connection.
 - reach_out_dm: strong outreach_fit reach_out with enough profile context for a DM.
-- engage_comment: nurture fit OR weak timing for DM but relationship worth a public comment/react first.
+- engage_comment: nurture fit OR weak timing for DM but relationship worth a public comment/react first; prefer when PROFILE_AND_POSTS or posts_signals suggest a concrete hook.
 - nurture_light: keep warm, revisit later; no pitch now.
 - keep_passive: skip outreach but keep connection; or clearly low priority.
 - needs_review: contradictory signals or very thin data despite a profile row.
@@ -207,6 +236,7 @@ function buildUserPayload(input: {
   captureSummary: { pageType: string; capturedAt: string }[];
   messageContext: string | null;
   ownerContext: UserContextForLlm | null;
+  contextBundle?: ContactContextBundle | null;
 }): string {
   const cr = input.contact;
   const body: Record<string, unknown> = {
@@ -232,6 +262,9 @@ function buildUserPayload(input: {
     },
     recent_captures: input.captureSummary,
     message_context: input.messageContext?.trim() || null,
+    ...(input.contextBundle
+      ? formatContactContextBundleForPrompt(input.contextBundle)
+      : {}),
   };
 
   const oc = input.ownerContext;
@@ -254,6 +287,8 @@ export async function runContactLlmAnalysis(
     messageContext: string | null;
     settings: LlmConfig;
     llmMeta?: Record<string, string | number | boolean | null>;
+    contextBundle?: ContactContextBundle | null;
+    salesCoachBlock?: string;
   },
 ): Promise<{
   tier: "provisional" | "refined";
@@ -277,17 +312,21 @@ export async function runContactLlmAnalysis(
 
   const ownerContext = await getUserContextForLlm();
   const includeOwner = userContextHasLlmSignal(ownerContext);
+  const contextBundle =
+    input.contextBundle ??
+    (await buildContactContextBundle(input.contactId));
 
   const rawText = await completeChat({
     config: input.settings,
     feature: "contact_analyze",
-    system: buildSystemPrompt(includeOwner),
+    system: buildSystemPrompt(includeOwner, input.salesCoachBlock),
     user: buildUserPayload({
       tier: input.tier,
       contact,
       captureSummary,
       messageContext: input.messageContext,
       ownerContext,
+      contextBundle,
     }),
     jsonMode: true,
     timeoutMs: 120_000,

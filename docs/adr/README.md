@@ -15,6 +15,7 @@ ADRs document **significant, stable** choices for Clin. They complement [DESIGN.
 | [0007](./0007-content-calendar-brand-coach.md) | Content calendar, Brand Coach, extension publish handoff |
 | [0008](./0008-editorial-autopilot-jobs-sources.md) | Editorial autopilot: job queue, sources, market calendar, runners |
 | [0009](./0009-desktop-distribution-portable-electron.md) | Desktop distribution strategy: portable Electron + GitHub Releases |
+| [0010](./0010-unified-contact-analysis-playbook.md) | Unified contact analysis: staged capture pipeline, context bundle, contact playbook |
 
 ## Conventions
 

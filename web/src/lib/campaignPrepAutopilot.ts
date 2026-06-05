@@ -262,7 +262,13 @@ export async function runCampaignPrepAutopilot(opts: {
     let n = 0;
     for (const m of enriched) {
       if (n >= opts.memberVerifyLimit) break;
-      if (m.member.status === "sent" || m.member.status === "skipped") continue;
+      if (
+        m.member.status === "sent" ||
+        m.member.status === "skipped" ||
+        m.member.status === "closed"
+      ) {
+        continue;
+      }
       try {
         const check = await checkContactAgainstCampaignIcp({
           campaignId: opts.campaignId,

@@ -225,6 +225,24 @@ export default async function SettingsPage() {
           <label className="flex cursor-pointer items-start gap-3 text-sm">
             <input
               type="checkbox"
+              name="automationAutoCapturePosts"
+              value="on"
+              defaultChecked={automation.autoCapturePostsInEnrich}
+              className="mt-1"
+            />
+            <span>
+              <span className="font-medium text-[var(--clin-text)]">
+                Capture posts during enrich
+              </span>
+              <span className="mt-1 block text-xs text-[var(--clin-muted)]">
+                After each profile, open recent activity and capture visible posts.
+                Counts toward the same pacing caps. Improves comment-first advice.
+              </span>
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <input
+              type="checkbox"
               name="automationConnectionsSprintEnabled"
               value="on"
               defaultChecked={automation.connectionsSprintEnabled}
