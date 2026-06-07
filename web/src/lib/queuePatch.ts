@@ -7,6 +7,7 @@ export const queuePatchSchema = z
     outreachDecision: z
       .enum(["pending", "approved", "skipped", "sent"])
       .optional(),
+    removalDecision: z.enum(["keep", "approve_removal"]).optional(),
   })
   .strict()
   .refine((o) => Object.keys(o).length > 0, {

@@ -19,7 +19,8 @@ Companion to the local Clin web app: capture visible LinkedIn data, manage campa
 | **Data** | Capture, list sprint, hygiene batch (search/list or profile workflows) |
 | **Outreach** | Ready campaigns, paced outreach run |
 | **Branding** | Ready content posts: copy text, download or copy image, mark published |
-| **Settings** | API base URL and health check (replaces the old Connect tab). Use the **gear** in the header for the same panel. |
+
+Use the **gear** in the header for **Settings** (API base URL and health check).
 
 ## Capture
 

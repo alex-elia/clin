@@ -2,12 +2,16 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { AutopilotBatchPanel } from "@/app/(main)/autopilot/AutopilotBatchPanel";
 import { CleaningBoard } from "@/components/CleaningBoard";
+import { CleaningExecPanels } from "@/components/CleaningExecPanels";
 import { getDb } from "@/db";
 import {
   countContactsPendingLlmAnalysis,
   getAutopilotSettings,
 } from "@/lib/autopilot";
-import { buildCleaningBoard } from "@/lib/cleaningBoard";
+import {
+  buildCleaningBoard,
+  collectEngageContactIds,
+} from "@/lib/cleaningBoard";
 
 export const dynamic = "force-dynamic";
 
@@ -51,16 +55,20 @@ export default async function CleaningPage() {
             enable auto-analysis in Settings after capture).
           </li>
           <li>
-            Work through <strong className="clin-strong">buckets</strong> — remove,
-            comment, nurture, or DM — and use{" "}
+            Work through <strong className="clin-strong">buckets</strong> — override
+            AI when you disagree, batch-enqueue engage or removal review, then use
+            the extension runners for paced LinkedIn work.
+          </li>
+          <li>
+            Removal is two-stage: review on{" "}
             <Link href="/queue" className="clin-link">
               Review queue
-            </Link>{" "}
-            /{" "}
+            </Link>
+            , approve, then disconnect via the extension. Outreach prep:{" "}
             <Link href="/decisions" className="clin-link">
               Decisions
-            </Link>{" "}
-            for outreach prep.
+            </Link>
+            .
           </li>
         </ol>
       </section>
@@ -68,6 +76,14 @@ export default async function CleaningPage() {
       <Suspense fallback={<p className="text-sm text-[var(--clin-muted)]">Loading buckets…</p>}>
         <CleaningBoard data={board} />
       </Suspense>
+
+      <CleaningExecPanels
+        engageBucketCount={board.summary.bucketCounts.engage_comment ?? 0}
+        removalBucketCount={board.summary.bucketCounts.review_remove ?? 0}
+        engageExecPending={board.execCounts.engagePending}
+        removalExecPending={board.execCounts.removalPending}
+        engageContactIds={collectEngageContactIds(board.byBucket)}
+      />
 
       <AutopilotBatchPanel
         defaultLimit={settings.batchDefaultLimit}

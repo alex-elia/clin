@@ -5,6 +5,13 @@ import { contacts, outreachCampaignMembers, outreachCampaigns } from "@/db/schem
 import { extractJsonObjectFromModelText } from "@/lib/llmAnalysis";
 import { completeChat, getLlmConfig } from "@/lib/llm/completeChat";
 import { getGlobalWriterInstructions } from "@/lib/brand";
+import { readMemberIcpFromRow } from "@/lib/campaignMemberIcp";
+import { buildContactContextBundle } from "@/lib/contactContextBundle";
+import {
+  formatContactPlaybookForDraftPrompt,
+  pickContactPlaybookFromEnvelope,
+} from "@/lib/contactPlaybook";
+import { selectContactLlmExtension } from "@/lib/contactSqlExtras";
 import { getLatestProfileContextForOutreach } from "@/lib/profileCaptureContext";
 import { updateMemberDraft } from "@/lib/outreachCampaigns";
 import {
@@ -86,10 +93,31 @@ export async function generateOutreachDraftForMember(
   }
   user += `Recipient:\n- Name: ${contact.fullName ?? ""}\n- Headline: ${contact.headline ?? ""}\n- Company: ${contact.company ?? ""}\n- Location: ${contact.location ?? ""}\n`;
 
-  const profileBlock = await getLatestProfileContextForOutreach(contact.id);
+  const [profileBlock, contextBundle, llmExt] = await Promise.all([
+    getLatestProfileContextForOutreach(contact.id),
+    buildContactContextBundle(contact.id),
+    Promise.resolve(selectContactLlmExtension(contact.id)),
+  ]);
   if (profileBlock) {
     user += `\nProfile details (from the latest LinkedIn profile Capture in Clin — scroll About/Experience/Education on their profile, then Capture again to refresh):\n${profileBlock}\n`;
   }
+  if (contextBundle.company_intel_context?.trim()) {
+    user += `\nCompany / jobs intel (from LinkedIn company or careers captures):\n${contextBundle.company_intel_context.trim()}\n`;
+  }
+
+  const playbook = pickContactPlaybookFromEnvelope(
+    contact.id,
+    llmExt?.llmProvisionalJson,
+    llmExt?.llmRefinedJson,
+  );
+  const icp = readMemberIcpFromRow(member);
+  const playbookBlock = formatContactPlaybookForDraftPrompt(playbook, {
+    icpRationale: icp.icpRationale,
+  });
+  if (playbookBlock) {
+    user += `\n${playbookBlock}\n`;
+  }
+
   user += `\n${USER_WEB_RESEARCH_BLOCK}\n`;
 
   logDraft("request", {

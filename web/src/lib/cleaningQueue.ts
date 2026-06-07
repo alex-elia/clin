@@ -10,6 +10,7 @@ import {
 import { pickLatestAnalysisView } from "@/lib/contactLlmDisplay";
 import { assessContactReadiness } from "@/lib/contactReadiness";
 import { loadLatestProfileCapturesByContactId } from "@/lib/campaignMemberReadiness";
+import { listContactCleaningExtensionsMap } from "@/lib/cleaningSqlExtras";
 
 const QUEUE_BUCKETS = new Set<CleaningBucket>([
   "review_remove",
@@ -36,12 +37,18 @@ export async function syncCleaningQueueFromAnalysis(
 
   const caps = await loadLatestProfileCapturesByContactId([contactId]);
   const readiness = assessContactReadiness(row, caps, false);
+  const cleaningExt = listContactCleaningExtensionsMap([contactId]).get(
+    contactId,
+  ) ?? { cleaningUserBucket: null, cleaningDismissedAt: null };
   const bucket = resolveCleaningBucket({
     readiness,
     analysis: view,
     segment,
     hasLlmAnalysis: true,
+    cleaningUserBucket: cleaningExt.cleaningUserBucket,
+    cleaningDismissedAt: cleaningExt.cleaningDismissedAt,
   });
+  if (!bucket) return;
 
   if (!QUEUE_BUCKETS.has(bucket)) return;
 

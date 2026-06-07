@@ -190,3 +190,70 @@ export function mergePlaybookIntoEnvelope(
 ): Record<string, unknown> {
   return { ...envelope, playbook };
 }
+
+/** Prompt block for outreach draft LLM — no DB imports. */
+export function formatContactPlaybookForDraftPrompt(
+  playbook: ContactPlaybook | null,
+  opts?: { icpRationale?: string | null },
+): string {
+  if (!playbook && !opts?.icpRationale?.trim()) return "";
+
+  const lines: string[] = [
+    "Clin contact analysis — follow closely when writing the message:",
+  ];
+
+  if (playbook) {
+    lines.push(
+      `- Recommended approach: ${contactNextActionLabel(playbook.action)} (${playbook.confidence} confidence)`,
+    );
+    const analysis =
+      playbook.strategic_summary?.trim() || playbook.rationale?.trim();
+    if (analysis) lines.push(`- Analysis: ${analysis}`);
+    if (playbook.playbook?.trim()) {
+      lines.push(`- Advice (user next step): ${playbook.playbook.trim()}`);
+    }
+    const topics = playbook.posts_signals?.topics?.filter(Boolean);
+    if (topics?.length) {
+      lines.push(`- Recent post themes: ${topics.join(", ")}`);
+    }
+    if (playbook.posts_signals?.engagement_hook?.trim()) {
+      lines.push(
+        `- Engagement hook: ${playbook.posts_signals.engagement_hook.trim()}`,
+      );
+    }
+    if (playbook.posts_signals?.suggested_comment_angle?.trim()) {
+      lines.push(
+        `- Suggested public comment angle: ${playbook.posts_signals.suggested_comment_angle.trim()}`,
+      );
+    }
+    if (playbook.company_intel_summary?.trim()) {
+      lines.push(
+        `- Company intel: ${playbook.company_intel_summary.trim()}`,
+      );
+    }
+
+    if (playbook.action === "engage_comment") {
+      lines.push(
+        "- Draft instruction: User may comment on their post first. Write the follow-up LinkedIn DM (not the public comment). Reference their recent post using the themes above; align with campaign context.",
+      );
+    } else if (playbook.action === "message") {
+      lines.push(
+        "- Draft instruction: Write the connection note or DM. Open with a concrete hook from their posts or profile when captures exist — avoid generic templates.",
+      );
+    } else if (playbook.action === "nurture") {
+      lines.push(
+        "- Draft instruction: Light-touch nurture message; no hard pitch. Use one specific observation from posts or profile.",
+      );
+    }
+  }
+
+  if (opts?.icpRationale?.trim()) {
+    lines.push(`- Campaign ICP fit: ${opts.icpRationale.trim()}`);
+  }
+
+  lines.push(
+    "- Ground the message in captured profile/posts/company data. Do not contradict the analysis or advice above.",
+  );
+
+  return lines.join("\n");
+}

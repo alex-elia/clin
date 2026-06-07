@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { clinFetch } from "@/lib/clinFetch";
 import type { DailyReminderTask } from "@/lib/dailyReminder";
 
 type SummaryResponse = {
@@ -17,7 +18,7 @@ export function DailyReminderBanner() {
 
   useEffect(() => {
     void (async () => {
-      const res = await fetch("/api/tasks/summary");
+      const res = await clinFetch("/api/tasks/summary");
       if (!res.ok) return;
       const data = (await res.json()) as SummaryResponse;
       if (data.show && data.hasWork) {

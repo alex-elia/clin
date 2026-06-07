@@ -1,6 +1,7 @@
 import {
   saveAutomationForm,
   saveAutopilotForm,
+  saveCleaningExecForm,
   saveLlmForm,
   saveOutreachSendForm,
   savePaceForm,
@@ -13,6 +14,7 @@ import { getAutopilotSettings } from "@/lib/autopilot";
 import { getAutomationSettings } from "@/lib/automation";
 import { getDataPathInfo, getLastBackupMeta } from "@/lib/dataPaths";
 import { getLlmConfigPublic, listOllamaModels } from "@/lib/llm/completeChat";
+import { getCleaningExecSettings } from "@/lib/cleaningExecSettings";
 import { getOutreachSendSettings } from "@/lib/outreachSend";
 import { getPaceSettings } from "@/lib/pace";
 import { getSdSettingsPublic } from "@/lib/sdSettings";
@@ -30,6 +32,7 @@ export default async function SettingsPage() {
   const dataPaths = await getDataPathInfo();
   const lastBackup = await getLastBackupMeta();
   const outreachSend = await getOutreachSendSettings();
+  const cleaningExec = await getCleaningExecSettings();
   const sd = await getSdSettingsPublic();
   const brand = await getOrCreateContentBrandContext();
 
@@ -163,6 +166,65 @@ export default async function SettingsPage() {
           </div>
           <button type="submit" className="clin-btn-primary">
             Save outreach pacing
+          </button>
+        </form>
+
+        <form action={saveCleaningExecForm} className="clin-card space-y-4 p-6">
+          <h3 className="text-sm font-semibold text-[var(--clin-text)]">
+            Cleaning runners (extension)
+          </h3>
+          <p className="text-sm text-[var(--clin-muted)]">
+            Paced extension queues for engage-comment and removal disconnect.
+            You still comment or remove on LinkedIn yourself.
+          </p>
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              name="engageEnabled"
+              defaultChecked={cleaningExec.engageEnabled}
+              className="mt-1"
+            />
+            <span className="font-medium text-[var(--clin-text)]">
+              Enable engage-comment runner
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              name="removalEnabled"
+              defaultChecked={cleaningExec.removalEnabled}
+              className="mt-1"
+            />
+            <span className="font-medium text-[var(--clin-text)]">
+              Enable removal disconnect runner
+            </span>
+          </label>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              name="cleaningMinSecondsBetweenActions"
+              label="Seconds between cleaning steps"
+              defaultValue={cleaningExec.minSecondsBetweenActions}
+              min={30}
+              max={900}
+            />
+            <Field
+              name="cleaningMaxPerDay"
+              label="Max cleaning steps per day"
+              defaultValue={cleaningExec.maxPerDay}
+              min={1}
+              max={50}
+            />
+            <Field
+              name="cleaningJitterPercent"
+              label="Cleaning jitter (%)"
+              description="Random extra delay between engage/removal steps."
+              defaultValue={cleaningExec.jitterPercent}
+              min={0}
+              max={100}
+            />
+          </div>
+          <button type="submit" className="clin-btn-primary">
+            Save cleaning pacing
           </button>
         </form>
 

@@ -486,35 +486,11 @@
         border-top: 1px solid var(--border);
       }
 
-      .activity {
-        min-height: 2.25rem;
-        padding: 8px 10px;
-        font-size: 11px;
-        line-height: 1.45;
-        white-space: pre-wrap;
-        border-radius: var(--radius-sm);
-        background: var(--surface-2);
-        color: var(--muted);
-        border: 1px solid transparent;
-      }
-
-      .activity.is-ok {
-        background: var(--ok-bg);
-        color: var(--ok);
-        border-color: rgba(22, 101, 52, 0.15);
-      }
-
-      .activity.is-err {
-        background: var(--err-bg);
-        color: var(--err);
-        border-color: rgba(180, 35, 24, 0.15);
-      }
-
       .dash-link {
         display: inline-flex;
         align-items: center;
         gap: 4px;
-        margin-top: 10px;
+        margin-top: 0;
         font-size: 12px;
         font-weight: 600;
         color: var(--accent);
@@ -579,11 +555,11 @@
         <button type="button" data-panel="outreach" role="tab" aria-selected="false">
           Outreach
         </button>
+        <button type="button" data-panel="cleaning" role="tab" aria-selected="false">
+          Cleaning
+        </button>
         <button type="button" data-panel="branding" role="tab" aria-selected="false">
           Branding
-        </button>
-        <button type="button" data-panel="settings" role="tab" aria-selected="false">
-          Settings
         </button>
       </nav>
 
@@ -600,38 +576,13 @@
 
       <main>
         <section id="panel-data" class="panel is-active" role="tabpanel">
-          <p class="section-title">Capture &amp; analysis</p>
-          <p class="section-title">Import from this tab</p>
+          <p class="section-title">Capture this tab</p>
           <p class="hint">
-            On a <strong>people search</strong> or <strong>Connections</strong> tab, use{" "}
-            <strong>Import &amp; enrich</strong> (one flow: list → full profiles → AI analysis).
-            On a profile (<code>/in/…</code>), use Capture. Pacing applies — see Clin Settings.
+            On a profile (<code>/in/…</code>), message thread, posts feed, or people list —
+            one-shot capture for the active tab. Pacing applies — see Clin Settings.
           </p>
-          <label class="field">
-            <span>Import into campaign</span>
-            <select id="import-campaign-picker">
-              <option value="__none__">— none —</option>
-            </select>
-          </label>
-          <p id="campaign-capture-hint" class="hint" aria-live="polite"></p>
-          <p id="campaign-queue-hint" class="hint" aria-live="polite"></p>
-          <button
-            id="open-next-profile-capture"
-            type="button"
-            class="btn btn-secondary"
-            hidden
-          >
-            Open next profile (capture queue)
-          </button>
           <button id="cap" type="button" class="btn btn-primary">
             Capture (auto)
-          </button>
-          <p class="hint">
-            Detects the active tab: profile, <strong>open message thread</strong>, posts, or
-            people list — one button.
-          </p>
-          <button id="cap-campaign-full" type="button" class="btn btn-secondary">
-            Capture full campaign (paced)
           </button>
           <div class="capture-scopes" role="group" aria-label="Capture scope">
             <button id="cap-profile" type="button" class="btn btn-secondary btn-scope">
@@ -644,6 +595,61 @@
               List
             </button>
           </div>
+
+          <div class="sub-block">
+            <p class="section-title">Automated campaign capture</p>
+            <p class="hint">
+              Choose a campaign, then run paced list import and profile extraction. Open{" "}
+              <strong>people search</strong> or <strong>Connections</strong> in a LinkedIn tab
+              to import new members; if the list is already imported, run again from any
+              LinkedIn tab to continue the campaign queue one profile at a time.
+            </p>
+            <label class="field">
+              <span>Import into campaign</span>
+              <select id="import-campaign-picker">
+                <option value="__none__">— none —</option>
+              </select>
+            </label>
+            <p id="campaign-capture-hint" class="hint" aria-live="polite"></p>
+            <p id="campaign-queue-hint" class="hint" aria-live="polite"></p>
+            <button
+              id="open-next-profile-capture"
+              type="button"
+              class="btn btn-secondary"
+              hidden
+            >
+              Open next profile (capture queue)
+            </button>
+            <p id="pipeline-status" class="pill" aria-live="polite"></p>
+            <label class="field">
+              <span>List round cap (1–12)</span>
+              <input id="pipeline-list-rounds" type="number" min="1" max="12" value="4" />
+            </label>
+            <label class="field">
+              <span>Profile extraction floor (0–20, 0 = fully automatic)</span>
+              <input id="pipeline-enrich-steps" type="number" min="0" max="20" value="0" />
+            </label>
+            <label class="field">
+              <span>Pause after scroll (ms)</span>
+              <input id="pipeline-pause" type="number" min="800" max="12000" value="2800" />
+            </label>
+            <label class="field" style="text-transform: none; letter-spacing: 0; font-weight: 500">
+              <span style="margin-bottom: 4px">Execution mode</span>
+              <label style="display: flex; align-items: center; gap: 8px; font-size: 12px">
+                <input id="pipeline-background-mode" type="checkbox" checked />
+                Run in background (do not bring LinkedIn tab to front)
+              </label>
+            </label>
+            <div class="stack-tight">
+              <button id="pipeline-run" type="button" class="btn btn-primary">
+                Run automated capture
+              </button>
+              <button id="pipeline-stop" type="button" class="btn btn-secondary">
+                Stop automated capture
+              </button>
+            </div>
+          </div>
+
           <details class="sub-block">
             <summary class="section-title" style="cursor: pointer">Optional snapshots</summary>
             <div style="margin-top: 10px">
@@ -659,46 +665,9 @@
             Generate campaign draft (this profile)
           </button>
           <p class="text-muted">
-            Uses Clin AI for the <strong>active tab</strong> profile if they’re already in your capture-target
-            campaign. You paste and send on LinkedIn yourself.
+            Uses Clin AI for the <strong>active tab</strong> profile if they’re in the
+            campaign chosen above. You paste and send on LinkedIn yourself.
           </p>
-
-          <div class="sub-block">
-          <p class="section-title">Full import orchestration (paced)</p>
-          <p class="hint">
-            Open <strong>people search</strong> or <strong>Connections</strong> in a LinkedIn
-            tab. Clin locks that tab for this run, loops list capture rounds, then continues
-            paced profile extraction and AI analysis until queue/list exhaustion (or safety caps).
-            If list import was already done, run it again from any LinkedIn tab to resume
-            campaign member captures one by one.
-          </p>
-          <p id="pipeline-status" class="pill" aria-live="polite"></p>
-          <label class="field">
-            <span>List round cap (1–12)</span>
-            <input id="pipeline-list-rounds" type="number" min="1" max="12" value="4" />
-          </label>
-          <label class="field">
-            <span>Profile extraction floor (0–20, 0 = fully automatic)</span>
-            <input id="pipeline-enrich-steps" type="number" min="0" max="20" value="0" />
-          </label>
-          <label class="field">
-            <span>Pause after scroll (ms)</span>
-            <input id="pipeline-pause" type="number" min="800" max="12000" value="2800" />
-          </label>
-          <label class="field" style="text-transform: none; letter-spacing: 0; font-weight: 500">
-            <span style="margin-bottom: 4px">Execution mode</span>
-            <label style="display: flex; align-items: center; gap: 8px; font-size: 12px">
-              <input id="pipeline-background-mode" type="checkbox" checked />
-              Run in background (do not bring LinkedIn tab to front)
-            </label>
-          </label>
-          <button id="pipeline-run" type="button" class="btn btn-primary">
-            Run full orchestration
-          </button>
-          <button id="pipeline-stop" type="button" class="btn btn-secondary">
-            Stop full orchestration
-          </button>
-          </div>
         </section>
 
         <section id="panel-outreach" class="panel" role="tabpanel" hidden>
@@ -729,6 +698,36 @@
             </span>
           </label>
           <div id="outreach"></div>
+        </section>
+
+        <section id="panel-cleaning" class="panel" role="tabpanel" hidden>
+          <p class="section-title">Engage (comment)</p>
+          <p class="hint">
+            Opens each contact&apos;s recent activity with a comment angle from Clin.
+            You write the comment on LinkedIn, then confirm below.
+          </p>
+          <div class="stack-tight">
+            <button id="engage-run-start" type="button" class="btn btn-primary">
+              Start engage run
+            </button>
+            <button id="engage-run-stop" type="button" class="btn btn-secondary">
+              Stop engage run
+            </button>
+          </div>
+          <p class="section-title" style="margin-top: 16px">Removal (disconnect)</p>
+          <p class="hint">
+            Opens each approved profile. Use More → Remove connection on LinkedIn,
+            then confirm disconnected here.
+          </p>
+          <div class="stack-tight">
+            <button id="removal-run-start" type="button" class="btn btn-primary">
+              Start removal run
+            </button>
+            <button id="removal-run-stop" type="button" class="btn btn-secondary">
+              Stop removal run
+            </button>
+          </div>
+          <p id="cleaning-run-status" class="pill" style="margin-top: 12px" aria-live="polite"></p>
         </section>
 
         <section id="panel-branding" class="panel" role="tabpanel" hidden>
@@ -767,7 +766,6 @@
       </main>
 
       <footer class="foot">
-        <div id="activity" class="activity" aria-live="polite"></div>
         <a
           id="dash-link"
           class="dash-link"

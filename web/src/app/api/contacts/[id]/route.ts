@@ -2,10 +2,15 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
+import { isCleaningBucket } from "@/lib/cleaningBuckets";
 import {
   selectContactLlmExtension,
   tryUpdateLlmMessageContext,
 } from "@/lib/contactSqlExtras";
+import {
+  tryUpdateCleaningDismissedAt,
+  tryUpdateCleaningUserBucket,
+} from "@/lib/cleaningSqlExtras";
 import { SCORE_RULE_VERSION, scoreContact } from "@/lib/scoring";
 
 export const runtime = "nodejs";
@@ -59,6 +64,21 @@ export async function PATCH(
   }
   if (b.llm_message_context === null) {
     patch.llmMessageContext = null;
+  }
+
+  if (b.cleaning_user_bucket === null) {
+    tryUpdateCleaningUserBucket(id, null);
+  } else if (
+    typeof b.cleaning_user_bucket === "string" &&
+    isCleaningBucket(b.cleaning_user_bucket)
+  ) {
+    tryUpdateCleaningUserBucket(id, b.cleaning_user_bucket);
+  }
+
+  if (b.cleaning_dismissed === true) {
+    tryUpdateCleaningDismissedAt(id, true);
+  } else if (b.cleaning_dismissed === false) {
+    tryUpdateCleaningDismissedAt(id, false);
   }
 
   const db = getDb();

@@ -699,7 +699,7 @@ export default async function CampaignDetailPage({
                           disabled={!hasDraft}
                           className="rounded-md bg-emerald-700 px-2 py-1 text-xs text-white disabled:opacity-40"
                         >
-                          Review draft
+                          Ready for extension
                         </button>
                       </form>
                     ) : (

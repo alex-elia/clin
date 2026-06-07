@@ -20,6 +20,10 @@ import { setGlobalWriterInstructions } from "@/lib/brand";
 import { backupAndRecord } from "@/lib/dataBackup";
 import { setStoredDbDirectory } from "@/lib/dataPaths";
 import {
+  updateCleaningExecSettings,
+  type CleaningExecSettingsPatch,
+} from "@/lib/cleaningExecSettings";
+import {
   updateOutreachSendSettings,
   type OutreachSendSettingsPatch,
 } from "@/lib/outreachSend";
@@ -766,6 +770,25 @@ export async function triggerBackupNow(): Promise<
       error: e instanceof Error ? e.message : "Backup failed",
     };
   }
+}
+
+export async function saveCleaningExecForm(formData: FormData) {
+  const readInt = (key: string) => {
+    const raw = formData.get(key);
+    if (typeof raw !== "string" || raw.trim() === "") return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const patch: CleaningExecSettingsPatch = {
+    removalEnabled: formData.get("removalEnabled") === "on",
+    engageEnabled: formData.get("engageEnabled") === "on",
+    minSecondsBetweenActions: readInt("cleaningMinSecondsBetweenActions"),
+    maxPerDay: readInt("cleaningMaxPerDay"),
+    jitterPercent: readInt("cleaningJitterPercent"),
+  };
+  await updateCleaningExecSettings(patch);
+  revalidatePath("/settings");
+  revalidatePath("/cleaning");
 }
 
 export async function saveOutreachSendForm(formData: FormData) {

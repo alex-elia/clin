@@ -204,34 +204,22 @@ async function getExtensionCampaignContext(root, campaignId) {
   }
 }
 
-function attachCampaignIdToPayload(payload, ctx) {
-  const id = ctx && ctx.captureTargetCampaignId;
-  if (typeof id !== "string" || !id.trim()) return payload;
-  return { ...payload, outreachCampaignId: id.trim() };
-}
-
 const IMPORT_CAMPAIGN_KEY = "clinImportCampaignChoice";
 
-async function applyOutreachCampaignId(payload) {
+/** Campaign chosen in extension popup only (not Clin web capture target). */
+async function resolveExtensionImportCampaignId() {
   const { [IMPORT_CAMPAIGN_KEY]: choice } = await chrome.storage.sync.get([
     IMPORT_CAMPAIGN_KEY,
   ]);
   const pick = typeof choice === "string" ? choice.trim() : "";
-  if (pick && pick !== "__none__") {
-    if (pick === "__clin_default__") {
-      const base = (await getApiBase()).replace(/\/$/, "");
-      const ctx = await getExtensionCampaignContext(base);
-      const id = ctx?.captureTargetCampaignId;
-      if (typeof id === "string" && id.trim()) {
-        return { ...payload, outreachCampaignId: id.trim() };
-      }
-    } else {
-      return { ...payload, outreachCampaignId: pick };
-    }
-  }
-  const base = (await getApiBase()).replace(/\/$/, "");
-  const ctx = await getExtensionCampaignContext(base);
-  return attachCampaignIdToPayload(payload, ctx);
+  if (!pick || pick === "__none__" || pick === "__clin_default__") return null;
+  return pick;
+}
+
+async function applyOutreachCampaignId(payload) {
+  const id = await resolveExtensionImportCampaignId();
+  if (!id) return payload;
+  return { ...payload, outreachCampaignId: id };
 }
 
 function linkedinVanityFromUrl(url) {
@@ -4347,8 +4335,7 @@ function profileRecentActivityUrl(profileUrl) {
 }
 
 async function postPostsCapturePayload(root, pruned, postsPayload, chainOpts = {}) {
-  const ctx = await getExtensionCampaignContext(root);
-  let capBody = attachCampaignIdToPayload(postsPayload, ctx);
+  let capBody = await applyOutreachCampaignId(postsPayload);
   if (chainOpts.captureChainStep) {
     capBody = { ...capBody, captureChainStep: chainOpts.captureChainStep };
   }
@@ -4458,8 +4445,7 @@ async function postProfileCaptureForTab(tabId, root, pruned, chainOpts = {}) {
   if (!result) {
     return { ok: false, error: "Extractor returned nothing." };
   }
-  const ctx = await getExtensionCampaignContext(root);
-  let capBody = attachCampaignIdToPayload(result, ctx);
+  let capBody = await applyOutreachCampaignId(result);
   if (chainOpts.captureChainStep) {
     capBody = { ...capBody, captureChainStep: chainOpts.captureChainStep };
   }
@@ -4539,8 +4525,7 @@ async function importConnectionsListRound(tabId, base, round, postScrollMs, opts
       imported: 0,
     };
   }
-  const ctx = await getExtensionCampaignContext(root);
-  const listBody = attachCampaignIdToPayload(listPayload, ctx);
+  const listBody = await applyOutreachCampaignId(listPayload);
   let res = await fetch(`${root}/api/ingest/connections-page`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -4736,7 +4721,7 @@ async function runClinPipeline(opts) {
   await setExtensionLiveStatus({
     phase: "running",
     scope: "pipeline",
-    title: "Full orchestration",
+    title: "Automated capture",
     detail: "Starting paced import and profile capture…",
     confirmMemberId: null,
   });
@@ -4778,7 +4763,7 @@ async function runClinPipeline(opts) {
       await setExtensionLiveStatus({
         phase: "success",
         scope: "pipeline",
-        title: "Orchestration stopped",
+        title: "Automated capture stopped",
         detail: "Stopped by user during list import.",
         confirmMemberId: null,
       });
@@ -4787,7 +4772,7 @@ async function runClinPipeline(opts) {
     await setExtensionLiveStatus({
       phase: "running",
       scope: "pipeline",
-      title: "Full orchestration",
+      title: "Automated capture",
       detail: `Importing list — round ${r + 1} of ${requestedListRounds}…`,
       confirmMemberId: null,
     });
@@ -4796,7 +4781,11 @@ async function runClinPipeline(opts) {
     });
     summary.listRoundsRun += 1;
     if (!round.ok) {
-      summary.errors.push(round.error || "List import failed.");
+      const roundErr = round.error || "List import failed.";
+      summary.errors.push(roundErr);
+      if (/client pace:/i.test(roundErr)) {
+        await publishUserNotice(roundErr, { scope: "pipeline" });
+      }
       if (round.stop) break;
       continue;
     }
@@ -4810,8 +4799,9 @@ async function runClinPipeline(opts) {
   }
 
   const root = base.replace(/\/$/, "");
-  const campaignCtx = await getExtensionCampaignContext(root, opts.selectedCampaignId);
-  const hasCaptureTargetCampaign = Boolean(campaignCtx?.captureTargetCampaignId);
+  const extensionCampaignId = await resolveExtensionImportCampaignId();
+  const campaignCtx = await getExtensionCampaignContext(root, extensionCampaignId);
+  const hasCaptureTargetCampaign = Boolean(extensionCampaignId);
   const runCampaignQueueCapture = fullRun && hasCaptureTargetCampaign;
   summary.campaignCaptureMode = runCampaignQueueCapture;
 
@@ -4838,7 +4828,7 @@ async function runClinPipeline(opts) {
       await setExtensionLiveStatus({
         phase: "success",
         scope: "pipeline",
-        title: "Orchestration stopped",
+        title: "Automated capture stopped",
         detail: "Stopped by user during profile capture.",
         confirmMemberId: null,
       });
@@ -4847,25 +4837,24 @@ async function runClinPipeline(opts) {
     await setExtensionLiveStatus({
       phase: "running",
       scope: "pipeline",
-      title: "Full orchestration",
+      title: "Automated capture",
       detail: runCampaignQueueCapture
         ? `Capturing campaign profile ${e + 1}…`
         : `Enriching profile ${e + 1}${steps ? ` of ${steps}` : ""}…`,
       confirmMemberId: null,
     });
     const step = runCampaignQueueCapture
-      ? await captureOneCampaignMemberProfileStep(
-          tabId,
-          base,
-          opts.selectedCampaignId,
-          { suppressFocus },
-        )
+      ? await captureOneCampaignMemberProfileStep(tabId, base, { suppressFocus })
       : await enrichOneProfileStep(tabId, base, e === 0 && listRounds === 0, {
           suppressFocus,
         });
     summary.profileStepsRun += 1;
     if (!step.ok) {
-      summary.errors.push(step.error || "Enrich step failed.");
+      const stepErr = step.error || "Enrich step failed.";
+      summary.errors.push(stepErr);
+      if (/client pace:/i.test(stepErr)) {
+        await publishUserNotice(stepErr, { scope: "pipeline" });
+      }
       if (step.done) break;
       continue;
     }
@@ -4877,21 +4866,17 @@ async function runClinPipeline(opts) {
   await setExtensionLiveStatus({
     phase: "success",
     scope: "pipeline",
-    title: "Orchestration finished",
+    title: "Automated capture finished",
     detail: `${summary.profilesCaptured} profile(s) captured · ${summary.listImported} imported from list`,
     confirmMemberId: null,
   });
   return { ok: true, summary };
 }
 
-async function captureOneCampaignMemberProfileStep(
-  tabId,
-  base,
-  selectedCampaignId,
-  opts = {},
-) {
+async function captureOneCampaignMemberProfileStep(tabId, base, opts = {}) {
   const root = base.replace(/\/$/, "");
-  const ctx = await getExtensionCampaignContext(root, selectedCampaignId);
+  const campaignId = await resolveExtensionImportCampaignId();
+  const ctx = await getExtensionCampaignContext(root, campaignId);
   const campaignName = ctx?.captureTargetCampaignName || null;
   const nextProfileUrl = ctx?.captureTargetQueue?.nextProfileUrl || null;
   if (!nextProfileUrl) {
@@ -5100,7 +5085,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
       const paceCheck = await checkPaceForCapture(base);
       if (!paceCheck.ok) {
-        await chrome.storage.local.set({ [LAST_ERROR_KEY]: paceCheck.message });
+        await publishUserNotice(paceCheck.message, {
+          phase: paceCheck.kind === "gap" ? "waiting" : "error",
+          scope: "capture",
+        });
         if (paceCheck.kind === "gap") {
           sendResponse({
             ok: false,
@@ -5450,7 +5438,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         pruned = await waitForPaceGapAllowCapture(base);
       } catch (e) {
         const err = e instanceof Error ? e.message : String(e);
-        await chrome.storage.local.set({ [LAST_ERROR_KEY]: err });
+        await publishUserNotice(err, { scope: "capture" });
         sendResponse({ ok: false, error: err });
         return;
       }
@@ -5490,8 +5478,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
 
       const root = base.replace(/\/$/, "");
-      const ctx = await getExtensionCampaignContext(root);
-      const capBody = attachCampaignIdToPayload(result, ctx);
+      const capBody = await applyOutreachCampaignId(result);
       const res = await fetch(`${root}/api/ingest/capture`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -5583,7 +5570,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         await prepareListPageForScrape(tabId, postScrollMs);
       } catch (e) {
         const err = e instanceof Error ? e.message : String(e);
-        await chrome.storage.local.set({ [LAST_ERROR_KEY]: err });
+        await publishUserNotice(err, { scope: "pipeline" });
         sendResponse({ ok: false, error: err, stopSprint: true });
         return;
       }
@@ -5593,7 +5580,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         pruned = await waitForPaceGapAllowCapture(base);
       } catch (e) {
         const err = e instanceof Error ? e.message : String(e);
-        await chrome.storage.local.set({ [LAST_ERROR_KEY]: err });
+        await publishUserNotice(err, { scope: "pipeline" });
         sendResponse({ ok: false, error: err, stopSprint: true });
         return;
       }
@@ -5617,8 +5604,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       const root = base.replace(/\/$/, "");
 
       const doPost = async () => {
-        const ctx = await getExtensionCampaignContext(root);
-        const listBody = attachCampaignIdToPayload(listPayload, ctx);
+        const listBody = await applyOutreachCampaignId(listPayload);
         return fetch(`${root}/api/ingest/connections-page`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -5701,7 +5687,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     void setExtensionLiveStatus({
       phase: "success",
       scope: "pipeline",
-      title: "Orchestration stopping",
+      title: "Automated capture stopping",
       detail: "Finishing current step…",
       confirmMemberId: null,
     });
@@ -5914,6 +5900,27 @@ async function clearExtensionLiveStatus() {
       confirmMemberId: null,
       updatedAt: Date.now(),
     },
+  });
+}
+
+async function publishUserNotice(message, opts = {}) {
+  const msg = String(message || "").trim();
+  if (!msg) return;
+  await chrome.storage.local.set({ [LAST_ERROR_KEY]: msg });
+  const isPace = /client pace:/i.test(msg);
+  const waiting = /wait \d+s before|next import in/i.test(msg);
+  const stored = await chrome.storage.local.get([LIVE_STATUS_KEY]);
+  const prev = stored[LIVE_STATUS_KEY] || {};
+  await setExtensionLiveStatus({
+    phase:
+      opts.phase ||
+      (waiting ? "waiting" : isPace || opts.isError ? "error" : "error"),
+    scope: opts.scope || prev.scope || "general",
+    title:
+      opts.title ||
+      (isPace ? (waiting ? "Pace wait" : "Pace limit") : "Error"),
+    detail: msg,
+    confirmMemberId: opts.confirmMemberId ?? prev.confirmMemberId ?? null,
   });
 }
 
@@ -6461,6 +6468,361 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }
   })();
   return true;
+});
+
+const REMOVAL_RUN_KEY = "clinRemovalRunActive";
+const ENGAGE_RUN_KEY = "clinEngageRunActive";
+const CLEANING_RUN_TAB_ID_KEY = "clinCleaningRunTabId";
+
+async function resolveCleaningRunTabId(preferred) {
+  if (typeof preferred === "number") {
+    try {
+      const tab = await chrome.tabs.get(preferred);
+      if (tab?.id && tab.url && /linkedin\.com/i.test(tab.url)) return tab.id;
+    } catch {
+      /* fall through */
+    }
+  }
+  const tabs = await chrome.tabs.query({ url: "*://*.linkedin.com/*" });
+  const li = tabs.find((t) => typeof t.id === "number");
+  return typeof li?.id === "number" ? li.id : null;
+}
+
+/** Page world — show Clin comment-angle hint on activity page. */
+function clinEngageShowHint(angle, hook) {
+  const id = "clin-engage-hint";
+  let el = document.getElementById(id);
+  if (!el) {
+    el = document.createElement("div");
+    el.id = id;
+    el.style.cssText =
+      "position:fixed;bottom:16px;right:16px;max-width:320px;z-index:99999;" +
+      "background:#1e293b;color:#f8fafc;padding:12px 14px;border-radius:10px;" +
+      "font:13px/1.4 system-ui,sans-serif;box-shadow:0 4px 20px rgba(0,0,0,.25);";
+    document.body.appendChild(el);
+  }
+  const parts = [];
+  if (angle) parts.push(`Comment angle: ${angle}`);
+  if (hook) parts.push(`Hook: ${hook}`);
+  el.textContent =
+    parts.join(" · ") || "Comment on a recent post, then confirm in Clin.";
+}
+
+async function removalRunStep(tabId, base) {
+  const root = base.replace(/\/$/, "");
+  await setExtensionLiveStatus({
+    phase: "running",
+    scope: "cleaning",
+    title: "Removal run",
+    detail: "Loading next approved removal…",
+    confirmExecId: null,
+    confirmExecKind: null,
+  });
+  const nextRes = await fetch(`${root}/api/extension/removal-queue/next`);
+  const nextJson = await nextRes.json().catch(() => ({}));
+  if (!nextRes.ok) {
+    return { ok: false, error: nextJson?.error || `HTTP ${nextRes.status}` };
+  }
+  if (!nextJson.item) {
+    return {
+      ok: true,
+      done: true,
+      reason: nextJson.reason || "queue_empty",
+      waitMs: nextJson.waitMs || 0,
+    };
+  }
+
+  const item = nextJson.item;
+  const contactLabel = item.fullName?.trim() || "contact";
+  const url = item.linkedinUrl;
+  if (!url) {
+    await fetch(`${root}/api/extension/removal-queue/ack`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        execId: item.execId,
+        outcome: "failed",
+        error: "missing_linkedin_url",
+      }),
+    });
+    return { ok: true, skipped: true };
+  }
+
+  await setExtensionLiveStatus({
+    phase: "running",
+    scope: "cleaning",
+    title: "Removal run",
+    detail: `Opening ${contactLabel}…`,
+    confirmExecId: null,
+    confirmExecKind: null,
+  });
+  await chrome.tabs.update(tabId, { url });
+  await sleep(1500);
+  await setExtensionLiveStatus({
+    phase: "waiting",
+    scope: "cleaning",
+    title: "Removal — disconnect manually",
+    detail: `On ${contactLabel}: More → Remove connection. Then confirm below.`,
+    confirmExecId: item.execId,
+    confirmExecKind: "removal",
+  });
+  return {
+    ok: true,
+    item,
+    needsConfirm: true,
+    hint: "Remove connection on LinkedIn, then confirm.",
+  };
+}
+
+async function engageRunStep(tabId, base) {
+  const root = base.replace(/\/$/, "");
+  await setExtensionLiveStatus({
+    phase: "running",
+    scope: "cleaning",
+    title: "Engage run",
+    detail: "Loading next engage contact…",
+    confirmExecId: null,
+    confirmExecKind: null,
+  });
+  const nextRes = await fetch(`${root}/api/extension/engage-queue/next`);
+  const nextJson = await nextRes.json().catch(() => ({}));
+  if (!nextRes.ok) {
+    return { ok: false, error: nextJson?.error || `HTTP ${nextRes.status}` };
+  }
+  if (!nextJson.item) {
+    return {
+      ok: true,
+      done: true,
+      reason: nextJson.reason || "queue_empty",
+      waitMs: nextJson.waitMs || 0,
+    };
+  }
+
+  const item = nextJson.item;
+  const contactLabel = item.fullName?.trim() || "contact";
+  const profileUrl = item.linkedinUrl;
+  if (!profileUrl) {
+    await fetch(`${root}/api/extension/engage-queue/ack`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        execId: item.execId,
+        outcome: "failed",
+        error: "missing_linkedin_url",
+      }),
+    });
+    return { ok: true, skipped: true };
+  }
+
+  const activityUrl = profileRecentActivityUrl(profileUrl) || profileUrl;
+  await setExtensionLiveStatus({
+    phase: "running",
+    scope: "cleaning",
+    title: "Engage run",
+    detail: `Opening activity for ${contactLabel}…`,
+    confirmExecId: null,
+    confirmExecKind: null,
+  });
+  await chrome.tabs.update(tabId, { url: activityUrl });
+  await sleep(2000);
+  const angle = item.commentAngle || item.playbook || "";
+  const hook = item.engagementHook || "";
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: clinEngageShowHint,
+      args: [angle, hook],
+    });
+  } catch {
+    /* page may block injection */
+  }
+  const detail = angle
+    ? `Comment angle: ${angle}`
+    : hook
+      ? `Hook: ${hook}`
+      : `Comment on a post for ${contactLabel}, then confirm.`;
+  await setExtensionLiveStatus({
+    phase: "waiting",
+    scope: "cleaning",
+    title: "Engage — comment manually",
+    detail,
+    confirmExecId: item.execId,
+    confirmExecKind: "engage",
+  });
+  return {
+    ok: true,
+    item,
+    needsConfirm: true,
+    hint: detail,
+  };
+}
+
+async function runCleaningLoop(opts) {
+  const { runKey, stepFn, scopeTitle } = opts;
+  const runTabId = await resolveCleaningRunTabId(opts.tabId);
+  if (typeof runTabId !== "number") {
+    return { ok: false, error: "No LinkedIn tab found. Open LinkedIn and retry." };
+  }
+  await chrome.storage.local.set({
+    [runKey]: true,
+    [CLEANING_RUN_TAB_ID_KEY]: runTabId,
+  });
+  const base = await getApiBase();
+  let steps = 0;
+  const maxSteps = Math.min(20, Number(opts.maxSteps) || 5);
+  while (steps < maxSteps) {
+    const stored = await chrome.storage.local.get([runKey]);
+    if (!stored[runKey]) break;
+    const tabId = await resolveCleaningRunTabId(runTabId);
+    if (typeof tabId !== "number") {
+      return { ok: false, error: "LinkedIn tab closed. Open LinkedIn and start again." };
+    }
+    await chrome.storage.local.set({ [CLEANING_RUN_TAB_ID_KEY]: tabId });
+    const step = await stepFn(tabId, base);
+    if (step.done) {
+      if (step.reason === "pace_wait") {
+        await setExtensionLiveStatus({
+          phase: "running",
+          scope: "cleaning",
+          title: `${scopeTitle} — pace wait`,
+          detail: `Waiting ${Math.ceil((step.waitMs || 0) / 1000)}s…`,
+          confirmExecId: null,
+          confirmExecKind: null,
+        });
+      }
+      return { ok: true, done: true, reason: step.reason, waitMs: step.waitMs };
+    }
+    if (step.waitMs && step.waitMs > 0) {
+      await new Promise((r) => setTimeout(r, Math.min(step.waitMs, 120000)));
+    }
+    if (step.needsConfirm) {
+      return {
+        ok: true,
+        paused: true,
+        item: step.item,
+        hint: step.hint,
+      };
+    }
+    steps += 1;
+    await sleep(2000);
+  }
+  return { ok: true, done: true, steps };
+}
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === "CLIN_REMOVAL_RUN_STOP") {
+    chrome.storage.local.set({
+      [REMOVAL_RUN_KEY]: false,
+      [CLEANING_RUN_TAB_ID_KEY]: null,
+    });
+    void clearExtensionLiveStatus();
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (msg?.type === "CLIN_ENGAGE_RUN_STOP") {
+    chrome.storage.local.set({
+      [ENGAGE_RUN_KEY]: false,
+      [CLEANING_RUN_TAB_ID_KEY]: null,
+    });
+    void clearExtensionLiveStatus();
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (msg?.type === "CLIN_CLEANING_CONFIRM") {
+    (async () => {
+      try {
+        const base = await getApiBase();
+        const root = base.replace(/\/$/, "");
+        const { execId, kind, outcome } = msg;
+        if (!execId || !kind) {
+          sendResponse({ ok: false, error: "execId and kind required" });
+          return;
+        }
+        const path =
+          kind === "removal"
+            ? "removal-queue/ack"
+            : kind === "engage"
+              ? "engage-queue/ack"
+              : null;
+        if (!path) {
+          sendResponse({ ok: false, error: "invalid kind" });
+          return;
+        }
+        const resolvedOutcome =
+          outcome ||
+          (kind === "removal" ? "disconnected" : "commented");
+        await fetch(`${root}/api/extension/${path}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ execId, outcome: resolvedOutcome }),
+        });
+        await setExtensionLiveStatus({
+          phase: "success",
+          scope: "cleaning",
+          title: kind === "removal" ? "Removal — done" : "Engage — done",
+          detail: "Marked complete. Next contact after pace gap.",
+          confirmExecId: null,
+          confirmExecKind: null,
+        });
+        sendResponse({ ok: true });
+      } catch (e) {
+        sendResponse({
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    })();
+    return true;
+  }
+  if (msg?.type === "CLIN_REMOVAL_RUN_START") {
+    (async () => {
+      try {
+        const res = await runCleaningLoop({
+          runKey: REMOVAL_RUN_KEY,
+          stepFn: removalRunStep,
+          scopeTitle: "Removal run",
+          tabId: msg.tabId,
+          maxSteps: msg.maxSteps,
+        });
+        sendResponse(res);
+      } catch (e) {
+        sendResponse({
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      } finally {
+        await chrome.storage.local.set({
+          [REMOVAL_RUN_KEY]: false,
+        });
+      }
+    })();
+    return true;
+  }
+  if (msg?.type === "CLIN_ENGAGE_RUN_START") {
+    (async () => {
+      try {
+        const res = await runCleaningLoop({
+          runKey: ENGAGE_RUN_KEY,
+          stepFn: engageRunStep,
+          scopeTitle: "Engage run",
+          tabId: msg.tabId,
+          maxSteps: msg.maxSteps,
+        });
+        sendResponse(res);
+      } catch (e) {
+        sendResponse({
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      } finally {
+        await chrome.storage.local.set({
+          [ENGAGE_RUN_KEY]: false,
+        });
+      }
+    })();
+    return true;
+  }
+  return false;
 });
 
 ensurePendingSelfAlarm();

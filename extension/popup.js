@@ -1,8 +1,8 @@
 const DEFAULT_BASE = "http://127.0.0.1:3000";
 const LIVE_STATUS_KEY = "clinExtensionLiveStatus";
+const LAST_PACE_KEY = "clin_last_pace_message";
 
 const baseInput = document.getElementById("base");
-const activityEl = document.getElementById("activity");
 const outreachEl = document.getElementById("outreach");
 const brandingPostsEl = document.getElementById("branding-posts");
 const dashLink = document.getElementById("dash-link");
@@ -15,6 +15,16 @@ let liveStatusFadeTimer = null;
 
 function getBase() {
   return (baseInput.value.trim() || DEFAULT_BASE).replace(/\/$/, "");
+}
+
+/** Retry 404s while Next.js dev compiles routes on first access. */
+async function clinFetch(url, init) {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const res = await fetch(url, init);
+    if (res.status !== 404 || attempt === 7) return res;
+    await new Promise((r) => setTimeout(r, 350 * (attempt + 1)));
+  }
+  throw new Error("clinFetch: unreachable");
 }
 
 async function readLiveStatusFromStorage() {
@@ -72,6 +82,69 @@ function renderLiveStatus(state) {
     });
     liveStatusActions.appendChild(confirmBtn);
   }
+
+  if (state?.confirmExecId && state?.confirmExecKind) {
+    const doneBtn = document.createElement("button");
+    doneBtn.type = "button";
+    doneBtn.className = "btn btn-primary";
+    doneBtn.textContent =
+      state.confirmExecKind === "removal" ? "Disconnected" : "Commented";
+    doneBtn.addEventListener("click", async () => {
+      const ack = await chrome.runtime.sendMessage({
+        type: "CLIN_CLEANING_CONFIRM",
+        execId: state.confirmExecId,
+        kind: state.confirmExecKind,
+        outcome:
+          state.confirmExecKind === "removal" ? "disconnected" : "commented",
+      });
+      if (ack?.ok) {
+        setLiveStatus({
+          phase: "success",
+          scope: "cleaning",
+          title: "Cleaning — done",
+          detail: "Marked complete.",
+          persist: true,
+        });
+      } else {
+        setLiveStatus({
+          phase: "error",
+          scope: "cleaning",
+          title: "Confirm failed",
+          detail: ack?.error || "Ack failed.",
+          persist: true,
+        });
+      }
+    });
+    liveStatusActions.appendChild(doneBtn);
+
+    const skipBtn = document.createElement("button");
+    skipBtn.type = "button";
+    skipBtn.className = "btn btn-secondary";
+    skipBtn.textContent = "Skip";
+    skipBtn.addEventListener("click", async () => {
+      const base = getBase();
+      const path =
+        state.confirmExecKind === "removal"
+          ? "removal-queue/ack"
+          : "engage-queue/ack";
+      await fetch(`${base}/api/extension/${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          execId: state.confirmExecId,
+          outcome: "skipped",
+        }),
+      });
+      setLiveStatus({
+        phase: "success",
+        scope: "cleaning",
+        title: "Skipped",
+        detail: "Item skipped.",
+        persist: true,
+      });
+    });
+    liveStatusActions.appendChild(skipBtn);
+  }
 }
 
 function setLiveStatus(opts) {
@@ -125,37 +198,102 @@ async function syncLiveStatusFromStorage() {
   renderLiveStatus(state);
 }
 
-function setStatus(text, cls) {
-  if (activityEl) {
-    activityEl.textContent = text;
-    const base = "activity";
-    if (cls === "ok") activityEl.className = `${base} is-ok`;
-    else if (cls === "err") activityEl.className = `${base} is-err`;
-    else activityEl.className = base;
+function statusMeta(text, cls) {
+  const t = String(text || "").trim();
+  if (/client pace:/i.test(t) || /pace limit:/i.test(t)) {
+    const waiting = /wait \d+s|next import in/i.test(t);
+    return {
+      phase: waiting ? "waiting" : "error",
+      title: waiting ? "Pace wait" : "Pace limit",
+    };
   }
-  void (async () => {
-    const cur = await readLiveStatusFromStorage();
-    if (
-      cur?.phase === "running" &&
-      (cur.scope === "outreach" || cur.scope === "pipeline")
-    ) {
-      return;
-    }
-    setLiveStatus({
-      phase: cls === "err" ? "error" : cls === "ok" ? "success" : "running",
-      scope: "general",
-      title: cls === "err" ? "Error" : cls === "ok" ? "Done" : "Working",
-      detail: text,
-    });
-  })();
+  if (cls === "err") return { phase: "error", title: "Error" };
+  if (cls === "ok") return { phase: "success", title: "Done" };
+  return { phase: "running", title: "Working" };
+}
+
+async function setStatus(text, cls) {
+  const { phase, title } = statusMeta(text, cls);
+  const cur = await readLiveStatusFromStorage();
+  const isPaceOrError =
+    cls === "err" || phase === "waiting" || phase === "error";
+  const pipelineOrOutreachRunning =
+    cur?.phase === "running" &&
+    (cur.scope === "outreach" || cur.scope === "pipeline");
+
+  if (pipelineOrOutreachRunning && !isPaceOrError) {
+    if (cls === "ok" || phase === "running") return;
+  }
+
+  const scope = pipelineOrOutreachRunning
+    ? cur.scope
+    : cur?.scope === "capture"
+      ? "capture"
+      : "general";
+
+  setLiveStatus({
+    phase,
+    scope,
+    title: isPaceOrError ? title : pipelineOrOutreachRunning ? cur.title : title,
+    detail: text,
+    persist:
+      isPaceOrError ||
+      scope === "outreach" ||
+      scope === "pipeline" ||
+      (cls === "err" && phase === "error"),
+    confirmMemberId: cur?.confirmMemberId || null,
+  });
+}
+
+async function syncLastPaceMessageToLiveStatus() {
+  const [stored, cur] = await Promise.all([
+    chrome.storage.local.get([LAST_PACE_KEY]),
+    readLiveStatusFromStorage(),
+  ]);
+  const msg = stored[LAST_PACE_KEY];
+  if (typeof msg !== "string" || !msg.trim()) return;
+  if (
+    cur?.phase === "running" &&
+    (cur.scope === "outreach" || cur.scope === "pipeline")
+  ) {
+    return;
+  }
+  const { phase, title } = statusMeta(msg, "err");
+  setLiveStatus({
+    phase,
+    scope: cur?.scope || "general",
+    title,
+    detail: msg,
+    persist: true,
+  });
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== "local" || !changes[LIVE_STATUS_KEY]) return;
-  void syncLiveStatusFromStorage();
+  if (area !== "local") return;
+  if (changes[LIVE_STATUS_KEY]) void syncLiveStatusFromStorage();
+  if (changes[LAST_PACE_KEY]) {
+    const msg = changes[LAST_PACE_KEY].newValue;
+    if (typeof msg === "string" && msg.trim()) {
+      void readLiveStatusFromStorage().then((cur) => {
+        const { phase, title } = statusMeta(msg, "err");
+        setLiveStatus({
+          phase,
+          scope:
+            cur?.scope === "pipeline"
+              ? "pipeline"
+              : cur?.scope === "outreach"
+                ? "outreach"
+                : "general",
+          title,
+          detail: msg,
+          persist: true,
+        });
+      });
+    }
+  }
 });
 
-void syncLiveStatusFromStorage();
+void syncLiveStatusFromStorage().then(() => syncLastPaceMessageToLiveStatus());
 setInterval(() => void syncLiveStatusFromStorage(), 1500);
 
 function isMessageChannelClosedError(message) {
@@ -175,6 +313,8 @@ function initTabs() {
   const panels = new Map(
     buttons.map((b) => [b.dataset.panel, document.getElementById(`panel-${b.dataset.panel}`)]),
   );
+  const settingsPanel = document.getElementById("panel-settings");
+  if (settingsPanel) panels.set("settings", settingsPanel);
 
   function activate(name) {
     for (const btn of buttons) {
@@ -229,20 +369,26 @@ async function loadCampaignCaptureHint() {
   const openNextBtn = document.getElementById("open-next-profile-capture");
   if (!el) return;
   const base = getBase();
+  const selectedCampaignId = selectedCampaignIdFromPicker();
   try {
-    const res = await fetch(`${base}/api/extension/campaign-context`);
-    if (!res.ok) {
+    if (!selectedCampaignId) {
+      el.textContent =
+        "Choose a campaign above — captures are only added when you pick one here.";
+      if (queueEl) queueEl.textContent = "";
+      if (openNextBtn) openNextBtn.hidden = true;
+      return;
+    }
+    const j = await fetchCampaignContextForCampaign(base, selectedCampaignId);
+    if (!j) {
       el.textContent = "";
       if (queueEl) queueEl.textContent = "";
       if (openNextBtn) openNextBtn.hidden = true;
       return;
     }
-    const j = await res.json();
     if (j.captureTargetCampaignName) {
       el.textContent = `Captures add to: “${j.captureTargetCampaignName}”.`;
     } else {
-      el.textContent =
-        "No capture target — open Clin → Campaigns → your campaign → Set as capture target.";
+      el.textContent = "Selected campaign not found — pick another campaign above.";
     }
     const q = j.captureTargetQueue;
     if (queueEl) {
@@ -278,7 +424,7 @@ async function fetchCampaignContextForCampaign(base, campaignId) {
       typeof campaignId === "string" && campaignId.trim()
         ? `?campaignId=${encodeURIComponent(campaignId.trim())}`
         : "";
-    const res = await fetch(`${base}/api/extension/campaign-context${q}`);
+    const res = await clinFetch(`${base}/api/extension/campaign-context${q}`);
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -300,7 +446,7 @@ async function populateImportCampaignPicker() {
   if (!sel) return;
   const base = getBase();
   try {
-    const res = await fetch(`${base}/api/extension/outreach-campaigns`);
+    const res = await clinFetch(`${base}/api/extension/outreach-campaigns`);
     if (!res.ok) return;
     const j = await res.json();
     const stored = await new Promise((resolve) => {
@@ -313,23 +459,20 @@ async function populateImportCampaignPicker() {
     none.value = "__none__";
     none.textContent = "— none —";
     sel.appendChild(none);
-    const def = document.createElement("option");
-    def.value = "__clin_default__";
-    def.textContent = "Clin capture target (default)";
-    sel.appendChild(def);
     for (const c of j.campaigns ?? []) {
       const o = document.createElement("option");
       o.value = c.id;
       o.textContent = c.name;
       sel.appendChild(o);
     }
-    const pick =
-      typeof stored === "string" && stored
-        ? stored
-        : j.captureTargetCampaignId
-          ? "__clin_default__"
-          : "__none__";
-    sel.value = pick;
+    const campaigns = j.campaigns ?? [];
+    const validStored =
+      typeof stored === "string" &&
+      stored &&
+      stored !== "__none__" &&
+      stored !== "__clin_default__" &&
+      campaigns.some((c) => c.id === stored);
+    sel.value = validStored ? stored : "__none__";
   } catch {
     /* ignore */
   }
@@ -337,7 +480,9 @@ async function populateImportCampaignPicker() {
 
 document.getElementById("import-campaign-picker")?.addEventListener("change", (e) => {
   const v = e.target.value;
-  chrome.storage.sync.set({ [IMPORT_CAMPAIGN_KEY]: v });
+  chrome.storage.sync.set({ [IMPORT_CAMPAIGN_KEY]: v }, () => {
+    void loadCampaignCaptureHint();
+  });
 });
 
 function sendManualSnapshotMessage(kind) {
@@ -490,7 +635,7 @@ function applyCaptureSuccess(resp) {
     const ca = resp.data?.campaignAttach;
     const campaignHint = ca?.attachedToCampaignId
       ? `\nSee Clin → Campaigns${ca.campaignName ? ` → “${ca.campaignName}”` : ""} for follow-up.`
-      : "\nSet a capture-target campaign in Clin if this contact should appear in campaign follow-up.";
+      : "\nChoose Import into campaign in the extension if this contact should appear in campaign follow-up.";
     setStatus(
       `Thread saved (${n} messages).\nContact: ${resp.data?.contactId || "?"}` +
         campaignAttachLine(resp.data) +
@@ -612,16 +757,16 @@ async function runCaptureFlow(scope = "auto") {
   }
   if (resp.paceKind === "gap" && resp.paceWaitSeconds > 0) {
     let sec = resp.paceWaitSeconds;
+    const paceDetail =
+      resp.error ||
+      `Client pace: wait ${sec}s before the next import (humanized interval, matches server).`;
     setLiveStatus({
       phase: "waiting",
       scope: "capture",
       title: "Pace wait",
-      detail: `Next capture in ${sec}s…`,
+      detail: `${paceDetail}\nRetrying in ${sec}s…`,
+      persist: true,
     });
-    setStatus(
-      `Pace limit: next import in ${sec}s (countdown)…\nThen capture retries automatically — same rule as Clin /settings.`,
-      "err",
-    );
     paceCountdownTimer = window.setInterval(() => {
       sec -= 1;
       if (sec <= 0) {
@@ -633,23 +778,21 @@ async function runCaptureFlow(scope = "auto") {
         phase: "waiting",
         scope: "capture",
         title: "Pace wait",
-        detail: `Next capture in ${sec}s…`,
+        detail: `${paceDetail}\nRetrying in ${sec}s…`,
+        persist: true,
       });
-      setStatus(
-        `Pace limit: next import in ${sec}s…\n(auto-retry when this hits 0)`,
-        "err",
-      );
     }, 1000);
     return;
   }
   clearPaceCountdown();
+  const errText = resp.error || "Capture failed.";
   setLiveStatus({
-    phase: "error",
+    phase: statusMeta(errText, "err").phase,
     scope: "capture",
-    title: "Capture failed",
-    detail: resp.error || "Capture failed.",
+    title: statusMeta(errText, "err").title,
+    detail: errText,
+    persist: true,
   });
-  setStatus(resp.error || "Capture failed.", "err");
 }
 
 document.getElementById("cap")?.addEventListener("click", () => {
@@ -728,14 +871,14 @@ function sendConnectionsSprintStep(tabId, round, postScrollMs) {
 async function runFullCampaignCaptureFlow() {
   const base = getBase();
   const selectedCampaignId = selectedCampaignIdFromPicker();
-  const campaignCtx = await fetchCampaignContextForCampaign(base, selectedCampaignId);
-  if (!campaignCtx?.captureTargetCampaignId) {
+  if (!selectedCampaignId) {
     setStatus(
-      "No campaign selected for import. In extension: Import into campaign -> choose a campaign, then run full campaign capture again.",
+      "Choose a campaign in Import into campaign, then run automated capture again.",
       "err",
     );
     return;
   }
+  const campaignCtx = await fetchCampaignContextForCampaign(base, selectedCampaignId);
 
   const rawR = Number(document.getElementById("pipeline-list-rounds")?.value);
   const listRounds = Math.min(12, Math.max(1, Number.isFinite(rawR) ? rawR : 4));
@@ -773,7 +916,7 @@ async function runFullCampaignCaptureFlow() {
     setLiveStatus({
       phase: "running",
       scope: "pipeline",
-      title: "Full orchestration",
+      title: "Automated capture",
       detail: `Starting — ${listRounds} list round(s), then campaign profiles…`,
       persist: true,
     });
@@ -781,7 +924,7 @@ async function runFullCampaignCaptureFlow() {
     setLiveStatus({
       phase: "running",
       scope: "pipeline",
-      title: "Full orchestration",
+      title: "Automated capture",
       detail: "Resuming campaign profile capture (list import skipped)…",
       persist: true,
     });
@@ -797,7 +940,7 @@ async function runFullCampaignCaptureFlow() {
         postScrollMs,
         fullRun: true,
         suppressFocus,
-        selectedCampaignId: selectedCampaignId || campaignCtx.captureTargetCampaignId,
+        selectedCampaignId,
       },
       (r) => {
         if (chrome.runtime.lastError) {
@@ -839,17 +982,13 @@ async function runFullCampaignCaptureFlow() {
     ? "\nFocus: background mode (best effort)."
     : "\nFocus: foreground mode.";
   setStatus(
-    `Done (${campaignCtx.captureTargetCampaignName || "campaign"}). List: ~${s.listImported ?? 0} imported in ${s.listRoundsRun ?? "?"} round(s) · Profiles: ${s.profilesCaptured ?? 0} (${s.profileStepsRun ?? "?"} step(s)) · Threads: ${s.messagingCaptured ?? 0}.${modeLine}${focusLine}${errLine}\nSee Clin → Contacts / Autopilot.`,
+    `Done (${campaignCtx?.captureTargetCampaignName || "campaign"}). List: ~${s.listImported ?? 0} imported in ${s.listRoundsRun ?? "?"} round(s) · Profiles: ${s.profilesCaptured ?? 0} (${s.profileStepsRun ?? "?"} step(s)) · Threads: ${s.messagingCaptured ?? 0}.${modeLine}${focusLine}${errLine}\nSee Clin → Contacts / Autopilot.`,
     "ok",
   );
   void refreshPipelineStatus();
 }
 
 document.getElementById("pipeline-run")?.addEventListener("click", () => {
-  void runFullCampaignCaptureFlow();
-});
-
-document.getElementById("cap-campaign-full")?.addEventListener("click", () => {
   void runFullCampaignCaptureFlow();
 });
 
@@ -868,7 +1007,7 @@ document.getElementById("pipeline-stop")?.addEventListener("click", async () => 
       setStatus(msg, "err");
       return;
     }
-    setStatus(resp?.ok ? "Full orchestration stop requested." : "Stop request failed.", "ok");
+    setStatus(resp?.ok ? "Automated capture stop requested." : "Stop request failed.", "ok");
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (isMessageChannelClosedError(msg)) {
@@ -1013,7 +1152,7 @@ async function refreshPipelineStatus() {
   if (!pipelineStatusEl) return;
   const base = getBase();
   try {
-    const res = await fetch(`${base}/api/automation/status`);
+    const res = await clinFetch(`${base}/api/automation/status`);
     const j = await res.json();
     if (!res.ok) {
       pipelineStatusEl.textContent = "";
@@ -1051,7 +1190,7 @@ async function loadReadyBranding() {
 
   const base = getBase();
   try {
-    const res = await fetch(`${base}/api/branding/posts/ready`);
+    const res = await clinFetch(`${base}/api/branding/posts/ready`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       hint.textContent = data?.error || `HTTP ${res.status}`;
@@ -1245,7 +1384,7 @@ async function loadReadyOutreach() {
 
   const base = getBase();
   try {
-    const res = await fetch(`${base}/api/outreach/ready`);
+    const res = await clinFetch(`${base}/api/outreach/ready`);
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       hint.textContent = data?.error || `HTTP ${res.status}`;
@@ -1424,7 +1563,7 @@ function syncOutreachSendModeUi(sendMode) {
 async function loadOutreachSendSettings() {
   const base = getBase();
   try {
-    const res = await fetch(`${base}/api/extension/outreach-send-settings`);
+    const res = await clinFetch(`${base}/api/extension/outreach-send-settings`);
     if (!res.ok) return;
     const json = await res.json();
     syncOutreachSendModeUi(json?.outreachSend?.sendMode ?? "auto");
@@ -1463,7 +1602,7 @@ outreachAutoSendEl?.addEventListener("change", () => {
 async function loadExtensionBrand() {
   const base = getBase();
   try {
-    const res = await fetch(`${base}/api/extension/brand`);
+    const res = await clinFetch(`${base}/api/extension/brand`);
     if (!res.ok) return;
     const b = await res.json();
     const tag = document.querySelector(".tagline");
@@ -1541,4 +1680,85 @@ document.getElementById("outreach-run-start")?.addEventListener("click", async (
     persist: true,
   });
   loadReadyOutreach();
+});
+
+async function startCleaningRun(type) {
+  const msgType =
+    type === "removal" ? "CLIN_REMOVAL_RUN_START" : "CLIN_ENGAGE_RUN_START";
+  setLiveStatus({
+    phase: "running",
+    scope: "cleaning",
+    title: type === "removal" ? "Removal run" : "Engage run",
+    detail: "Starting…",
+    persist: true,
+  });
+  const res = await chrome.runtime.sendMessage({ type: msgType, maxSteps: 5 });
+  if (chrome.runtime.lastError) {
+    setLiveStatus({
+      phase: "error",
+      scope: "cleaning",
+      title: "Run failed",
+      detail: chrome.runtime.lastError.message,
+      persist: true,
+    });
+    return;
+  }
+  if (!res?.ok) {
+    setLiveStatus({
+      phase: "error",
+      scope: "cleaning",
+      title: "Run failed",
+      detail: res?.error || "Run failed.",
+      persist: true,
+    });
+    return;
+  }
+  if (res.paused) {
+    void syncLiveStatusFromStorage();
+    return;
+  }
+  if (res.done) {
+    setLiveStatus({
+      phase: "success",
+      scope: "cleaning",
+      title: "Run finished",
+      detail:
+        res.reason === "queue_empty"
+          ? "Queue empty."
+          : res.reason === "pace_wait"
+            ? `Pace wait — retry in ${Math.ceil((res.waitMs || 0) / 1000)}s.`
+            : String(res.reason || "Done."),
+      persist: true,
+    });
+  }
+}
+
+document.getElementById("engage-run-stop")?.addEventListener("click", async () => {
+  await chrome.runtime.sendMessage({ type: "CLIN_ENGAGE_RUN_STOP" });
+  setLiveStatus({
+    phase: "success",
+    scope: "cleaning",
+    title: "Engage run stopped",
+    detail: "Run stopped.",
+    persist: true,
+  });
+});
+
+document.getElementById("removal-run-stop")?.addEventListener("click", async () => {
+  await chrome.runtime.sendMessage({ type: "CLIN_REMOVAL_RUN_STOP" });
+  setLiveStatus({
+    phase: "success",
+    scope: "cleaning",
+    title: "Removal run stopped",
+    detail: "Run stopped.",
+    persist: true,
+  });
+});
+
+document.getElementById("engage-run-start")?.addEventListener("click", () => {
+  void startCleaningRun("engage");
+});
+
+document.getElementById("removal-run-start")?.addEventListener("click", () => {
+  void startCleaningRun("removal");
 });

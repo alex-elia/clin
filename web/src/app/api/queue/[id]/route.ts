@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { actionQueue } from "@/db/schema";
+import { approveRemovalFromQueue } from "@/lib/cleaningRemovalApprove";
 import { queuePatchSchema } from "@/lib/queuePatch";
 
 export const runtime = "nodejs";
@@ -33,6 +34,18 @@ export async function PATCH(
     where: eq(actionQueue.id, id),
   });
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  if (patch.removalDecision === "approve_removal") {
+    await approveRemovalFromQueue(id);
+    const updated = await db.query.actionQueue.findFirst({
+      where: eq(actionQueue.id, id),
+    });
+    return NextResponse.json(updated);
+  }
+
+  if (patch.removalDecision === "keep") {
+    patch.status = "reviewed";
+  }
 
   let status = row.status;
   let reviewedAt = row.reviewedAt ?? null;

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { clinFetch } from "@/lib/clinFetch";
 
 export function TelemetryConsentDialog() {
   const [show, setShow] = useState(false);
@@ -8,7 +9,7 @@ export function TelemetryConsentDialog() {
 
   useEffect(() => {
     void (async () => {
-      const res = await fetch("/api/telemetry/needs-consent");
+      const res = await clinFetch("/api/telemetry/needs-consent");
       const data = await res.json();
       if (data.needed) {
         setShow(true);
