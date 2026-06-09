@@ -10,7 +10,9 @@ const patchSchema = z
     queueBatchSize: z.number().int().optional(),
     minSecondsBetweenProfileOpens: z.number().int().optional(),
     minSecondsBetweenCaptures: z.number().int().optional(),
-    captureMaxPerHour: z.number().int().optional(),
+    minSecondsBetweenListImports: z.number().int().optional(),
+    listImportMaxPerHour: z.number().int().optional(),
+    profileCaptureMaxPerHour: z.number().int().optional(),
     paceJitterPercent: z.number().int().optional(),
   })
   .strict();
@@ -19,7 +21,7 @@ export async function GET() {
   const pace = await getPaceForApi();
   return NextResponse.json({
     pace,
-    note: "Pacing reduces bursty behavior. Manual capture stays human-in-the-loop; optional hygiene automation (Settings) can open profiles from your local queue with the same capture limits.",
+    note: "Pacing reduces bursty behavior. List imports and profile captures use separate hourly budgets and gaps.",
   });
 }
 

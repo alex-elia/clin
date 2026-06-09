@@ -89,11 +89,19 @@ export async function savePaceForm(formData: FormData) {
     queueBatchSize: readInt("queueBatchSize"),
     minSecondsBetweenProfileOpens: readInt("minSecondsBetweenProfileOpens"),
     minSecondsBetweenCaptures: readInt("minSecondsBetweenCaptures"),
-    captureMaxPerHour: readInt("captureMaxPerHour"),
+    minSecondsBetweenListImports: readInt("minSecondsBetweenListImports"),
+    listImportMaxPerHour: readInt("listImportMaxPerHour"),
+    profileCaptureMaxPerHour: readInt("profileCaptureMaxPerHour"),
     paceJitterPercent: readInt("paceJitterPercent"),
   });
   revalidatePath("/settings");
   revalidatePath("/queue");
+}
+
+export async function resetPaceStateForm() {
+  const { resetAllPaceState } = await import("@/lib/pace");
+  await resetAllPaceState();
+  revalidatePath("/settings");
 }
 
 export async function saveAutomationForm(formData: FormData) {

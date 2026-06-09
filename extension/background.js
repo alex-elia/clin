@@ -4,7 +4,10 @@
  */
 
 const DEFAULT_BASE = "http://127.0.0.1:3000";
-const CAPTURE_TIMES_KEY = "clin_capture_timestamps_ms";
+const LIST_IMPORT_TIMES_KEY = "clin_list_import_timestamps_ms";
+const PROFILE_CAPTURE_TIMES_KEY = "clin_profile_capture_timestamps_ms";
+/** @deprecated migrated to split keys on first read */
+const LEGACY_CAPTURE_TIMES_KEY = "clin_capture_timestamps_ms";
 const LAST_ERROR_KEY = "clin_last_pace_message";
 const LAST_OUTREACH_MEMBER_KEY = "clinLastOutreachMember";
 const OUTREACH_MEMBER_CONTEXT_TTL_MS = 45 * 60 * 1000;
@@ -99,35 +102,83 @@ function pruneHour(timestamps, now) {
   return timestamps.filter((t) => t > cutoff);
 }
 
-/**
- * @returns {{ ok: true, pruned: number[] } | { ok: false, kind: 'hourly', message: string } | { ok: false, kind: 'gap', message: string, waitSeconds: number, waitMs: number }}
- */
-async function checkPaceForCapture(base) {
-  const pace = await fetchPace(base);
-  const maxPerHour = pace?.captureMaxPerHour ?? 40;
-  const minGapSec = pace?.minSecondsBetweenCaptures ?? 45;
-  const minGapMsFallback = minGapSec * 1000;
-  const minGapMs =
-    typeof pace?.captureGapMsRequired === "number" &&
-    Number.isFinite(pace.captureGapMsRequired) &&
-    pace.captureGapMsRequired > 0
-      ? pace.captureGapMsRequired
-      : minGapMsFallback;
-
-  const { [CAPTURE_TIMES_KEY]: raw } = await chrome.storage.local.get(
-    CAPTURE_TIMES_KEY,
-  );
+async function loadPaceTimestamps(storageKey) {
+  const stored = await chrome.storage.local.get([
+    storageKey,
+    LEGACY_CAPTURE_TIMES_KEY,
+  ]);
+  let raw = stored[storageKey];
+  if (!Array.isArray(raw) || raw.length === 0) {
+    const legacy = stored[LEGACY_CAPTURE_TIMES_KEY];
+    if (Array.isArray(legacy) && legacy.length > 0) {
+      raw = legacy;
+      await chrome.storage.local.set({ [storageKey]: legacy });
+      await chrome.storage.local.remove(LEGACY_CAPTURE_TIMES_KEY);
+    }
+  }
   const now = Date.now();
   const list = Array.isArray(raw)
     ? raw.map(Number).filter((n) => Number.isFinite(n))
     : [];
-  const pruned = pruneHour(list, now);
+  return pruneHour(list, now);
+}
+
+function profileMaxPerHour(pace) {
+  return (
+    pace?.profileCaptureMaxPerHour ??
+    pace?.captureMaxPerHour ??
+    40
+  );
+}
+
+function listMaxPerHour(pace) {
+  return pace?.listImportMaxPerHour ?? 120;
+}
+
+function profileGapMs(pace) {
+  const minGapSec = pace?.minSecondsBetweenCaptures ?? 40;
+  const minGapMsFallback = minGapSec * 1000;
+  const rolled =
+    pace?.profileCaptureGapMsRequired ?? pace?.captureGapMsRequired;
+  if (
+    typeof rolled === "number" &&
+    Number.isFinite(rolled) &&
+    rolled > 0
+  ) {
+    return Math.max(rolled, minGapMsFallback);
+  }
+  return minGapMsFallback;
+}
+
+function listGapMs(pace) {
+  const minGapSec = pace?.minSecondsBetweenListImports ?? 10;
+  const minGapMsFallback = minGapSec * 1000;
+  const rolled = pace?.listImportGapMsRequired;
+  if (
+    typeof rolled === "number" &&
+    Number.isFinite(rolled) &&
+    rolled > 0
+  ) {
+    return Math.max(rolled, minGapMsFallback);
+  }
+  return minGapMsFallback;
+}
+
+/**
+ * @returns {{ ok: true, pruned: number[] } | { ok: false, kind: 'hourly', message: string } | { ok: false, kind: 'gap', message: string, waitSeconds: number, waitMs: number }}
+ */
+async function checkPaceForProfileCapture(base) {
+  const pace = await fetchPace(base);
+  const maxPerHour = profileMaxPerHour(pace);
+  const minGapMs = profileGapMs(pace);
+  const now = Date.now();
+  const pruned = await loadPaceTimestamps(PROFILE_CAPTURE_TIMES_KEY);
 
   if (pruned.length >= maxPerHour) {
     return {
       ok: false,
       kind: "hourly",
-      message: `Client pace: ${maxPerHour} capture rows max per rolling hour (matches server). Take a break or raise the limit in Clin /settings.`,
+      message: `Client pace: ${maxPerHour} profile captures max per rolling hour (list imports use a separate budget). Raise limit in Clin /settings or wait.`,
     };
   }
 
@@ -140,31 +191,107 @@ async function checkPaceForCapture(base) {
       kind: "gap",
       waitMs,
       waitSeconds,
-      message: `Client pace: wait ${waitSeconds}s before the next import (humanized interval, matches server).`,
+      message: `Client pace: wait ${waitSeconds}s before the next profile capture (humanized interval, matches server).`,
     };
   }
 
   return { ok: true, pruned };
 }
 
-/** Background-only: sleep until min gap passes (hygiene, pending-self). Hourly cap still throws. */
-async function waitForPaceGapAllowCapture(base) {
+/**
+ * @returns {{ ok: true, pruned: number[] } | { ok: false, kind: 'hourly', message: string } | { ok: false, kind: 'gap', message: string, waitSeconds: number, waitMs: number }}
+ */
+async function checkPaceForListImport(base) {
+  const pace = await fetchPace(base);
+  const maxPerHour = listMaxPerHour(pace);
+  const minGapMs = listGapMs(pace);
+  const now = Date.now();
+  const pruned = await loadPaceTimestamps(LIST_IMPORT_TIMES_KEY);
+
+  if (pruned.length >= maxPerHour) {
+    return {
+      ok: false,
+      kind: "hourly",
+      message: `Client pace: ${maxPerHour} list rows max per rolling hour (profile captures use a separate budget). Raise limit in Clin /settings or wait.`,
+    };
+  }
+
+  const last = pruned.length ? Math.max(...pruned) : 0;
+  if (last && now - last < minGapMs) {
+    const waitMs = Math.max(0, Math.ceil(minGapMs - (now - last)));
+    const waitSeconds = Math.max(1, Math.ceil(waitMs / 1000));
+    return {
+      ok: false,
+      kind: "gap",
+      waitMs,
+      waitSeconds,
+      message: `Client pace: wait ${waitSeconds}s before the next list import (humanized interval, matches server).`,
+    };
+  }
+
+  return { ok: true, pruned };
+}
+
+/** Background-only: sleep until min profile gap passes. Hourly cap still throws. */
+async function waitForProfileCaptureGap(base) {
   for (;;) {
-    const r = await checkPaceForCapture(base);
+    const r = await checkPaceForProfileCapture(base);
     if (r.ok) return r.pruned;
     if (r.kind === "hourly") throw new Error(r.message);
     await sleep(r.waitMs + 80);
   }
 }
 
-async function recordBatchCaptureSuccess(pruned, importedCount) {
+/** Background-only: sleep until min list import gap passes. Hourly cap still throws. */
+async function waitForListImportGap(base) {
+  for (;;) {
+    const r = await checkPaceForListImport(base);
+    if (r.ok) return r.pruned;
+    if (r.kind === "hourly") throw new Error(r.message);
+    await sleep(r.waitMs + 80);
+  }
+}
+
+async function recordProfileCaptureSuccess(pruned) {
+  const now = Date.now();
+  await chrome.storage.local.set({
+    [PROFILE_CAPTURE_TIMES_KEY]: pruneHour([...pruned, now], now),
+  });
+}
+
+async function recordListImportSuccess(pruned, importedCount) {
   const n = Math.max(0, Math.min(Number(importedCount) || 0, 500));
   const now = Date.now();
   const stamps = Array.from({ length: n }, () => now);
   await chrome.storage.local.set({
-    [CAPTURE_TIMES_KEY]: pruneHour([...pruned, ...stamps], now),
+    [LIST_IMPORT_TIMES_KEY]: pruneHour([...pruned, ...stamps], now),
   });
 }
+
+async function resetExtensionPaceCounters() {
+  await chrome.storage.local.remove([
+    LIST_IMPORT_TIMES_KEY,
+    PROFILE_CAPTURE_TIMES_KEY,
+    LEGACY_CAPTURE_TIMES_KEY,
+    LAST_ERROR_KEY,
+  ]);
+}
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== "CLIN_RESET_PACE_COUNTERS") return;
+  (async () => {
+    try {
+      await resetExtensionPaceCounters();
+      sendResponse({ ok: true });
+    } catch (e) {
+      sendResponse({
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  })();
+  return true;
+});
 
 const CAMPAIGN_CTX_TTL_MS = 30_000;
 let campaignContextFetchedAt = 0;
@@ -4187,7 +4314,7 @@ async function tryAutoCaptureMessagingThread(tabId, root) {
     }
     let pruned;
     try {
-      pruned = await waitForPaceGapAllowCapture(root);
+      pruned = await waitForProfileCaptureGap(root);
     } catch {
       return { captured: false };
     }
@@ -4225,7 +4352,7 @@ async function postMessagingCapturePayload(root, pruned, msgPayload) {
   if (!res.ok) {
     return { ok: false, error: json?.error || text || `HTTP ${res.status}` };
   }
-  await recordBatchCaptureSuccess(pruned, 1);
+  await recordProfileCaptureSuccess(pruned);
   return { ok: true, json };
 }
 
@@ -4249,7 +4376,7 @@ async function tryCaptureMessagingAfterProfile(tabId, root, profileUrl) {
   if (hasMessages(msgPayload)) {
     let pruned;
     try {
-      pruned = await waitForPaceGapAllowCapture(root);
+      pruned = await waitForProfileCaptureGap(root);
     } catch (e) {
       return { captured: false, error: e instanceof Error ? e.message : String(e) };
     }
@@ -4305,7 +4432,7 @@ async function tryCaptureMessagingAfterProfile(tabId, root, profileUrl) {
 
   let pruned2;
   try {
-    pruned2 = await waitForPaceGapAllowCapture(root);
+    pruned2 = await waitForProfileCaptureGap(root);
   } catch (e) {
     return { captured: false, error: e instanceof Error ? e.message : String(e) };
   }
@@ -4357,7 +4484,7 @@ async function postPostsCapturePayload(root, pruned, postsPayload, chainOpts = {
   if (!res.ok) {
     return { ok: false, error: json?.error || text || `HTTP ${res.status}` };
   }
-  await recordBatchCaptureSuccess(pruned, 1);
+  await recordProfileCaptureSuccess(pruned);
   return { ok: true, json };
 }
 
@@ -4401,7 +4528,7 @@ async function tryCapturePostsAfterProfile(tabId, root, profileUrl) {
 
   let pruned;
   try {
-    pruned = await waitForPaceGapAllowCapture(root);
+    pruned = await waitForProfileCaptureGap(root);
   } catch (e) {
     return { captured: false, error: e instanceof Error ? e.message : String(e) };
   }
@@ -4470,7 +4597,7 @@ async function postProfileCaptureForTab(tabId, root, pruned, chainOpts = {}) {
       error: json?.error || text || `HTTP ${res.status}`,
     };
   }
-  await recordBatchCaptureSuccess(pruned, 1);
+  await recordProfileCaptureSuccess(pruned);
   await chrome.storage.local.remove(LAST_ERROR_KEY);
   return { ok: true, json };
 }
@@ -4502,7 +4629,7 @@ async function importConnectionsListRound(tabId, base, round, postScrollMs, opts
   }
   let pruned;
   try {
-    pruned = await waitForPaceGapAllowCapture(base);
+      pruned = await waitForListImportGap(base);
   } catch (e) {
     return {
       ok: false,
@@ -4545,7 +4672,7 @@ async function importConnectionsListRound(tabId, base, round, postScrollMs, opts
     );
     await sleep(retrySec * 1000);
     try {
-      pruned = await waitForPaceGapAllowCapture(base);
+      pruned = await waitForListImportGap(base);
     } catch (e2) {
       return {
         ok: false,
@@ -4573,7 +4700,7 @@ async function importConnectionsListRound(tabId, base, round, postScrollMs, opts
       imported: 0,
     };
   }
-  await recordBatchCaptureSuccess(pruned, json.imported ?? 0);
+  await recordListImportSuccess(pruned, json.imported ?? 0);
   await chrome.storage.local.remove(LAST_ERROR_KEY);
   return {
     ok: true,
@@ -4627,7 +4754,7 @@ async function enrichOneProfileStep(tabId, base, firstOpen, opts = {}) {
   await sleep(2000 + Math.floor(Math.random() * 3000));
   let pruned;
   try {
-    pruned = await waitForPaceGapAllowCapture(base);
+    pruned = await waitForProfileCaptureGap(base);
   } catch (e) {
     await postAutomationAck(base, next.contact.id, "error");
     return {
@@ -4902,7 +5029,7 @@ async function captureOneCampaignMemberProfileStep(tabId, base, opts = {}) {
   await sleep(1200 + Math.floor(Math.random() * 1400));
   let pruned;
   try {
-    pruned = await waitForPaceGapAllowCapture(base);
+    pruned = await waitForProfileCaptureGap(base);
   } catch (e) {
     return {
       ok: false,
@@ -4966,7 +5093,7 @@ async function pollPendingSelfCapture() {
   try {
     let pruned;
     try {
-      pruned = await waitForPaceGapAllowCapture(base);
+      pruned = await waitForProfileCaptureGap(base);
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
       await chrome.storage.local.set({ [LAST_ERROR_KEY]: err });
@@ -5083,7 +5210,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
       }
 
-      const paceCheck = await checkPaceForCapture(base);
+      const runListCaptureEarly =
+        scope === "connections" ||
+        (scope === "auto" && isConnectionsListPageUrl(tab.url));
+      const paceCheck = runListCaptureEarly
+        ? await checkPaceForListImport(base)
+        : await checkPaceForProfileCapture(base);
       if (!paceCheck.ok) {
         await publishUserNotice(paceCheck.message, {
           phase: paceCheck.kind === "gap" ? "waiting" : "error",
@@ -5185,7 +5317,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           });
           return;
         }
-        await recordBatchCaptureSuccess(pruned, 1);
+        await recordProfileCaptureSuccess(pruned);
         await chrome.storage.local.remove(LAST_ERROR_KEY);
         sendResponse({
           ok: true,
@@ -5241,7 +5373,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           });
           return;
         }
-        await recordBatchCaptureSuccess(pruned, 1);
+        await recordProfileCaptureSuccess(pruned);
         await chrome.storage.local.remove(LAST_ERROR_KEY);
         sendResponse({
           ok: true,
@@ -5297,7 +5429,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         }
 
-        await recordBatchCaptureSuccess(pruned, json.imported);
+        await recordListImportSuccess(pruned, json.imported);
         await chrome.storage.local.remove(LAST_ERROR_KEY);
 
         const automation = await fetchAutomationSettings(root);
@@ -5393,7 +5525,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
       }
 
-      await recordBatchCaptureSuccess(pruned, 1);
+      await recordProfileCaptureSuccess(pruned);
       await chrome.storage.local.remove(LAST_ERROR_KEY);
       const scrapeFp = result.fieldPresence;
       sendResponse({
@@ -5435,7 +5567,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       const base = await getApiBase();
       let pruned;
       try {
-        pruned = await waitForPaceGapAllowCapture(base);
+        pruned = await waitForProfileCaptureGap(base);
       } catch (e) {
         const err = e instanceof Error ? e.message : String(e);
         await publishUserNotice(err, { scope: "capture" });
@@ -5501,7 +5633,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
       }
 
-      await recordBatchCaptureSuccess(pruned, 1);
+      await recordProfileCaptureSuccess(pruned);
       await chrome.storage.local.remove(LAST_ERROR_KEY);
       sendResponse({ ok: true, data: json });
     } catch (e) {
@@ -5577,7 +5709,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
       let pruned;
       try {
-        pruned = await waitForPaceGapAllowCapture(base);
+        pruned = await waitForListImportGap(base);
       } catch (e) {
         const err = e instanceof Error ? e.message : String(e);
         await publishUserNotice(err, { scope: "pipeline" });
@@ -5623,7 +5755,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
       if (res.status === 429) {
         const errMsg = String(json?.error || text || "");
-        const hourly = /rolling hourly|hourly capture limit|max per rolling hour/i.test(
+        const hourly = /rolling hourly|hourly .* limit|max per rolling hour|list import limit/i.test(
           errMsg,
         );
         if (hourly) {
@@ -5631,7 +5763,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             ok: false,
             error:
               json?.error ||
-              "Rolling hourly capture limit — raise cap in Clin /settings or wait.",
+              "Rolling hourly list import limit — raise cap in Clin /settings or wait.",
             stopSprint: true,
           });
           return;
@@ -5642,7 +5774,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         );
         await sleep(retrySec * 1000);
         try {
-          pruned = await waitForPaceGapAllowCapture(base);
+          pruned = await waitForListImportGap(base);
         } catch (e2) {
           const err = e2 instanceof Error ? e2.message : String(e2);
           sendResponse({ ok: false, error: err, stopSprint: true });
@@ -5666,7 +5798,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
       }
 
-      await recordBatchCaptureSuccess(pruned, json.imported);
+      await recordListImportSuccess(pruned, json.imported);
       await chrome.storage.local.remove(LAST_ERROR_KEY);
       sendResponse({ ok: true, data: json, round });
     } catch (e) {

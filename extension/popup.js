@@ -571,6 +571,51 @@ document.getElementById("ping").addEventListener("click", async () => {
   );
 });
 
+document.getElementById("reset-pace")?.addEventListener("click", () => {
+  void (async () => {
+    setStatus("Resetting pace counters…");
+    const base = getBase();
+    const extReset = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "CLIN_RESET_PACE_COUNTERS" }, (resp) => {
+        if (chrome.runtime.lastError) {
+          resolve({
+            ok: false,
+            error: chrome.runtime.lastError.message,
+          });
+          return;
+        }
+        resolve(resp ?? { ok: false, error: "No response from extension." });
+      });
+    });
+    let serverNote = "";
+    try {
+      const res = await fetch(`${base.replace(/\/$/, "")}/api/settings/reset-pace`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: "all" }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json?.usage) {
+        const u = json.usage;
+        serverNote = `\nServer: list ${u.listImportsLastHour}/${u.listSlotsRemaining + u.listImportsLastHour} used · profile ${u.profileCapturesLastHour}/${u.profileSlotsRemaining + u.profileCapturesLastHour} used.`;
+      } else if (!res.ok) {
+        serverNote = `\nServer reset skipped: ${json?.error || res.status}.`;
+      }
+    } catch (e) {
+      serverNote = `\nServer reset skipped: ${e instanceof Error ? e.message : String(e)}`;
+    }
+    if (!extReset.ok) {
+      setStatus((extReset.error || "Extension reset failed.") + serverNote, "err");
+      return;
+    }
+    setStatus(
+      "Pace counters reset — extension and server. You can capture again." +
+        serverNote,
+      "ok",
+    );
+  })();
+});
+
 document.getElementById("open-next-profile-capture")?.addEventListener("click", () => {
   const btn = document.getElementById("open-next-profile-capture");
   const url = btn?.dataset?.profileUrl;
@@ -661,7 +706,7 @@ function applyCaptureSuccess(resp) {
     setStatus(
       `List import: ${d.imported} people (${d.created} new, ${d.updated} updated).` +
         (d.skippedDueToHourlyCap
-          ? `\nSkipped (hourly cap): ${d.skippedDueToHourlyCap} — raise limit in /settings or wait.`
+          ? `\nSkipped (list hourly cap): ${d.skippedDueToHourlyCap} — raise list limit in Clin /settings or wait.`
           : "") +
         `\nDeduped from ${d.receivedCount} links (${d.dedupedProfileCount} profiles).` +
         enrichNote +
@@ -759,7 +804,7 @@ async function runCaptureFlow(scope = "auto") {
     let sec = resp.paceWaitSeconds;
     const paceDetail =
       resp.error ||
-      `Client pace: wait ${sec}s before the next import (humanized interval, matches server).`;
+      `Client pace: wait ${sec}s before the next capture (humanized interval, matches server).`;
     setLiveStatus({
       phase: "waiting",
       scope: "capture",

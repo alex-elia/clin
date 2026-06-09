@@ -28,7 +28,7 @@ Click **Capture LinkedIn tab** on a profile (or use **list sprint** when allowed
 
 ## Pacing
 
-The background script calls `GET /api/settings` and applies the same **rolling hourly cap** and **minimum seconds between captures** as the server. Tune limits in the dashboard under **Settings → Pacing**.
+The background script calls `GET /api/settings` and applies the same pacing as the server: **list imports** (shallow rows, faster gaps) and **profile captures** (full visits, separate hourly budget). Tune both in **Settings → Pacing**.
 
 ## Outreach handoff
 
