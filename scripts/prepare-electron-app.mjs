@@ -22,7 +22,9 @@ async function copyRequired(src, dst, label) {
   if (!(await exists(src))) {
     throw new Error(`[desktop] Missing ${label}: ${src}`);
   }
-  await fs.cp(src, dst, { recursive: true, force: true });
+  // Next standalone traces native deps as symlinks to web/node_modules; macOS
+  // codesign rejects bundle symlinks that point outside the .app.
+  await fs.cp(src, dst, { recursive: true, force: true, dereference: true });
 }
 
 async function main() {

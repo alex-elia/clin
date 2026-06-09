@@ -33,6 +33,7 @@
     "lint-staged": "^15.5.2"
   },
   "build": {
+    "afterPack": "./scripts/electron-after-pack.cjs",
     "publish": null,
     "appId": "com.clin.desktop",
     "productName": "Clin",
