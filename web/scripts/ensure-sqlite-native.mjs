@@ -2,11 +2,10 @@
  * better-sqlite3 must match the Node binary that runs `next dev`.
  * Native code loads only on `new Database()` — not on `require()` alone.
  */
-import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { envWithNodeFirst, resolveNpmCli } from "./lib/node-env.mjs";
+import { envWithNodeFirst, spawnNpm } from "./lib/node-env.mjs";
 import { reexecIfNeeded } from "./lib/resolve-dev-node.mjs";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -39,19 +38,30 @@ console.warn(
   `[clin] better-sqlite3 not built for Node ${process.version} (modules ${modules}). Rebuilding…`,
 );
 
-const npmCli = resolveNpmCli();
-const rebuildArgs = ["rebuild", "better-sqlite3"];
-const r = npmCli
-  ? spawnSync(process.execPath, [npmCli, ...rebuildArgs], {
-      cwd: root,
-      stdio: "inherit",
-      env: envWithNodeFirst({ npm_config_build_from_source: "true" }),
-    })
-  : spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", rebuildArgs, {
-      cwd: root,
-      stdio: "inherit",
-      env: envWithNodeFirst({ npm_config_build_from_source: "true" }),
-    });
+function runRebuild(fromSource) {
+  const env = envWithNodeFirst(
+    fromSource ? { npm_config_build_from_source: "true" } : {},
+  );
+  return spawnNpm(["rebuild", "better-sqlite3"], {
+    cwd: root,
+    env,
+    stdio: "inherit",
+  });
+}
+
+let r = runRebuild(false);
+if (r.error) {
+  console.error(`[clin] npm rebuild failed to start: ${r.error.message}`);
+  process.exit(1);
+}
+if (r.status !== 0) {
+  console.warn("[clin] Prebuilt binary unavailable; compiling from source…");
+  r = runRebuild(true);
+  if (r.error) {
+    console.error(`[clin] npm rebuild failed to start: ${r.error.message}`);
+    process.exit(1);
+  }
+}
 
 if (r.status !== 0) process.exit(r.status ?? 1);
 if (!tryLoad()) {

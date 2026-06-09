@@ -1,36 +1,48 @@
 import { randomInt } from "node:crypto";
-import { eq, inArray } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, ne } from "drizzle-orm";
 import { getDb } from "@/db";
-import { appSettings } from "@/db/schema";
+import { appSettings, captureSessions } from "@/db/schema";
 
 export const PACE_KEYS = {
   queueBatchSize: "pace.queue_batch_size",
   minSecondsBetweenProfileOpens: "pace.min_seconds_between_profile_opens",
   minSecondsBetweenCaptures: "pace.min_seconds_between_captures",
+  minSecondsBetweenListImports: "pace.min_seconds_between_list_imports",
+  /** Legacy key — migrated to profileCaptureMaxPerHour when unset. */
   captureMaxPerHour: "pace.capture_max_per_hour",
+  listImportMaxPerHour: "pace.list_import_max_per_hour",
+  profileCaptureMaxPerHour: "pace.profile_capture_max_per_hour",
   paceJitterPercent: "pace.jitter_percent",
-  /** Milliseconds the client must wait after the last successful capture (min + random extra). */
+  /** Milliseconds the client must wait after the last successful profile capture. */
   afterCaptureGapMs: "pace.after_capture_gap_ms",
+  /** Milliseconds the client must wait after the last successful list import round. */
+  afterListImportGapMs: "pace.after_list_import_gap_ms",
+  /** ISO timestamp — hourly caps ignore capture_sessions before this (local reset). */
+  hourlyCountFloorAt: "pace.hourly_count_floor_at",
 } as const;
 
 export type PaceSettings = {
   queueBatchSize: number;
   minSecondsBetweenProfileOpens: number;
+  /** Minimum spacing between profile / messaging / posts captures. */
   minSecondsBetweenCaptures: number;
-  captureMaxPerHour: number;
+  /** Minimum spacing between connections list page imports. */
+  minSecondsBetweenListImports: number;
+  /** Rolling 1h cap on shallow list rows (pageType connections). */
+  listImportMaxPerHour: number;
+  /** Rolling 1h cap on profile visits and deep captures. */
+  profileCaptureMaxPerHour: number;
   /** 0 = fixed minimums only; otherwise each interval adds 0–N% random extra on top of the minimum. */
   paceJitterPercent: number;
 };
 
 export const PACE_DEFAULTS: PaceSettings = {
-  /** How many queue items to surface at once before “next batch”. */
   queueBatchSize: 5,
-  /** Minimum wait between opening profile links from the dashboard (you still click). */
   minSecondsBetweenProfileOpens: 60,
-  /** Minimum spacing between successful extension captures (client + optional server advisory). */
-  minSecondsBetweenCaptures: 45,
-  /** Rolling 1h cap on capture rows (server); list import counts one row per person. */
-  captureMaxPerHour: 40,
+  minSecondsBetweenCaptures: 40,
+  minSecondsBetweenListImports: 10,
+  listImportMaxPerHour: 120,
+  profileCaptureMaxPerHour: 40,
   paceJitterPercent: 40,
 };
 
@@ -38,7 +50,9 @@ const BOUNDS: Record<keyof PaceSettings, { min: number; max: number }> = {
   queueBatchSize: { min: 1, max: 25 },
   minSecondsBetweenProfileOpens: { min: 15, max: 600 },
   minSecondsBetweenCaptures: { min: 20, max: 600 },
-  captureMaxPerHour: { min: 1, max: 40 },
+  minSecondsBetweenListImports: { min: 5, max: 120 },
+  listImportMaxPerHour: { min: 10, max: 200 },
+  profileCaptureMaxPerHour: { min: 1, max: 60 },
   paceJitterPercent: { min: 0, max: 100 },
 };
 
@@ -64,6 +78,12 @@ export async function getPaceSettings(): Promise<PaceSettings> {
   });
   const map = new Map(rows.map((r) => [r.key, r.value]));
 
+  const legacyProfileCap = parseStored(
+    map.get(PACE_KEYS.captureMaxPerHour),
+    PACE_DEFAULTS.profileCaptureMaxPerHour,
+  );
+  const profileCapStored = map.get(PACE_KEYS.profileCaptureMaxPerHour);
+
   return {
     queueBatchSize: clampKey(
       "queueBatchSize",
@@ -83,12 +103,25 @@ export async function getPaceSettings(): Promise<PaceSettings> {
         PACE_DEFAULTS.minSecondsBetweenCaptures,
       ),
     ),
-    captureMaxPerHour: clampKey(
-      "captureMaxPerHour",
+    minSecondsBetweenListImports: clampKey(
+      "minSecondsBetweenListImports",
       parseStored(
-        map.get(PACE_KEYS.captureMaxPerHour),
-        PACE_DEFAULTS.captureMaxPerHour,
+        map.get(PACE_KEYS.minSecondsBetweenListImports),
+        PACE_DEFAULTS.minSecondsBetweenListImports,
       ),
+    ),
+    listImportMaxPerHour: clampKey(
+      "listImportMaxPerHour",
+      parseStored(
+        map.get(PACE_KEYS.listImportMaxPerHour),
+        PACE_DEFAULTS.listImportMaxPerHour,
+      ),
+    ),
+    profileCaptureMaxPerHour: clampKey(
+      "profileCaptureMaxPerHour",
+      profileCapStored !== undefined
+        ? parseStored(profileCapStored, PACE_DEFAULTS.profileCaptureMaxPerHour)
+        : legacyProfileCap,
     ),
     paceJitterPercent: clampKey(
       "paceJitterPercent",
@@ -111,26 +144,14 @@ export async function updatePaceSettings(patch: Partial<PaceSettings>): Promise<
     queueBatchSize: merged.queueBatchSize!,
     minSecondsBetweenProfileOpens: merged.minSecondsBetweenProfileOpens!,
     minSecondsBetweenCaptures: merged.minSecondsBetweenCaptures!,
-    captureMaxPerHour: merged.captureMaxPerHour!,
+    minSecondsBetweenListImports: merged.minSecondsBetweenListImports!,
+    listImportMaxPerHour: merged.listImportMaxPerHour!,
+    profileCaptureMaxPerHour: merged.profileCaptureMaxPerHour!,
     paceJitterPercent: merged.paceJitterPercent!,
   };
-  next.queueBatchSize = clampKey("queueBatchSize", next.queueBatchSize);
-  next.minSecondsBetweenProfileOpens = clampKey(
-    "minSecondsBetweenProfileOpens",
-    next.minSecondsBetweenProfileOpens,
-  );
-  next.captureMaxPerHour = clampKey(
-    "captureMaxPerHour",
-    next.captureMaxPerHour,
-  );
-  next.minSecondsBetweenCaptures = clampKey(
-    "minSecondsBetweenCaptures",
-    next.minSecondsBetweenCaptures,
-  );
-  next.paceJitterPercent = clampKey(
-    "paceJitterPercent",
-    next.paceJitterPercent,
-  );
+  (Object.keys(next) as (keyof PaceSettings)[]).forEach((k) => {
+    next[k] = clampKey(k, next[k]);
+  });
 
   const db = getDb();
   const now = new Date();
@@ -144,7 +165,15 @@ export async function updatePaceSettings(patch: Partial<PaceSettings>): Promise<
       PACE_KEYS.minSecondsBetweenCaptures,
       String(next.minSecondsBetweenCaptures),
     ],
-    [PACE_KEYS.captureMaxPerHour, String(next.captureMaxPerHour)],
+    [
+      PACE_KEYS.minSecondsBetweenListImports,
+      String(next.minSecondsBetweenListImports),
+    ],
+    [PACE_KEYS.listImportMaxPerHour, String(next.listImportMaxPerHour)],
+    [
+      PACE_KEYS.profileCaptureMaxPerHour,
+      String(next.profileCaptureMaxPerHour),
+    ],
     [PACE_KEYS.paceJitterPercent, String(next.paceJitterPercent)],
   ];
 
@@ -192,20 +221,42 @@ async function upsertAppSetting(key: string, value: string) {
   }
 }
 
-/**
- * Gap enforced before the next capture may ingest. Uses the value rolled after the last success,
- * clamped to the current minimum so raising the minimum in settings still applies.
- */
-export async function captureRequiredGapMs(pace: PaceSettings): Promise<number> {
-  const minMs = pace.minSecondsBetweenCaptures * 1000;
+async function requiredGapMs(
+  pace: PaceSettings,
+  gapKey: string,
+  minSeconds: number,
+): Promise<number> {
+  const minMs = minSeconds * 1000;
   const db = getDb();
   const row = await db.query.appSettings.findFirst({
-    where: eq(appSettings.key, PACE_KEYS.afterCaptureGapMs),
+    where: eq(appSettings.key, gapKey),
   });
   const stored = row?.value !== undefined ? Number(row.value) : NaN;
   const rolled =
     Number.isFinite(stored) && stored > 0 ? stored : minMs;
   return Math.max(rolled, minMs);
+}
+
+/**
+ * Gap enforced before the next profile capture may ingest.
+ */
+export async function captureRequiredGapMs(pace: PaceSettings): Promise<number> {
+  return requiredGapMs(
+    pace,
+    PACE_KEYS.afterCaptureGapMs,
+    pace.minSecondsBetweenCaptures,
+  );
+}
+
+/**
+ * Gap enforced before the next list import round may ingest.
+ */
+export async function listImportRequiredGapMs(pace: PaceSettings): Promise<number> {
+  return requiredGapMs(
+    pace,
+    PACE_KEYS.afterListImportGapMs,
+    pace.minSecondsBetweenListImports,
+  );
 }
 
 export async function rollCaptureGapAfterSuccess(pace: PaceSettings): Promise<void> {
@@ -217,10 +268,146 @@ export async function rollCaptureGapAfterSuccess(pace: PaceSettings): Promise<vo
   );
 }
 
+export async function rollListImportGapAfterSuccess(pace: PaceSettings): Promise<void> {
+  const minMs = pace.minSecondsBetweenListImports * 1000;
+  const gap = nextRandomizedGapMs(minMs, pace.paceJitterPercent);
+  await upsertAppSetting(
+    PACE_KEYS.afterListImportGapMs,
+    String(Math.max(gap, minMs)),
+  );
+}
+
+const hourAgoDate = () => new Date(Date.now() - 60 * 60 * 1000);
+
+async function hourlyCountSince(): Promise<Date> {
+  const hourAgo = hourAgoDate();
+  const db = getDb();
+  const row = await db.query.appSettings.findFirst({
+    where: eq(appSettings.key, PACE_KEYS.hourlyCountFloorAt),
+  });
+  if (!row?.value) return hourAgo;
+  const floor = new Date(row.value);
+  if (Number.isNaN(floor.getTime())) return hourAgo;
+  return floor > hourAgo ? floor : hourAgo;
+}
+
+export async function countHourlyListImports(): Promise<number> {
+  const db = getDb();
+  const since = await hourlyCountSince();
+  const [row] = await db
+    .select({ n: count() })
+    .from(captureSessions)
+    .where(
+      and(
+        gte(captureSessions.capturedAt, since),
+        eq(captureSessions.pageType, "connections"),
+      ),
+    );
+  return row?.n ?? 0;
+}
+
+export async function countHourlyProfileCaptures(): Promise<number> {
+  const db = getDb();
+  const since = await hourlyCountSince();
+  const [row] = await db
+    .select({ n: count() })
+    .from(captureSessions)
+    .where(
+      and(
+        gte(captureSessions.capturedAt, since),
+        ne(captureSessions.pageType, "connections"),
+      ),
+    );
+  return row?.n ?? 0;
+}
+
+export async function latestListImportAt(): Promise<Date | null> {
+  const db = getDb();
+  const [row] = await db
+    .select({ capturedAt: captureSessions.capturedAt })
+    .from(captureSessions)
+    .where(eq(captureSessions.pageType, "connections"))
+    .orderBy(desc(captureSessions.capturedAt))
+    .limit(1);
+  return row?.capturedAt ?? null;
+}
+
+export async function latestProfileCaptureAt(): Promise<Date | null> {
+  const db = getDb();
+  const [row] = await db
+    .select({ capturedAt: captureSessions.capturedAt })
+    .from(captureSessions)
+    .where(ne(captureSessions.pageType, "connections"))
+    .orderBy(desc(captureSessions.capturedAt))
+    .limit(1);
+  return row?.capturedAt ?? null;
+}
+
 export async function getPaceForApi(): Promise<
-  PaceSettings & { captureGapMsRequired: number }
+  PaceSettings & {
+    captureGapMsRequired: number;
+    listImportGapMsRequired: number;
+    profileCaptureGapMsRequired: number;
+  }
 > {
   const pace = await getPaceSettings();
   const captureGapMsRequired = await captureRequiredGapMs(pace);
-  return { ...pace, captureGapMsRequired };
+  const listImportGapMsRequired = await listImportRequiredGapMs(pace);
+  return {
+    ...pace,
+    captureGapMsRequired,
+    listImportGapMsRequired,
+    profileCaptureGapMsRequired: captureGapMsRequired,
+  };
+}
+
+export type PaceUsageSnapshot = {
+  listImportsLastHour: number;
+  profileCapturesLastHour: number;
+  listSlotsRemaining: number;
+  profileSlotsRemaining: number;
+};
+
+export async function getPaceUsage(): Promise<PaceUsageSnapshot> {
+  const pace = await getPaceSettings();
+  const listImportsLastHour = await countHourlyListImports();
+  const profileCapturesLastHour = await countHourlyProfileCaptures();
+  return {
+    listImportsLastHour,
+    profileCapturesLastHour,
+    listSlotsRemaining: Math.max(
+      0,
+      pace.listImportMaxPerHour - listImportsLastHour,
+    ),
+    profileSlotsRemaining: Math.max(
+      0,
+      pace.profileCaptureMaxPerHour - profileCapturesLastHour,
+    ),
+  };
+}
+
+/** Clears rolled gap timers so the next capture/import is not blocked by a wait. */
+export async function resetPaceGapTimers(): Promise<void> {
+  const db = getDb();
+  await db
+    .delete(appSettings)
+    .where(
+      inArray(appSettings.key, [
+        PACE_KEYS.afterCaptureGapMs,
+        PACE_KEYS.afterListImportGapMs,
+      ]),
+    );
+}
+
+/** Hourly caps start counting from now (capture history is kept). */
+export async function resetPaceHourlyCounters(): Promise<void> {
+  await upsertAppSetting(
+    PACE_KEYS.hourlyCountFloorAt,
+    new Date().toISOString(),
+  );
+}
+
+export async function resetAllPaceState(): Promise<void> {
+  await resetPaceGapTimers();
+  await resetPaceHourlyCounters();
 }

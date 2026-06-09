@@ -112,19 +112,32 @@ export function QueueActions({
     setVisible(Math.min(Math.max(1, batchSize), Math.max(items.length, 1)));
   }, [items, batchSize]);
 
-  async function patch(id: string, status: string) {
+  async function patch(
+    id: string,
+    body: Record<string, string>,
+  ) {
     setBusy(id);
     try {
       const res = await fetch(`/api/queue/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(await res.text());
       router.refresh();
     } finally {
       setBusy(null);
     }
+  }
+
+  function isRemovalItem(row: QueueRow): boolean {
+    const text = row.queue.suggestedAction?.toLowerCase() ?? "";
+    return (
+      row.contact.segment === "remove_candidate" ||
+      text.includes("disconnect") ||
+      text.includes("removal") ||
+      text.includes("remove")
+    );
   }
 
   if (items.length === 0) {
@@ -141,7 +154,10 @@ export function QueueActions({
         bursty patterns. You still perform every LinkedIn action yourself.
       </p>
       <ul className="space-y-4">
-        {slice.map(({ queue, contact }) => (
+        {slice.map((row) => {
+          const { queue, contact } = row;
+          const removal = isRemovalItem(row);
+          return (
           <li
             key={queue.id}
             className="clin-card p-4"
@@ -170,18 +186,45 @@ export function QueueActions({
                 />
               </div>
               <div className="flex flex-wrap gap-2">
+                {removal ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={busy === queue.id}
+                      onClick={() =>
+                        patch(queue.id, { removalDecision: "keep" })
+                      }
+                      className="clin-btn-primary text-xs px-2 py-1 disabled:opacity-50"
+                    >
+                      Keep connection
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy === queue.id}
+                      onClick={() =>
+                        patch(queue.id, {
+                          removalDecision: "approve_removal",
+                        })
+                      }
+                      className="clin-btn-secondary text-xs px-2 py-1 text-amber-800 dark:text-amber-200 disabled:opacity-50"
+                    >
+                      Approve removal
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={busy === queue.id}
+                    onClick={() => patch(queue.id, { status: "reviewed" })}
+                    className="clin-btn-primary text-xs px-2 py-1 disabled:opacity-50"
+                  >
+                    Reviewed
+                  </button>
+                )}
                 <button
                   type="button"
                   disabled={busy === queue.id}
-                  onClick={() => patch(queue.id, "reviewed")}
-                  className="clin-btn-primary text-xs px-2 py-1 disabled:opacity-50"
-                >
-                  Reviewed
-                </button>
-                <button
-                  type="button"
-                  disabled={busy === queue.id}
-                  onClick={() => patch(queue.id, "deferred")}
+                  onClick={() => patch(queue.id, { status: "deferred" })}
                   className="clin-btn-secondary text-xs px-2 py-1"
                 >
                   Defer
@@ -189,7 +232,7 @@ export function QueueActions({
                 <button
                   type="button"
                   disabled={busy === queue.id}
-                  onClick={() => patch(queue.id, "dismissed")}
+                  onClick={() => patch(queue.id, { status: "dismissed" })}
                   className="clin-btn-secondary text-xs px-2 py-1 text-clin-muted"
                 >
                   Dismiss
@@ -197,7 +240,8 @@ export function QueueActions({
               </div>
             </div>
           </li>
-        ))}
+          );
+        })}
       </ul>
       {remaining > 0 ? (
         <button

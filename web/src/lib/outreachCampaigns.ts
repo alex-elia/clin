@@ -248,7 +248,7 @@ export async function listCampaignMembersForExtension(
 
 export async function updateMemberStatus(
   memberId: string,
-  status: "draft" | "ready" | "sent" | "skipped",
+  status: "draft" | "ready" | "sent" | "skipped" | "closed",
 ) {
   const db = getDb();
   const now = new Date();

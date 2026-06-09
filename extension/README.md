@@ -19,7 +19,8 @@ Companion to the local Clin web app: capture visible LinkedIn data, manage campa
 | **Data** | Capture, list sprint, hygiene batch (search/list or profile workflows) |
 | **Outreach** | Ready campaigns, paced outreach run |
 | **Branding** | Ready content posts: copy text, download or copy image, mark published |
-| **Settings** | API base URL and health check (replaces the old Connect tab). Use the **gear** in the header for the same panel. |
+
+Use the **gear** in the header for **Settings** (API base URL and health check).
 
 ## Capture
 
@@ -27,7 +28,7 @@ Click **Capture LinkedIn tab** on a profile (or use **list sprint** when allowed
 
 ## Pacing
 
-The background script calls `GET /api/settings` and applies the same **rolling hourly cap** and **minimum seconds between captures** as the server. Tune limits in the dashboard under **Settings → Pacing**.
+The background script calls `GET /api/settings` and applies the same pacing as the server: **list imports** (shallow rows, faster gaps) and **profile captures** (full visits, separate hourly budget). Tune both in **Settings → Pacing**.
 
 ## Outreach handoff
 

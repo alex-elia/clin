@@ -167,6 +167,32 @@ export const extensionSnapshots = sqliteTable(
   ],
 );
 
+/** Extension-paced cleaning tasks (removal disconnect, engage comment). */
+export const cleaningExecQueue = sqliteTable(
+  "cleaning_exec_queue",
+  {
+    id: text("id").primaryKey(),
+    contactId: text("contact_id")
+      .notNull()
+      .references(() => contacts.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    status: text("status").notNull().default("pending"),
+    payloadJson: text("payload_json", { mode: "json" }).$type<
+      Record<string, unknown>
+    >(),
+    outcome: text("outcome"),
+    error: text("error"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+  },
+  (t) => [
+    index("cleaning_exec_kind_status_idx").on(t.kind, t.status),
+    index("cleaning_exec_contact_idx").on(t.contactId),
+  ],
+);
+
 export const actionQueue = sqliteTable(
   "action_queue",
   {
@@ -237,7 +263,7 @@ export const outreachCampaigns = sqliteTable("outreach_campaigns", {
 });
 
 /**
- * Member of a campaign. status: draft → ready (for extension handoff) → sent | skipped.
+ * Member of a campaign. status: draft → ready → sent | skipped | closed (campaign ended).
  */
 export const outreachCampaignMembers = sqliteTable(
   "outreach_campaign_members",
@@ -580,6 +606,7 @@ export const contactsRelations = relations(contacts, ({ many, one }) => ({
   contactTags: many(contactTags),
   notes: many(notes),
   queueItems: many(actionQueue),
+  cleaningExecItems: many(cleaningExecQueue),
   automationLogs: many(automationLog),
   outreachCampaignMembers: many(outreachCampaignMembers),
   inboxThreads: many(inboxThreadState),
@@ -658,3 +685,13 @@ export const actionQueueRelations = relations(actionQueue, ({ one }) => ({
     references: [contacts.id],
   }),
 }));
+
+export const cleaningExecQueueRelations = relations(
+  cleaningExecQueue,
+  ({ one }) => ({
+    contact: one(contacts, {
+      fields: [cleaningExecQueue.contactId],
+      references: [contacts.id],
+    }),
+  }),
+);

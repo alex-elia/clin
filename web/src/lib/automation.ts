@@ -14,6 +14,8 @@ export const AUTOMATION_KEYS = {
   autoEnrichAfterList: "automation.auto_enrich_after_list",
   /** After profile capture in enrich pipeline, try messaging thread capture. */
   autoCaptureMessagingInEnrich: "automation.auto_capture_messaging_in_enrich",
+  /** After profile capture in enrich pipeline, capture recent posts. */
+  autoCapturePostsInEnrich: "automation.auto_capture_posts_in_enrich",
   maxPerDay: "automation.max_per_day",
   minGapSeconds: "automation.min_gap_seconds",
   maxGapSeconds: "automation.max_gap_seconds",
@@ -25,6 +27,7 @@ export type AutomationSettings = {
   connectionsSprintEnabled: boolean;
   autoEnrichAfterList: boolean;
   autoCaptureMessagingInEnrich: boolean;
+  autoCapturePostsInEnrich: boolean;
   maxPerDay: number;
   minGapSeconds: number;
   maxGapSeconds: number;
@@ -36,6 +39,7 @@ const DEFAULTS: AutomationSettings = {
   connectionsSprintEnabled: true,
   autoEnrichAfterList: true,
   autoCaptureMessagingInEnrich: true,
+  autoCapturePostsInEnrich: true,
   maxPerDay: 15,
   minGapSeconds: 75,
   maxGapSeconds: 180,
@@ -178,6 +182,10 @@ export async function getAutomationSettings(): Promise<AutomationSettings> {
       map.get(AUTOMATION_KEYS.autoCaptureMessagingInEnrich),
       DEFAULTS.autoCaptureMessagingInEnrich,
     ),
+    autoCapturePostsInEnrich: parseBool(
+      map.get(AUTOMATION_KEYS.autoCapturePostsInEnrich),
+      DEFAULTS.autoCapturePostsInEnrich,
+    ),
     maxPerDay,
     minGapSeconds: minGap,
     maxGapSeconds: maxGap,
@@ -194,6 +202,7 @@ export type AutomationSettingsPatch = Partial<{
   connectionsSprintEnabled: boolean;
   autoEnrichAfterList: boolean;
   autoCaptureMessagingInEnrich: boolean;
+  autoCapturePostsInEnrich: boolean;
   maxPerDay: number;
   minGapSeconds: number;
   maxGapSeconds: number;
@@ -214,6 +223,9 @@ export async function updateAutomationSettings(
   }
   if (typeof patch.autoCaptureMessagingInEnrich === "boolean") {
     next.autoCaptureMessagingInEnrich = patch.autoCaptureMessagingInEnrich;
+  }
+  if (typeof patch.autoCapturePostsInEnrich === "boolean") {
+    next.autoCapturePostsInEnrich = patch.autoCapturePostsInEnrich;
   }
   if (typeof patch.maxPerDay === "number" && Number.isFinite(patch.maxPerDay)) {
     next.maxPerDay = clamp(patch.maxPerDay, BOUNDS.maxPerDay.min, BOUNDS.maxPerDay.max);
@@ -265,6 +277,10 @@ export async function updateAutomationSettings(
   await upsertAppSetting(
     AUTOMATION_KEYS.autoCaptureMessagingInEnrich,
     next.autoCaptureMessagingInEnrich ? "1" : "0",
+  );
+  await upsertAppSetting(
+    AUTOMATION_KEYS.autoCapturePostsInEnrich,
+    next.autoCapturePostsInEnrich ? "1" : "0",
   );
   await upsertAppSetting(AUTOMATION_KEYS.maxPerDay, String(next.maxPerDay));
   await upsertAppSetting(

@@ -47,6 +47,33 @@ export function repairClinSqliteSchema(db: Database.Database): void {
     "ALTER TABLE contacts ADD COLUMN llm_refined_at integer",
   );
   addColumnOrExists(db, "ALTER TABLE contacts ADD COLUMN llm_last_model text");
+  addColumnOrExists(
+    db,
+    "ALTER TABLE contacts ADD COLUMN cleaning_user_bucket text",
+  );
+  addColumnOrExists(
+    db,
+    "ALTER TABLE contacts ADD COLUMN cleaning_dismissed_at integer",
+  );
+
+  if (!tableExists(db, "cleaning_exec_queue")) {
+    db.exec(`
+      CREATE TABLE cleaning_exec_queue (
+        id text PRIMARY KEY NOT NULL,
+        contact_id text NOT NULL,
+        kind text NOT NULL,
+        status text NOT NULL DEFAULT 'pending',
+        payload_json text,
+        outcome text,
+        error text,
+        created_at integer NOT NULL,
+        completed_at integer,
+        FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+      );
+      CREATE INDEX cleaning_exec_kind_status_idx ON cleaning_exec_queue (kind, status);
+      CREATE INDEX cleaning_exec_contact_idx ON cleaning_exec_queue (contact_id);
+    `);
+  }
 
   if (tableExists(db, "user_context")) {
     addColumnOrExists(
@@ -103,6 +130,14 @@ export function repairClinSqliteSchema(db: Database.Database): void {
     addColumnOrExists(
       db,
       "ALTER TABLE outreach_campaign_members ADD COLUMN message_outcome_note text",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaign_members ADD COLUMN closed_at integer",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaign_members ADD COLUMN close_reason text",
     );
     addColumnOrExists(
       db,

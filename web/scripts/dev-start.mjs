@@ -19,6 +19,7 @@ import {
   webRootPath,
   writeLock,
 } from "./lib/dev-runtime.mjs";
+import { warmClinDevServer } from "./dev-warmup.mjs";
 
 const port = devPort();
 const root = webRootPath();
@@ -110,6 +111,12 @@ async function main() {
     startedAt: new Date().toISOString(),
     node: devNode,
     nodeVersion: process.version,
+  });
+
+  void warmClinDevServer(port).catch((e) => {
+    console.warn(
+      `[clin] Dev warmup failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
   });
 
   const cleanup = () => {

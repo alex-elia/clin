@@ -16,6 +16,8 @@ import {
   resolveMessageContextForAnalysis,
 } from "@/lib/messagingContext";
 import type { LlmConfig } from "@/lib/llm/types";
+import type { ContactContextBundle } from "@/lib/contactContextBundle";
+import { buildContactContextBundle } from "@/lib/contactContextBundle";
 import { syncCleaningQueueFromAnalysis } from "@/lib/cleaningQueue";
 import { contactAnalyzeBodySchema } from "@/lib/schemas";
 
@@ -38,6 +40,8 @@ export async function executeContactAnalysis(
   llm: LlmConfig,
   opts?: {
     llmMeta?: Record<string, string | number | boolean | null>;
+    contextBundle?: ContactContextBundle;
+    salesCoachBlock?: string;
   },
 ): Promise<ExecuteContactAnalysisResult> {
   const row = await db.query.contacts.findFirst({
@@ -63,12 +67,17 @@ export async function executeContactAnalysis(
       ? await inferAnalysisTier(db, contactId, msgCtx)
       : body.tier;
 
+  const contextBundle =
+    opts?.contextBundle ?? (await buildContactContextBundle(contactId));
+
   const result = await runContactLlmAnalysis(db, {
     contactId,
     tier: tierIn,
     messageContext: msgCtx,
     settings: llm,
     llmMeta: opts?.llmMeta,
+    contextBundle,
+    salesCoachBlock: opts?.salesCoachBlock,
   });
 
   const jsonStr = JSON.stringify(result.envelope);

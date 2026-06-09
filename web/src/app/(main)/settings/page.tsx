@@ -1,8 +1,10 @@
 import {
   saveAutomationForm,
   saveAutopilotForm,
+  saveCleaningExecForm,
   saveLlmForm,
   saveOutreachSendForm,
+  resetPaceStateForm,
   savePaceForm,
 } from "@/app/actions";
 import { DataSettingsSection } from "@/components/DataSettingsSection";
@@ -13,8 +15,9 @@ import { getAutopilotSettings } from "@/lib/autopilot";
 import { getAutomationSettings } from "@/lib/automation";
 import { getDataPathInfo, getLastBackupMeta } from "@/lib/dataPaths";
 import { getLlmConfigPublic, listOllamaModels } from "@/lib/llm/completeChat";
+import { getCleaningExecSettings } from "@/lib/cleaningExecSettings";
 import { getOutreachSendSettings } from "@/lib/outreachSend";
-import { getPaceSettings } from "@/lib/pace";
+import { getPaceSettings, getPaceUsage } from "@/lib/pace";
 import { getSdSettingsPublic } from "@/lib/sdSettings";
 import { getOrCreateContentBrandContext } from "@/lib/contentBrandContext";
 import { EditorialAutopilotSettings } from "@/components/EditorialAutopilotSettings";
@@ -23,6 +26,7 @@ export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
   const pace = await getPaceSettings();
+  const paceUsage = await getPaceUsage();
   const automation = await getAutomationSettings();
   const autopilot = await getAutopilotSettings();
   const llm = await getLlmConfigPublic();
@@ -30,6 +34,7 @@ export default async function SettingsPage() {
   const dataPaths = await getDataPathInfo();
   const lastBackup = await getLastBackupMeta();
   const outreachSend = await getOutreachSendSettings();
+  const cleaningExec = await getCleaningExecSettings();
   const sd = await getSdSettingsPublic();
   const brand = await getOrCreateContentBrandContext();
 
@@ -76,12 +81,36 @@ export default async function SettingsPage() {
             max={600}
           />
           <Field
+            name="minSecondsBetweenListImports"
+            label="Seconds between list page imports"
+            description="Shallow connections / search list rounds — faster than full profile visits."
+            defaultValue={pace.minSecondsBetweenListImports}
+            min={5}
+            max={120}
+          />
+          <Field
+            name="listImportMaxPerHour"
+            label="Max list rows per hour"
+            description="Each person imported from a connections or search list counts as one shallow row."
+            defaultValue={pace.listImportMaxPerHour}
+            min={10}
+            max={200}
+          />
+          <Field
             name="minSecondsBetweenCaptures"
-            label="Seconds between captures"
-            description="Clin and the extension share this limit so saves are not too bursty."
+            label="Seconds between profile captures"
+            description="Full profile, messaging, and posts saves — separate from list import pacing."
             defaultValue={pace.minSecondsBetweenCaptures}
             min={20}
             max={600}
+          />
+          <Field
+            name="profileCaptureMaxPerHour"
+            label="Max profile captures per hour"
+            description="Profile visits, messaging threads, and posts — list imports use their own budget."
+            defaultValue={pace.profileCaptureMaxPerHour}
+            min={1}
+            max={60}
           />
           <Field
             name="paceJitterPercent"
@@ -91,19 +120,32 @@ export default async function SettingsPage() {
             min={0}
             max={100}
           />
-          <Field
-            name="captureMaxPerHour"
-            label="Max captures per hour"
-            description="Each profile save or each person on a connections import counts as one."
-            defaultValue={pace.captureMaxPerHour}
-            min={1}
-            max={40}
-          />
           </div>
           <button type="submit" className="clin-btn-primary">
             Save capture pacing
           </button>
         </form>
+
+        <div className="clin-card space-y-3 p-6 lg:col-span-2">
+          <h3 className="text-sm font-semibold text-[var(--clin-text)]">
+            Pace counters (this hour)
+          </h3>
+          <p className="text-sm text-[var(--clin-muted)]">
+            List: {paceUsage.listImportsLastHour} / {pace.listImportMaxPerHour}{" "}
+            ({paceUsage.listSlotsRemaining} left) · Profile:{" "}
+            {paceUsage.profileCapturesLastHour} / {pace.profileCaptureMaxPerHour}{" "}
+            ({paceUsage.profileSlotsRemaining} left)
+          </p>
+          <form action={resetPaceStateForm}>
+            <button type="submit" className="clin-btn-secondary">
+              Reset server pace counters
+            </button>
+          </form>
+          <p className="text-xs text-[var(--clin-muted)]">
+            Clears hourly caps and wait timers on the Clin server. Extension
+            counters: use the gear → Reset local pace counters.
+          </p>
+        </div>
 
         <form action={saveOutreachSendForm} className="clin-card space-y-4 p-6">
           <h3 className="text-sm font-semibold text-[var(--clin-text)]">
@@ -166,6 +208,65 @@ export default async function SettingsPage() {
           </button>
         </form>
 
+        <form action={saveCleaningExecForm} className="clin-card space-y-4 p-6">
+          <h3 className="text-sm font-semibold text-[var(--clin-text)]">
+            Cleaning runners (extension)
+          </h3>
+          <p className="text-sm text-[var(--clin-muted)]">
+            Paced extension queues for engage-comment and removal disconnect.
+            You still comment or remove on LinkedIn yourself.
+          </p>
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              name="engageEnabled"
+              defaultChecked={cleaningExec.engageEnabled}
+              className="mt-1"
+            />
+            <span className="font-medium text-[var(--clin-text)]">
+              Enable engage-comment runner
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              name="removalEnabled"
+              defaultChecked={cleaningExec.removalEnabled}
+              className="mt-1"
+            />
+            <span className="font-medium text-[var(--clin-text)]">
+              Enable removal disconnect runner
+            </span>
+          </label>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              name="cleaningMinSecondsBetweenActions"
+              label="Seconds between cleaning steps"
+              defaultValue={cleaningExec.minSecondsBetweenActions}
+              min={30}
+              max={900}
+            />
+            <Field
+              name="cleaningMaxPerDay"
+              label="Max cleaning steps per day"
+              defaultValue={cleaningExec.maxPerDay}
+              min={1}
+              max={50}
+            />
+            <Field
+              name="cleaningJitterPercent"
+              label="Cleaning jitter (%)"
+              description="Random extra delay between engage/removal steps."
+              defaultValue={cleaningExec.jitterPercent}
+              min={0}
+              max={100}
+            />
+          </div>
+          <button type="submit" className="clin-btn-primary">
+            Save cleaning pacing
+          </button>
+        </form>
+
         <form action={saveAutomationForm} className="clin-card space-y-4 p-6 lg:col-span-2">
           <h3 className="text-sm font-semibold text-[var(--clin-text)]">
             Background enrich (extension)
@@ -225,6 +326,24 @@ export default async function SettingsPage() {
           <label className="flex cursor-pointer items-start gap-3 text-sm">
             <input
               type="checkbox"
+              name="automationAutoCapturePosts"
+              value="on"
+              defaultChecked={automation.autoCapturePostsInEnrich}
+              className="mt-1"
+            />
+            <span>
+              <span className="font-medium text-[var(--clin-text)]">
+                Capture posts during enrich
+              </span>
+              <span className="mt-1 block text-xs text-[var(--clin-muted)]">
+                After each profile, open recent activity and capture visible posts.
+                Counts toward profile capture pacing. Improves comment-first advice.
+              </span>
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <input
+              type="checkbox"
               name="automationConnectionsSprintEnabled"
               value="on"
               defaultChecked={automation.connectionsSprintEnabled}
@@ -235,7 +354,7 @@ export default async function SettingsPage() {
                 Allow list import in extension
               </span>
               <span className="mt-1 block text-xs text-[var(--clin-muted)]">
-                Required for Import &amp; enrich. Pacing and hourly caps above still apply.
+                Required for Import &amp; enrich. List and profile pacing budgets are separate.
               </span>
             </span>
           </label>

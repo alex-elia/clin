@@ -1,15 +1,11 @@
 import { getSqlite } from "@/db";
+import type { MemberOutreachExtras } from "@/lib/campaignMemberOutreachShared";
+export type { MemberOutreachExtras } from "@/lib/campaignMemberOutreachShared";
 import {
   countSendsToday,
   getOutreachSendSettings,
   getNextOutreachSendItem,
 } from "@/lib/outreachSend";
-
-export type MemberOutreachExtras = {
-  messageSentAt: Date | null;
-  messageReplyOutcome: string;
-  messageOutcomeNote: string | null;
-};
 
 export type CampaignOutreachPanel = {
   enabled: boolean;
@@ -36,7 +32,8 @@ export async function loadMemberOutreachExtras(
   const placeholders = memberIds.map(() => "?").join(", ");
   const rows = sqlite
     .prepare(
-      `SELECT id, message_sent_at, message_reply_outcome, message_outcome_note
+      `SELECT id, message_sent_at, message_reply_outcome, message_outcome_note,
+              closed_at, close_reason
        FROM outreach_campaign_members WHERE id IN (${placeholders})`,
     )
     .all(...memberIds) as {
@@ -44,6 +41,8 @@ export async function loadMemberOutreachExtras(
     message_sent_at: number | null;
     message_reply_outcome: string | null;
     message_outcome_note: string | null;
+    closed_at: number | null;
+    close_reason: string | null;
   }[];
 
   for (const r of rows) {
@@ -52,6 +51,8 @@ export async function loadMemberOutreachExtras(
         r.message_sent_at != null ? new Date(r.message_sent_at) : null,
       messageReplyOutcome: r.message_reply_outcome ?? "unknown",
       messageOutcomeNote: r.message_outcome_note ?? null,
+      closedAt: r.closed_at != null ? new Date(r.closed_at) : null,
+      closeReason: r.close_reason ?? null,
     });
   }
   return map;
@@ -72,11 +73,30 @@ export async function updateMemberReplyOutcome(
   note: string | null,
 ): Promise<void> {
   const sqlite = getSqlite();
+  const now = Date.now();
   sqlite
     .prepare(
-      `UPDATE outreach_campaign_members SET message_reply_outcome = ?, message_outcome_note = ? WHERE id = ?`,
+      `UPDATE outreach_campaign_members
+       SET message_reply_outcome = ?, message_outcome_note = ?, updated_at = ?
+       WHERE id = ?`,
     )
-    .run(replyOutcome, note, memberId);
+    .run(replyOutcome, note, now, memberId);
+}
+
+export async function closeCampaignMember(
+  memberId: string,
+  opts: { closeReason: string; note: string | null },
+): Promise<void> {
+  const sqlite = getSqlite();
+  const now = Date.now();
+  sqlite
+    .prepare(
+      `UPDATE outreach_campaign_members
+       SET status = 'closed', close_reason = ?, message_outcome_note = ?,
+           closed_at = ?, updated_at = ?
+       WHERE id = ?`,
+    )
+    .run(opts.closeReason, opts.note, now, now, memberId);
 }
 
 export function outreachNextReasonLabel(reason: string | null): string {

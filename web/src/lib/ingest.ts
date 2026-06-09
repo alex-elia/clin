@@ -51,6 +51,21 @@ export type IngestInput = {
       comments?: number;
       postUrl?: string;
     }[];
+    companyLinkedInUrl?: string;
+    name?: string;
+    industry?: string;
+    sizeLabel?: string;
+    websiteUrl?: string;
+    hq?: string;
+    jobs?: {
+      title: string;
+      location?: string;
+      ageLabel?: string;
+      jobUrl?: string;
+    }[];
+    sourceUrl?: string;
+    title?: string;
+    excerpt?: string;
   };
   fieldPresence?: Record<string, boolean>;
 };
@@ -283,6 +298,14 @@ export async function ingestCapture(
     return ingestPostsCapture(db, input);
   }
 
+  if (
+    input.pageType === "company" ||
+    input.pageType === "company_jobs" ||
+    input.pageType === "web_page"
+  ) {
+    return ingestContactIntelCapture(db, input);
+  }
+
   const canonical = canonicalizeLinkedInUrl(input.sourceUrl);
   if (!canonical) {
     throw new Error("Could not derive canonical LinkedIn URL from sourceUrl");
@@ -467,6 +490,90 @@ async function ingestMessagingCapture(
     contactId: row!.id,
     canonicalUrl: row!.linkedinUrlCanonical ?? profileCanonical,
     scores,
+  };
+}
+
+async function ingestContactIntelCapture(db: Db, input: IngestInput) {
+  const profileRaw =
+    input.extractedFields.targetProfileUrl?.trim() || input.sourceUrl;
+  const canonical = canonicalizeLinkedInUrl(profileRaw);
+  if (!canonical || !isProfileCanonicalUrl(canonical)) {
+    throw new Error(
+      "Could not parse target profile URL for contact intel capture.",
+    );
+  }
+
+  const now = input.capturedAt ? new Date(input.capturedAt) : new Date();
+  const existing = await findContactByCanonical(db, canonical);
+  const ef = input.extractedFields;
+
+  let extractedJson: Record<string, unknown>;
+  if (input.pageType === "company") {
+    extractedJson = {
+      targetProfileUrl: canonical,
+      companyLinkedInUrl: ef.companyLinkedInUrl ?? input.sourceUrl,
+      name: ef.name,
+      about: ef.about,
+      industry: ef.industry,
+      sizeLabel: ef.sizeLabel,
+      websiteUrl: ef.websiteUrl,
+      hq: ef.hq,
+    };
+  } else if (input.pageType === "company_jobs") {
+    extractedJson = {
+      targetProfileUrl: canonical,
+      companyLinkedInUrl: ef.companyLinkedInUrl ?? input.sourceUrl,
+      jobs: (ef.jobs ?? []).slice(0, 40),
+    };
+  } else {
+    extractedJson = {
+      targetProfileUrl: canonical,
+      sourceUrl: ef.sourceUrl ?? input.sourceUrl,
+      title: ef.title,
+      excerpt: ef.excerpt,
+      fetchedAt: now.toISOString(),
+    };
+  }
+
+  const merged: Partial<typeof contacts.$inferInsert> = {
+    linkedinUrlCanonical: canonical,
+    linkedinUrlRaw: profileRaw,
+    lastSeenAt: now,
+    lastUpdatedAt: now,
+  };
+
+  const baseForScore: Partial<ContactRow> = {
+    ...(existing ?? {}),
+    ...merged,
+    lastSeenAt: now,
+  };
+  const scores = scoreContact(baseForScore);
+  const confidence = input.confidence ?? 0.7;
+
+  db.transaction((tx) => {
+    syncPersistContact(tx, {
+      now,
+      schemaVersion: input.schemaVersion,
+      pageType: input.pageType,
+      captureSourceUrl: input.sourceUrl,
+      confidence,
+      fieldPresence: input.fieldPresence ?? {},
+      extractedJson,
+      existing,
+      merged,
+      scores,
+    });
+  });
+
+  const row = await db.query.contacts.findFirst({
+    where: eq(contacts.linkedinUrlCanonical, canonical),
+  });
+
+  return {
+    contactId: row!.id,
+    canonicalUrl: canonical,
+    scores,
+    fieldPresence: input.fieldPresence,
   };
 }
 

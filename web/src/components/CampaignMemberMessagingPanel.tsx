@@ -1,9 +1,5 @@
-import {
-  syncMemberReplyFromThreadAction,
-  updateMemberReplyOutcomeAction,
-} from "@/app/actions";
 import { CampaignMemberConversationPanel } from "@/components/CampaignMemberConversationPanel";
-import type { MemberOutreachExtras } from "@/lib/campaignMemberOutreach";
+import type { MemberOutreachExtras } from "@/lib/campaignMemberOutreachShared";
 import type { StoredThreadAnalysis } from "@/lib/inboxThreadAnalysisTypes";
 import type { MergedMessagingThread } from "@/lib/messagingTypes";
 
@@ -44,8 +40,6 @@ export function CampaignMemberMessagingPanel({
       storedCaptureAnalysis={storedCaptureAnalysis}
       storedPastedAnalysis={storedPastedAnalysis}
       initialPastedThread={initialPastedThread}
-      syncReplyAction={syncMemberReplyFromThreadAction}
-      updateReplyOutcomeAction={updateMemberReplyOutcomeAction}
     />
   );
 }

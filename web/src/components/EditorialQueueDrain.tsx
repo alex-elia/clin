@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { clinFetch } from "@/lib/clinFetch";
 
 /** Once per browser session, drain due editorial jobs when the app loads. */
 export function EditorialQueueDrain() {
@@ -13,7 +14,7 @@ export function EditorialQueueDrain() {
     if (sessionStorage.getItem(key)) return;
     ran.current = true;
     sessionStorage.setItem(key, "1");
-    void fetch("/api/branding/jobs/tick", { method: "POST" }).catch(() => {
+    void clinFetch("/api/branding/jobs/tick", { method: "POST" }).catch(() => {
       /* optional UX improvement — ignore failures */
     });
   }, []);

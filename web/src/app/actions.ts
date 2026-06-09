@@ -20,6 +20,10 @@ import { setGlobalWriterInstructions } from "@/lib/brand";
 import { backupAndRecord } from "@/lib/dataBackup";
 import { setStoredDbDirectory } from "@/lib/dataPaths";
 import {
+  updateCleaningExecSettings,
+  type CleaningExecSettingsPatch,
+} from "@/lib/cleaningExecSettings";
+import {
   updateOutreachSendSettings,
   type OutreachSendSettingsPatch,
 } from "@/lib/outreachSend";
@@ -85,11 +89,19 @@ export async function savePaceForm(formData: FormData) {
     queueBatchSize: readInt("queueBatchSize"),
     minSecondsBetweenProfileOpens: readInt("minSecondsBetweenProfileOpens"),
     minSecondsBetweenCaptures: readInt("minSecondsBetweenCaptures"),
-    captureMaxPerHour: readInt("captureMaxPerHour"),
+    minSecondsBetweenListImports: readInt("minSecondsBetweenListImports"),
+    listImportMaxPerHour: readInt("listImportMaxPerHour"),
+    profileCaptureMaxPerHour: readInt("profileCaptureMaxPerHour"),
     paceJitterPercent: readInt("paceJitterPercent"),
   });
   revalidatePath("/settings");
   revalidatePath("/queue");
+}
+
+export async function resetPaceStateForm() {
+  const { resetAllPaceState } = await import("@/lib/pace");
+  await resetAllPaceState();
+  revalidatePath("/settings");
 }
 
 export async function saveAutomationForm(formData: FormData) {
@@ -107,6 +119,8 @@ export async function saveAutomationForm(formData: FormData) {
       formData.get("automationAutoEnrichAfterList") === "on",
     autoCaptureMessagingInEnrich:
       formData.get("automationAutoCaptureMessaging") === "on",
+    autoCapturePostsInEnrich:
+      formData.get("automationAutoCapturePosts") === "on",
     maxPerDay: readInt("automationMaxPerDay"),
     minGapSeconds: readInt("automationMinGapSeconds"),
     maxGapSeconds: readInt("automationMaxGapSeconds"),
@@ -585,7 +599,13 @@ export async function updateMemberReplyOutcomeAction(formData: FormData) {
   if (!campaignId || !memberId) return;
   const m = await findMemberById(memberId);
   if (!m || m.campaignId !== campaignId) return;
-  const allowed = new Set(["unknown", "replied", "no_reply", "not_applicable"]);
+  const allowed = new Set([
+    "unknown",
+    "replied",
+    "no_reply",
+    "ghosted",
+    "not_applicable",
+  ]);
   const outcome = allowed.has(replyOutcome) ? replyOutcome : "unknown";
   const { updateMemberReplyOutcome } = await import(
     "@/lib/campaignMemberOutreach"
@@ -636,6 +656,32 @@ export async function syncMemberReplyFromThreadAction(formData: FormData) {
     }
   }
 
+  revalidatePath(`/campaigns/${campaignId}`);
+}
+
+export async function closeCampaignMemberAction(formData: FormData) {
+  const campaignId = String(formData.get("campaignId") ?? "").trim();
+  const memberId = String(formData.get("memberId") ?? "").trim();
+  const closeReason = String(formData.get("closeReason") ?? "manual").trim();
+  const noteRaw = String(formData.get("messageOutcomeNote") ?? "").trim();
+  if (!campaignId || !memberId) return;
+  const m = await findMemberById(memberId);
+  if (!m || m.campaignId !== campaignId) return;
+  if (m.status !== "sent") return;
+  const allowed = new Set([
+    "manual",
+    "ghosted",
+    "won",
+    "lost",
+    "not_fit",
+    "other",
+  ]);
+  const reason = allowed.has(closeReason) ? closeReason : "manual";
+  const { closeCampaignMember } = await import("@/lib/campaignMemberOutreach");
+  await closeCampaignMember(memberId, {
+    closeReason: reason,
+    note: noteRaw || null,
+  });
   revalidatePath(`/campaigns/${campaignId}`);
 }
 
@@ -732,6 +778,25 @@ export async function triggerBackupNow(): Promise<
       error: e instanceof Error ? e.message : "Backup failed",
     };
   }
+}
+
+export async function saveCleaningExecForm(formData: FormData) {
+  const readInt = (key: string) => {
+    const raw = formData.get(key);
+    if (typeof raw !== "string" || raw.trim() === "") return undefined;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const patch: CleaningExecSettingsPatch = {
+    removalEnabled: formData.get("removalEnabled") === "on",
+    engageEnabled: formData.get("engageEnabled") === "on",
+    minSecondsBetweenActions: readInt("cleaningMinSecondsBetweenActions"),
+    maxPerDay: readInt("cleaningMaxPerDay"),
+    jitterPercent: readInt("cleaningJitterPercent"),
+  };
+  await updateCleaningExecSettings(patch);
+  revalidatePath("/settings");
+  revalidatePath("/cleaning");
 }
 
 export async function saveOutreachSendForm(formData: FormData) {

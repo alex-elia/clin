@@ -6,7 +6,6 @@ import {
 } from "@/lib/campaignMemberReadiness";
 import {
   getActiveOutreachCampaignId,
-  getCaptureTargetCampaignId,
   getOutreachCampaign,
   listCampaignMembers,
 } from "@/lib/outreachCampaigns";
@@ -21,11 +20,8 @@ export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const requestedCampaignId = url.searchParams.get("campaignId")?.trim() || null;
-  const [captureTargetId, activeExtensionId] = await Promise.all([
-    getCaptureTargetCampaignId(),
-    getActiveOutreachCampaignId(),
-  ]);
-  const effectiveCampaignId = requestedCampaignId || captureTargetId;
+  const activeExtensionId = await getActiveOutreachCampaignId();
+  const effectiveCampaignId = requestedCampaignId;
 
   const [captureCamp, activeCamp] = await Promise.all([
     effectiveCampaignId ? getOutreachCampaign(effectiveCampaignId) : null,

@@ -53,8 +53,8 @@ export default async function AutopilotPage() {
             so analysis is meaningful.
           </li>
           <li>
-            Analysis runs after <strong>profile or messaging</strong> capture when
-            enabled in Settings — or run batches below.
+            Analysis runs after the <strong>capture chain</strong> (profile, optional
+            posts) completes when enabled in Settings — or run batches below.
           </li>
           <li>
             <strong>Campaign autopilot</strong> analyzes members and can generate drafts

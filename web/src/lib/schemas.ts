@@ -22,6 +22,9 @@ export const capturePayloadSchema = z
       "unknown",
       "messaging",
       "posts",
+      "company",
+      "company_jobs",
+      "web_page",
     ]),
     sourceUrl: z.string().url(),
     capturedAt: z.string().optional(),
@@ -41,8 +44,32 @@ export const capturePayloadSchema = z
       messagingMessages: z.array(messagingMessageSchema).max(500).optional(),
       targetProfileUrl: z.string().url().optional(),
       profilePosts: z.array(profilePostSchema).max(40).optional(),
+      companyLinkedInUrl: z.string().url().optional(),
+      name: z.string().max(500).optional(),
+      industry: z.string().max(300).optional(),
+      sizeLabel: z.string().max(120).optional(),
+      websiteUrl: z.string().url().optional(),
+      hq: z.string().max(300).optional(),
+      jobs: z
+        .array(
+          z.object({
+            title: z.string().min(1).max(500),
+            location: z.string().max(300).optional(),
+            ageLabel: z.string().max(120).optional(),
+            jobUrl: z.string().url().optional(),
+          }),
+        )
+        .max(40)
+        .optional(),
+      sourceUrl: z.string().url().optional(),
+      title: z.string().max(500).optional(),
+      excerpt: z.string().max(20_000).optional(),
     }),
     fieldPresence: z.record(z.string(), z.boolean()).optional(),
+    captureChainStep: z
+      .enum(["profile", "posts", "company", "company_jobs", "web_page"])
+      .optional(),
+    captureChainComplete: z.boolean().optional(),
     outreachCampaignId: z.string().min(1).optional(),
     outreachMemberId: z.string().min(1).optional(),
     expectedParticipantProfileUrl: z.string().url().optional(),
@@ -141,6 +168,7 @@ export const automationSettingsPatchSchema = z
     connectionsSprintEnabled: z.boolean().optional(),
     autoEnrichAfterList: z.boolean().optional(),
     autoCaptureMessagingInEnrich: z.boolean().optional(),
+    autoCapturePostsInEnrich: z.boolean().optional(),
     maxPerDay: z.number().int().optional(),
     minGapSeconds: z.number().int().optional(),
     maxGapSeconds: z.number().int().optional(),

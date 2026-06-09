@@ -2,7 +2,7 @@
 
 **Status:** current as of repository `main` / active development branch.  
 **Scope:** `web/` (Next.js App Router + SQLite) and `extension/` (Chrome MV3).  
-**Related:** [DESIGN.md](../DESIGN.md) (product vision and boundaries), [ADR index](../adr/README.md).
+**Related:** [DESIGN.md](../DESIGN.md) (product vision and boundaries), [ADR index](../adr/README.md), [SPEC-0005](./SPEC-0005-unified-contact-analysis.md) (unified contact analysis — target), [ADR-0010](../adr/0010-unified-contact-analysis-playbook.md).
 
 ---
 
@@ -60,13 +60,18 @@ flowchart LR
 3. Extension runs page-world scrapers (via `chrome.scripting`), builds a JSON payload, `POST`s to `/api/ingest/capture` or `/api/ingest/connections-page`.
 4. Server validates schema version, **canonicalizes** profile URLs, enforces **pacing** (minimum gap, rolling hourly cap), upserts `contacts`, inserts `capture_sessions` and `contact_snapshots`, recomputes scores.
 5. If payload includes `outreachCampaignId` (from capture-target campaign context), server **attaches** imported contact IDs to that campaign.
+6. Optional autopilot: after profile capture, **contact analysis** (`contact_analyze`) if Settings allow; if contact is a campaign member, **ICP check** and conditional draft (`runCampaignPostCaptureWorkflow`).
+
+**Additional capture types (as-built):** `posts` (contact activity), `messaging` (DM thread). See section 6.1.
+
+**Planned (SPEC-0005 / ADR-0010):** autopilot chain profile → posts → company → jobs; analysis deferred until `captureChainComplete`; unified **contact playbook** across Cleaning and Campaigns.
 
 **Non-goals:** headless browsing, bulk DM send, stealth or fingerprint evasion (see DESIGN.md).
 
 ### 4.2 Outreach campaigns
 
 - **Campaign** (`outreach_campaigns`): named context (`context_text`), optional `writer_instructions`, optional `system_prompt_override` for Ollama.
-- **Member** (`outreach_campaign_members`): links `contact_id` to campaign; holds `draft_outreach` and `status`: `draft` → `ready` → `sent` | `skipped`.
+- **Member** (`outreach_campaign_members`): links `contact_id` to campaign; holds `draft_outreach`, `status`: `draft` → `ready` → `sent` | `skipped`, and optional **ICP check** fields (`icp_match`, `icp_rationale`, `icp_recommended_action`, `icp_checked_at`).
 - **Capture target** (`app_settings` key `extension.capture_target_campaign_id`): extension polls `GET /api/extension/campaign-context`; ingests with this campaign id add new members to the campaign.
 - **Active extension campaign** (`extension.active_outreach_campaign_id`): extension **Outreach** tab and related APIs use this campaign for ready-queue style handoff.
 
@@ -80,7 +85,12 @@ Readiness is derived (not a stored enum on the member row):
 | **Profile: thin** | Latest profile capture exists; stored `extracted_json` lacks “detailed” signals (see section 6.3) **or** capture exists but JSON is sparse (still counts as at least thin). |
 | **Profile: detailed** | Latest profile JSON includes substantial About (≥ ~40 chars) and/or experience/education bullets. |
 
-The dashboard exposes **filters** (e.g. need profile, thin, detailed, need draft, has draft, ready for extension, sent/skipped) and a **capture queue summary** (counts + “open next profile” URL). The extension receives **`captureTargetQueue`** from `campaign-context` (counts + `nextProfileUrl`).
+The dashboard exposes **filters** (e.g. need profile, thin, detailed, need draft, **review draft**, **ready for extension**, sent/skipped, ICP strong/partial/weak, awaiting reply) and a **capture queue summary** (counts + “open next profile” URL). The extension receives **`captureTargetQueue`** from `campaign-context` (counts + `nextProfileUrl`).
+
+| Filter | Meaning |
+|--------|---------|
+| **review draft** | Open member with draft text, not yet marked `ready` |
+| **ready for extension** | Member `status = ready` (approved for extension handoff) |
 
 ### 4.4 Draft generation (Ollama)
 
@@ -93,7 +103,14 @@ The dashboard exposes **filters** (e.g. need profile, thin, detailed, need draft
 - Extension loads ready items from campaign-scoped endpoints (e.g. `GET /api/extension/outreach-queue`, `GET /api/outreach/ready` where applicable).
 - User copies draft, sends manually on LinkedIn, acknowledges in extension (e.g. mark sent).
 
-### 4.6 Legacy queue path
+### 4.6 Cleaning and contact analysis
+
+- **Cleaning board** (`/cleaning`): buckets derived from contact LLM analysis (`contact_analyze`) — `cleaning_plan`, `outreach_fit`, stewardship — plus extraction readiness (profile/messaging depth).
+- **Storage:** optional `llm_provisional_json` / `llm_refined_json` on contacts (via `contactSqlExtras`).
+- **Side effect:** actionable buckets sync to `action_queue` (`cleaningQueue.ts`).
+- **Campaign overlap:** campaign members use separate **ICP check** (`campaign_icp_check`); post-capture workflow runs ICP → draft, while autopilot may run `contact_analyze` independently. **Target:** unify via contact playbook ([SPEC-0005](./SPEC-0005-unified-contact-analysis.md)).
+
+### 4.7 Legacy queue path
 
 `action_queue` rows may still carry `draft_outreach` and `outreach_decision` (`pending` / `approved` / …) for the **Decisions** workflow. Campaign-based outreach is the **primary** model for multi-contact, context-aware drafts; both may coexist in the DB.
 
@@ -106,10 +123,10 @@ Key tables (see `web/src/db/schema.ts` for truth):
 | Table | Role |
 |--------|------|
 | `contacts` | Canonical LinkedIn URL, name, headline, company, location, segment, scores, timestamps. |
-| `capture_sessions` | `contact_id`, `page_type` (`profile` \| `connections` \| …), `source_url`, `extracted_json`, `captured_at`, `confidence`. |
+| `capture_sessions` | `contact_id`, `page_type` (`profile` \| `posts` \| `messaging` \| `connections` \| …; **target:** `company`, `company_jobs`, `web_page`), `source_url`, `extracted_json`, `captured_at`, `confidence`. |
 | `contact_snapshots` | Point-in-time JSON including scores after capture. |
 | `outreach_campaigns` | Campaign metadata and LLM prompt fields. |
-| `outreach_campaign_members` | Per-contact draft + status within a campaign. |
+| `outreach_campaign_members` | Per-contact draft, status, and ICP check fields within a campaign. |
 | `action_queue` | Review queue + optional draft/decision fields. |
 | `app_settings` | Key/value: pacing, extension campaign ids, feature flags. |
 | `user_context` | Self-profile link, goals, optional pending self-capture URL. |
@@ -125,11 +142,14 @@ Key tables (see `web/src/db/schema.ts` for truth):
 Validated by `capturePayloadSchema` (`web/src/lib/schemas.ts`):
 
 - `schemaVersion` (e.g. `"1"`).
-- `pageType`: `profile` \| `connections` \| `unknown`.
+- `pageType`: `profile` \| `connections` \| `messaging` \| `posts` \| `unknown` (**target:** `company`, `company_jobs`, `web_page`).
 - `sourceUrl`, optional `capturedAt`, `confidence`.
-- `extractedFields`: at minimum `fullName`, `headline`, `company`, `location`, `connectionDegree`; optional **`about`**, **`experienceBullets`**, **`educationBullets`** (profile pages).
+- `extractedFields` (profile): `fullName`, `headline`, `company`, `location`, `connectionDegree`; optional `about`, `experienceBullets`, `educationBullets`.
+- `extractedFields` (posts): `targetProfileUrl`, `profilePosts[]` (`text`, `ageLabel`, `reactions`, `comments`, `postUrl`).
+- `extractedFields` (messaging): `messagingParticipantProfileUrl`, `messagingMessages[]`, optional `messagingThreadId`.
 - Optional `outreachCampaignId` (capture target).
 - Optional `fieldPresence`.
+- **Target (SPEC-0005):** optional `captureChainStep`, `captureChainComplete` for autopilot chains.
 
 ### 6.2 Connections / list page (`POST /api/ingest/connections-page`)
 
@@ -195,3 +215,6 @@ Connection degree text must not assume English-only labels (e.g. French “2e”
 | **Canonical URL** | Normalized `https://www.linkedin.com/in/{slug}` (NFC slug, decoded). |
 | **Profile capture** | `capture_sessions` row with `page_type = 'profile'`. |
 | **Thin / detailed** | Derived quality of last profile JSON for outreach prep. |
+| **Contact playbook** | Target unified recommendation (clean, nurture, message, etc.) shared by Cleaning and Campaigns; see SPEC-0005. |
+| **Contact context bundle** | Target L1 read-model: profile + posts + company intel for all contact LLM features. |
+| **Capture chain** | Target ordered autopilot captures (profile → posts → company → jobs) before analysis runs. |

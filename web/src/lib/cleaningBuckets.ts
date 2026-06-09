@@ -81,7 +81,15 @@ export function resolveCleaningBucket(input: {
   analysis: LlmAnalysisView | null;
   segment: string;
   hasLlmAnalysis: boolean;
-}): CleaningBucket {
+  cleaningUserBucket?: CleaningBucket | null;
+  cleaningDismissedAt?: number | null;
+}): CleaningBucket | null {
+  if (input.cleaningDismissedAt) return null;
+
+  if (input.cleaningUserBucket && isCleaningBucket(input.cleaningUserBucket)) {
+    return input.cleaningUserBucket;
+  }
+
   const plan = input.analysis?.cleaningPlan;
   if (plan && isCleaningBucket(plan.bucket)) {
     if (

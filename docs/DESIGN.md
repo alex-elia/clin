@@ -45,6 +45,14 @@ Whether capture is manual or automated, **server and extension** should share en
 
 These limits **reduce accidental abuse and bursty traffic**; they **do not** guarantee LinkedIn will allow the behavior.
 
+### 1.2 Enrich capture chain (contact intel)
+
+When autopilot enrich is enabled, Clin may chain **multiple captures per contact** before running LLM analysis: profile → posts → company page → company jobs tab, with optional server-side careers-page or Tavily fetch ([ADR-0010](./adr/0010-unified-contact-analysis-playbook.md), [SPEC-0005](./specifications/SPEC-0005-unified-contact-analysis.md)).
+
+- **Default posture:** chaining steps are **opt-in** in Settings; each step counts toward the same pacing and hourly caps as profile capture.
+- **Higher risk surface:** company and jobs pages are additional LinkedIn navigation; treat like other autopilot (user accepts account risk).
+- **Analysis timing:** LLM contact analysis and campaign ICP run **after** the chain completes (raw intel stored first), not on every intermediate ingest.
+
 ---
 
 ## 2. ICP and scope
