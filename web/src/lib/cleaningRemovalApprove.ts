@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { actionQueue, contacts } from "@/db/schema";
 import { setContactSegment } from "@/lib/autopilotActions";
@@ -17,6 +17,45 @@ export function isRemovalQueueItem(input: {
   );
 }
 
+async function markPendingQueueReviewed(contactId: string): Promise<void> {
+  const db = getDb();
+  const pending = await db.query.actionQueue.findFirst({
+    where: and(
+      eq(actionQueue.contactId, contactId),
+      eq(actionQueue.status, "pending"),
+    ),
+  });
+  if (!pending || pending.status !== "pending") return;
+  await db
+    .update(actionQueue)
+    .set({ status: "reviewed", reviewedAt: new Date() })
+    .where(eq(actionQueue.id, pending.id));
+}
+
+/** Enqueue removal exec directly from the cleaning board (no /queue hop). */
+export async function approveRemovalForContact(
+  contactId: string,
+  rationale?: string | null,
+): Promise<string> {
+  const db = getDb();
+  const contact = await db.query.contacts.findFirst({
+    where: eq(contacts.id, contactId),
+  });
+  if (!contact) throw new Error("Contact not found.");
+
+  await setContactSegment(contactId, "remove_candidate");
+  const execId = await enqueueCleaningExec({
+    contactId,
+    kind: "removal",
+    payload: {
+      rationale: rationale?.trim() || "Accepted from cleaning board.",
+      approvedFromCleaning: true,
+    },
+  });
+  await markPendingQueueReviewed(contactId);
+  return execId;
+}
+
 export async function approveRemovalFromQueue(queueId: string): Promise<void> {
   const db = getDb();
   const row = await db.query.actionQueue.findFirst({
@@ -29,16 +68,7 @@ export async function approveRemovalFromQueue(queueId: string): Promise<void> {
   });
   if (!contact) throw new Error("Contact not found.");
 
-  await setContactSegment(row.contactId, "remove_candidate");
-  await enqueueCleaningExec({
-    contactId: row.contactId,
-    kind: "removal",
-    payload: {
-      rationale: row.suggestedAction,
-      approvedFromQueue: queueId,
-    },
-  });
-
+  await approveRemovalForContact(row.contactId, row.suggestedAction);
   await db
     .update(actionQueue)
     .set({ status: "reviewed", reviewedAt: new Date() })

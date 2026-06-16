@@ -790,6 +790,10 @@ export async function saveCleaningExecForm(formData: FormData) {
   const patch: CleaningExecSettingsPatch = {
     removalEnabled: formData.get("removalEnabled") === "on",
     engageEnabled: formData.get("engageEnabled") === "on",
+    engageExecMode:
+      formData.get("engageAutoExec") === "on" ? "auto" : "manual_confirm",
+    removalExecMode:
+      formData.get("removalAutoExec") === "on" ? "auto" : "manual_confirm",
     minSecondsBetweenActions: readInt("cleaningMinSecondsBetweenActions"),
     maxPerDay: readInt("cleaningMaxPerDay"),
     jitterPercent: readInt("cleaningJitterPercent"),

@@ -9,6 +9,10 @@ const PROFILE_CAPTURE_TIMES_KEY = "clin_profile_capture_timestamps_ms";
 /** @deprecated migrated to split keys on first read */
 const LEGACY_CAPTURE_TIMES_KEY = "clin_capture_timestamps_ms";
 const LAST_ERROR_KEY = "clin_last_pace_message";
+const PIPELINE_RUN_KEY = "clinPipelineRunActive";
+const PIPELINE_STATE_KEY = "clinPipelineState";
+const PIPELINE_TAB_ID_KEY = "clinPipelineTabId";
+const PIPELINE_ALARM = "clinPipelineTick";
 const LAST_OUTREACH_MEMBER_KEY = "clinLastOutreachMember";
 const OUTREACH_MEMBER_CONTEXT_TTL_MS = 45 * 60 * 1000;
 
@@ -1453,32 +1457,122 @@ function parseVoyagerProfilePosts(json) {
     ) {
       continue;
     }
-    const text =
-      item?.commentary?.text?.text ||
-      item?.commentary?.text ||
-      item?.message?.text ||
-      (typeof item?.text === "string" ? item.text : undefined);
-    const t = String(text || "")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (!t || t.length < 8) continue;
-    const key = t.slice(0, 120);
+    const post = voyagerItemToProfilePost(item, included);
+    if (!post) continue;
+    const key = `${post.postKind || "o"}:${(post.userComment || post.text).slice(0, 120)}`;
     if (seen.has(key)) continue;
     seen.add(key);
-
-    let ageLabel;
-    const sub =
-      item?.subDescription?.text || item?.actor?.subDescription?.text;
-    if (typeof sub === "string") ageLabel = sub.trim().slice(0, 120);
-
-    posts.push({
-      text: t.slice(0, 12_000),
-      ...(ageLabel ? { ageLabel } : {}),
-    });
+    posts.push(post);
     if (posts.length >= 25) break;
   }
 
   return posts.length ? posts : null;
+}
+
+function trimPostField(s, max) {
+  if (!s) return undefined;
+  const t = String(s).replace(/\s+/g, " ").trim();
+  if (!t) return undefined;
+  return t.length > max ? t.slice(0, max) : t;
+}
+
+function findVoyagerIncluded(included, ref) {
+  if (!ref || !Array.isArray(included)) return null;
+  const urn =
+    typeof ref === "string"
+      ? ref
+      : ref?.entityUrn || ref?.updateUrn || ref?.["*update"];
+  if (typeof urn !== "string") return null;
+  return (
+    included.find(
+      (x) =>
+        x?.entityUrn === urn ||
+        x?.updateUrn === urn ||
+        (typeof x?.entityUrn === "string" && urn.includes(x.entityUrn)),
+    ) || null
+  );
+}
+
+function extractVoyagerPostText(item) {
+  if (!item || typeof item !== "object") return undefined;
+  return (
+    item?.commentary?.text?.text ||
+    item?.commentary?.text ||
+    item?.message?.text ||
+    (typeof item?.text === "string" ? item.text : undefined)
+  );
+}
+
+function extractVoyagerArticleMeta(item) {
+  if (!item || typeof item !== "object") {
+    return {
+      sharedTitle: undefined,
+      sharedExcerpt: undefined,
+      sharedSource: undefined,
+    };
+  }
+  const content = item?.content || item?.article || {};
+  const title =
+    content?.title?.text ||
+    content?.title ||
+    item?.article?.title?.text ||
+    item?.articleComponent?.title?.text;
+  const excerpt =
+    content?.subtitle?.text ||
+    content?.description?.text ||
+    item?.article?.description?.text;
+  const source =
+    content?.source?.text ||
+    item?.article?.source?.text ||
+    item?.provider?.name;
+  return {
+    sharedTitle: trimPostField(title, 500),
+    sharedExcerpt: trimPostField(excerpt, 2000),
+    sharedSource: trimPostField(source, 200),
+  };
+}
+
+function voyagerItemToProfilePost(item, included) {
+  const commentary = trimPostField(extractVoyagerPostText(item), 4000);
+  const reshareRef = item?.resharedUpdate || item?.["*resharedUpdate"];
+  const reshared = reshareRef
+    ? findVoyagerIncluded(included, reshareRef)
+    : null;
+  const articleFromReshare = reshared
+    ? extractVoyagerArticleMeta(reshared)
+    : { sharedTitle: undefined, sharedExcerpt: undefined, sharedSource: undefined };
+  const articleFromSelf = extractVoyagerArticleMeta(item);
+  const sharedTitle =
+    articleFromReshare.sharedTitle || articleFromSelf.sharedTitle;
+  const sharedExcerpt =
+    articleFromReshare.sharedExcerpt || articleFromSelf.sharedExcerpt;
+  const sharedSource =
+    articleFromReshare.sharedSource || articleFromSelf.sharedSource;
+  const hasArticle = Boolean(sharedTitle);
+  const isReshare = Boolean(
+    reshared || /reshared|repost/i.test(String(item?.$type || "")),
+  );
+  let postKind = "original";
+  if (isReshare && hasArticle) postKind = "news_share";
+  else if (isReshare || (hasArticle && !commentary)) postKind = "reshare";
+  else if (hasArticle && commentary) postKind = "news_share";
+
+  const text =
+    commentary ||
+    sharedTitle ||
+    trimPostField(extractVoyagerPostText(reshared || item), 12000);
+  if (!text || text.length < 8) return null;
+
+  const sub = item?.subDescription?.text || item?.actor?.subDescription?.text;
+  return {
+    text: text.slice(0, 12_000),
+    postKind,
+    ...(commentary && postKind !== "original" ? { userComment: commentary } : {}),
+    ...(sharedTitle ? { sharedTitle } : {}),
+    ...(sharedExcerpt ? { sharedExcerpt } : {}),
+    ...(sharedSource ? { sharedSource } : {}),
+    ...(typeof sub === "string" ? { ageLabel: sub.trim().slice(0, 120) } : {}),
+  };
 }
 
 /** Page world — member share feed via Voyager (self-contained for injection). */
@@ -1520,26 +1614,12 @@ async function fetchPostsViaVoyagerPage() {
       ) {
         continue;
       }
-      const text =
-        item?.commentary?.text?.text ||
-        item?.commentary?.text ||
-        item?.message?.text ||
-        (typeof item?.text === "string" ? item.text : undefined);
-      const t = String(text || "")
-        .replace(/\s+/g, " ")
-        .trim();
-      if (!t || t.length < 8) continue;
-      const key = t.slice(0, 120);
+      const post = voyagerItemToProfilePost(item, included);
+      if (!post) continue;
+      const key = `${post.postKind || "o"}:${(post.userComment || post.text).slice(0, 120)}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      const sub =
-        item?.subDescription?.text || item?.actor?.subDescription?.text;
-      posts.push({
-        text: t.slice(0, 12_000),
-        ...(typeof sub === "string"
-          ? { ageLabel: sub.trim().slice(0, 120) }
-          : {}),
-      });
+      posts.push(post);
       if (posts.length >= 25) break;
     }
     return posts.length ? posts : null;
@@ -1608,6 +1688,77 @@ function scrapeVisibleProfilePosts() {
     return t.length ? t : undefined;
   }
 
+  function extractPostFromActivityCard(card) {
+    const cardText = String(card.innerText || "");
+    const headerText = clean(
+      card.querySelector(
+        ".update-components-header__text-view, .feed-shared-actor__description, .update-components-actor__description, [class*='feed-shared-actor']",
+      )?.innerText,
+    );
+    const articleEl = card.querySelector(
+      ".update-components-article, .feed-shared-article, [class*='feed-shared-article'], [class*='update-components-article']",
+    );
+    const isReshare =
+      /reposted this|shared this|a republié|a partagé|republié cette|shared an article/i.test(
+        `${headerText || ""} ${cardText.slice(0, 400)}`,
+      ) || Boolean(articleEl);
+
+    const userComment = clean(
+      card.querySelector(
+        ".feed-shared-update-v2__commentary .feed-shared-text, .update-components-update-v2__commentary .update-components-text",
+      )?.innerText ||
+        (!articleEl
+          ? card.querySelector(".feed-shared-text, .update-components-text")
+              ?.innerText
+          : card.querySelector(
+              ".feed-shared-update-v2__commentary .feed-shared-text, .update-components-text",
+            )?.innerText),
+    );
+    const sharedTitle = clean(
+      card.querySelector(
+        ".update-components-article__title, .feed-shared-article__title, [class*='article__title']",
+      )?.innerText,
+    );
+    const sharedExcerpt = clean(
+      card.querySelector(
+        ".update-components-article__subtitle, .feed-shared-article__subtitle, [class*='article__description']",
+      )?.innerText,
+    );
+    const sharedSource = clean(
+      card.querySelector(
+        ".update-components-article__meta, .feed-shared-article__meta, [class*='article__meta']",
+      )?.innerText,
+    );
+
+    let postKind = "original";
+    if (isReshare && sharedTitle) postKind = "news_share";
+    else if (isReshare) postKind = "reshare";
+
+    let text =
+      userComment ||
+      sharedTitle ||
+      clean(
+        card.querySelector(".feed-shared-text, .update-components-text")
+          ?.innerText,
+      );
+    if (!text || text.length < 12) return null;
+    if (/^(like|comment|repost|send)\b/i.test(text)) return null;
+
+    const ageM = cardText.match(
+      /(\d+\s*(?:j|d|w|mo|yr|h|min|semaines?|jours?|mois|ans)\b.*|\d{1,2}\s+[a-zéû]+(?:\s+\d{4})?)/i,
+    );
+
+    return {
+      text: text.slice(0, 12_000),
+      postKind,
+      ...(userComment && postKind !== "original" ? { userComment } : {}),
+      ...(sharedTitle ? { sharedTitle } : {}),
+      ...(sharedExcerpt ? { sharedExcerpt } : {}),
+      ...(sharedSource ? { sharedSource } : {}),
+      ...(ageM?.[0] ? { ageLabel: ageM[0].trim().slice(0, 120) } : {}),
+    };
+  }
+
   let vanity;
   try {
     const parts = new URL(window.location.href).pathname
@@ -1643,22 +1794,11 @@ function scrapeVisibleProfilePosts() {
 
   for (const card of cards) {
     if (posts.length >= 20) break;
-    const textEl =
-      card.querySelector(".feed-shared-text") ||
-      card.querySelector(".update-components-text") ||
-      card.querySelector("[class*='break-words']");
-    let text = clean(textEl?.innerText || card.innerText);
-    if (!text || text.length < 20) continue;
-    if (/^(like|comment|repost|send)\b/i.test(text)) continue;
-    const key = text.slice(0, 100);
+    const post = extractPostFromActivityCard(card);
+    if (!post) continue;
+    const key = `${post.postKind || "o"}:${(post.userComment || post.text).slice(0, 100)}`;
     if (seen.has(key)) continue;
     seen.add(key);
-
-    const ageM = (card.innerText || "").match(
-      /(\d+\s*(?:j|d|w|mo|yr|h|min|semaines?|jours?|mois|ans)\b.*|\d{1,2}\s+[a-zéû]+(?:\s+\d{4})?)/i,
-    );
-    const post = { text: text.slice(0, 12_000) };
-    if (ageM?.[0]) post.ageLabel = ageM[0].trim().slice(0, 120);
     posts.push(post);
   }
 
@@ -1698,6 +1838,19 @@ function mergePostsExtractions(voyager, domResult) {
       merged.push({
         text: text.slice(0, 12_000),
         ...(p.ageLabel ? { ageLabel: String(p.ageLabel).slice(0, 120) } : {}),
+        ...(p.postKind ? { postKind: p.postKind } : {}),
+        ...(p.userComment
+          ? { userComment: String(p.userComment).slice(0, 4000) }
+          : {}),
+        ...(p.sharedTitle
+          ? { sharedTitle: String(p.sharedTitle).slice(0, 500) }
+          : {}),
+        ...(p.sharedExcerpt
+          ? { sharedExcerpt: String(p.sharedExcerpt).slice(0, 2000) }
+          : {}),
+        ...(p.sharedSource
+          ? { sharedSource: String(p.sharedSource).slice(0, 200) }
+          : {}),
         ...(p.postUrl ? { postUrl: p.postUrl } : {}),
       });
       if (merged.length >= 25) break;
@@ -4167,19 +4320,114 @@ async function waitForLinkedInProfileTab(tabId, timeoutMs = 90000) {
   );
 }
 
-/** Page world — Message link on profile (full-page thread preferred). */
+/** Navigate to a profile and wait — retries help when the tab is in the background. */
+async function navigateToProfileForAutomation(tabId, profileUrl, opts = {}) {
+  const timeoutMs = opts.suppressFocus ? 180000 : 90000;
+  const attempts = opts.suppressFocus ? 3 : 2;
+  let lastErr = null;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      await chrome.tabs.update(tabId, { url: profileUrl });
+      await waitForLinkedInProfileTab(tabId, timeoutMs);
+      return;
+    } catch (e) {
+      lastErr = e;
+      if (i < attempts - 1) await sleep(2500 * (i + 1));
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+/** Accept profile URL, messaging URL, or visible messaging overlay (LinkedIn often keeps profile URL). */
+async function waitForProfileOrMessagingTab(tabId, timeoutMs = 12000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    let tab;
+    try {
+      tab = await chrome.tabs.get(tabId);
+    } catch {
+      throw new Error("The LinkedIn tab was closed.");
+    }
+    const url = tab?.url || "";
+    if (
+      url &&
+      (isLinkedInProfilePageUrl(url) ||
+        isMessagingThreadUrl(url) ||
+        isMessagingPageUrl(url))
+    ) {
+      await sleep(500);
+      return url;
+    }
+    try {
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: isMessagingDomVisiblePage,
+      });
+      if (result?.visible || result?.onThreadUrl) {
+        await sleep(500);
+        return url;
+      }
+    } catch {
+      /* ignore */
+    }
+    await sleep(350);
+  }
+  throw new Error(
+    "Timed out waiting for LinkedIn profile or messaging.",
+  );
+}
+
+async function pollOutreachThreadReady(
+  tabId,
+  expectedVanity,
+  expectedName,
+  timeoutMs = 10000,
+) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: verifyOutreachThreadReadyPage,
+        args: [expectedVanity || "", expectedName || ""],
+      });
+      if (result?.ready) return result;
+    } catch {
+      /* ignore */
+    }
+    await sleep(400);
+  }
+  return { ready: false, reason: "poll_timeout" };
+}
+
+/** Page world — Message link on profile actions only (avoid inbox sidebar links). */
 function getMessagingHrefFromProfilePage() {
+  const roots = [
+    document.querySelector(".pvs-profile-actions"),
+    document.querySelector('[data-view-name="profile-actions"]'),
+    document.querySelector(".pv-top-card-v2-ctas"),
+    document.querySelector(".pv-top-card"),
+  ].filter(Boolean);
+  if (!roots.length) return null;
+
   const selectors = [
+    'a[data-control-name="message"][href*="/messaging/"]',
+    'a[data-control-name="message"]',
     'a[href*="/messaging/thread/"]',
     'a[href*="messaging/thread"]',
-    '.pvs-profile-actions a[href*="messaging"]',
-    'a[data-control-name="message"]',
     'a[href*="messaging/compose"]',
   ];
-  for (const sel of selectors) {
-    const a = document.querySelector(sel);
-    if (a instanceof HTMLAnchorElement && a.href && a.href.includes("linkedin.com")) {
-      return a.href;
+  for (const root of roots) {
+    for (const sel of selectors) {
+      const a = root.querySelector(sel);
+      if (
+        a instanceof HTMLAnchorElement &&
+        a.href &&
+        a.href.includes("linkedin.com") &&
+        a.href.includes("messaging")
+      ) {
+        return a.href;
+      }
     }
   }
   return null;
@@ -4187,16 +4435,8 @@ function getMessagingHrefFromProfilePage() {
 
 /** Page world — click Message on profile when no direct thread href is available. */
 function clickProfileMessageButton() {
-  const selectors = [
-    'a[data-control-name="message"]',
-    '.pvs-profile-actions a[href*="messaging"]',
-    "button.message-anywhere-button",
-    'button.pvs-profile-actions__action[aria-label*="Message"]',
-    'button[aria-label*="Message"]',
-    'button[aria-label*="Envoyer"]',
-  ];
-  for (const sel of selectors) {
-    const el = document.querySelector(sel);
+  function tryClick(el) {
+    if (!el) return null;
     if (el instanceof HTMLAnchorElement && el.href?.includes("messaging")) {
       el.click();
       return { clicked: true, method: "link" };
@@ -4205,7 +4445,34 @@ function clickProfileMessageButton() {
       el.click();
       return { clicked: true, method: "button" };
     }
+    return null;
   }
+
+  const actionRoots = [
+    document.querySelector(".pvs-profile-actions"),
+    document.querySelector('[data-view-name="profile-actions"]'),
+    document.querySelector(".pv-top-card-v2-ctas"),
+    document.querySelector(".pv-top-card"),
+    document.querySelector("main"),
+  ].filter(Boolean);
+
+  const selectors = [
+    'a[data-control-name="message"]',
+    "button.message-anywhere-button",
+    'a[href*="/messaging/"]',
+    'button.pvs-profile-actions__action[aria-label*="Message"]',
+    'button[aria-label*="Message"]',
+    'button[aria-label*="Messager"]',
+    'button[aria-label*="Envoyer"]',
+  ];
+
+  for (const root of actionRoots) {
+    for (const sel of selectors) {
+      const hit = tryClick(root.querySelector(sel));
+      if (hit) return hit;
+    }
+  }
+
   const btn = [...document.querySelectorAll("button, a[role='button']")].find((el) => {
     const t = (el.getAttribute("aria-label") || el.textContent || "").trim();
     return /^(message|messager)$/i.test(t) || /envoyer un message/i.test(t);
@@ -4741,8 +5008,7 @@ async function enrichOneProfileStep(tabId, base, firstOpen, opts = {}) {
   }
   try {
     await focusAutomationTab(tabId, opts);
-    await chrome.tabs.update(tabId, { url: next.contact.linkedinUrl });
-    await waitForLinkedInProfileTab(tabId);
+    await navigateToProfileForAutomation(tabId, next.contact.linkedinUrl, opts);
   } catch (e) {
     await postAutomationAck(base, next.contact.id, "error");
     return {
@@ -5017,8 +5283,7 @@ async function captureOneCampaignMemberProfileStep(tabId, base, opts = {}) {
   }
   try {
     await focusAutomationTab(tabId, opts);
-    await chrome.tabs.update(tabId, { url: nextProfileUrl });
-    await waitForLinkedInProfileTab(tabId);
+    await navigateToProfileForAutomation(tabId, nextProfileUrl, opts);
   } catch (e) {
     return {
       ok: false,
@@ -5031,10 +5296,11 @@ async function captureOneCampaignMemberProfileStep(tabId, base, opts = {}) {
   try {
     pruned = await waitForProfileCaptureGap(base);
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
     return {
       ok: false,
-      done: true,
-      error: e instanceof Error ? e.message : String(e),
+      done: /max per rolling hour/i.test(msg),
+      error: msg,
     };
   }
   const automation = await fetchAutomationSettings(base);
@@ -5064,7 +5330,432 @@ async function captureOneCampaignMemberProfileStep(tabId, base, opts = {}) {
       /* optional */
     }
   }
-  return { ok: true, done: false, postsCaptured, messagingCaptured: false };
+
+  let messaging = { captured: false };
+  try {
+    messaging = await tryCaptureMessagingAfterProfile(
+      tabId,
+      root,
+      nextProfileUrl,
+    );
+  } catch {
+    /* messaging is optional */
+  }
+
+  return {
+    ok: true,
+    done: false,
+    postsCaptured,
+    messagingCaptured: Boolean(messaging.captured),
+  };
+}
+
+async function loadPipelineState() {
+  const stored = await chrome.storage.local.get([PIPELINE_STATE_KEY]);
+  return stored[PIPELINE_STATE_KEY] || null;
+}
+
+async function savePipelineState(state) {
+  await chrome.storage.local.set({ [PIPELINE_STATE_KEY]: state });
+}
+
+async function resolvePipelineTabId(preferredTabId) {
+  const tryTabId = async (candidate) => {
+    if (typeof candidate !== "number") return null;
+    try {
+      const tab = await chrome.tabs.get(candidate);
+      if (!tab?.id || !isLinkedInHostUrl(tab.url || "")) return null;
+      return tab.id;
+    } catch {
+      return null;
+    }
+  };
+
+  const fromPreferred = await tryTabId(preferredTabId);
+  if (fromPreferred != null) return fromPreferred;
+
+  const stored = await chrome.storage.local.get([PIPELINE_TAB_ID_KEY]);
+  const fromStored = await tryTabId(stored[PIPELINE_TAB_ID_KEY]);
+  if (fromStored != null) return fromStored;
+
+  const linkedInTabs = await chrome.tabs.query({ url: "*://*.linkedin.com/*" });
+  for (const tab of linkedInTabs) {
+    const valid = await tryTabId(tab?.id);
+    if (valid != null) return valid;
+  }
+  return null;
+}
+
+async function pinPipelineTab(tabId) {
+  if (typeof tabId !== "number") return;
+  await chrome.storage.local.set({ [PIPELINE_TAB_ID_KEY]: tabId });
+  try {
+    await chrome.tabs.update(tabId, { autoDiscardable: false });
+  } catch {
+    /* tab may be gone */
+  }
+}
+
+async function unpinPipelineTab(tabId) {
+  if (typeof tabId !== "number") return;
+  try {
+    await chrome.tabs.update(tabId, { autoDiscardable: true });
+  } catch {
+    /* ignore */
+  }
+}
+
+async function schedulePipelineTick(delayMs = 1200) {
+  const mins = Math.max(0.01, Math.min(5, delayMs / 60000));
+  await chrome.alarms.clear(PIPELINE_ALARM);
+  await chrome.alarms.create(PIPELINE_ALARM, { delayInMinutes: mins });
+}
+
+async function finishPipelineRun(state, opts = {}) {
+  const tabId = state?.tabId;
+  await chrome.alarms.clear(PIPELINE_ALARM);
+  await chrome.storage.local.set({ [PIPELINE_RUN_KEY]: false });
+  if (typeof tabId === "number") await unpinPipelineTab(tabId);
+
+  state.active = false;
+  state.finishedAt = Date.now();
+  await savePipelineState(state);
+
+  if (opts.cancelled) {
+    await setExtensionLiveStatus({
+      phase: "success",
+      scope: "pipeline",
+      title: "Automated capture stopped",
+      detail: opts.detail || "Stopped by user.",
+      confirmMemberId: null,
+    });
+    return;
+  }
+  if (opts.error) {
+    await setExtensionLiveStatus({
+      phase: "error",
+      scope: "pipeline",
+      title: "Automated capture stopped",
+      detail: opts.error,
+      confirmMemberId: null,
+    });
+    return;
+  }
+  const s = state?.summary || {};
+  await setExtensionLiveStatus({
+    phase: "success",
+    scope: "pipeline",
+    title: "Automated capture finished",
+    detail: `${s.profilesCaptured ?? 0} profile(s) captured · ${s.listImported ?? 0} imported from list`,
+    confirmMemberId: null,
+  });
+}
+
+async function computeProfileStepsTotal(state, base, automation) {
+  const extensionCampaignId = await resolveExtensionImportCampaignId();
+  const runCampaignQueueCapture = state.fullRun && Boolean(extensionCampaignId);
+  state.campaignCaptureMode = runCampaignQueueCapture;
+  if (runCampaignQueueCapture) {
+    return Math.max(40, state.enrichSteps > 0 ? state.enrichSteps : 250);
+  }
+  if (state.fullRun) {
+    return Math.max(
+      25,
+      state.enrichSteps > 0
+        ? state.enrichSteps
+        : automation?.autoEnrichAfterList
+          ? Math.min(250, Math.max(40, state.summary.listImported * 3))
+          : 0,
+    );
+  }
+  if (state.enrichSteps > 0) return state.enrichSteps;
+  if (automation?.autoEnrichAfterList && state.summary.listImported > 0) {
+    return Math.min(15, state.summary.listImported);
+  }
+  return 0;
+}
+
+async function beginProfilePhase(state, base, automation) {
+  state.phase = "profile";
+  state.profileStepIndex = 0;
+  state.profileStepsTotal = await computeProfileStepsTotal(state, base, automation);
+}
+
+async function runPipelineTick() {
+  const state = await loadPipelineState();
+  if (!state?.active) {
+    const stored = await chrome.storage.local.get([PIPELINE_RUN_KEY]);
+    if (stored[PIPELINE_RUN_KEY]) {
+      await chrome.storage.local.set({ [PIPELINE_RUN_KEY]: false });
+    }
+    return;
+  }
+
+  if (state.pauseUntil && Date.now() < state.pauseUntil) {
+    await schedulePipelineTick(state.pauseUntil - Date.now() + 200);
+    return;
+  }
+  state.pauseUntil = 0;
+
+  const tabId = await resolvePipelineTabId(state.tabId);
+  if (tabId == null) {
+    await finishPipelineRun(state, { error: "LinkedIn tab was closed." });
+    return;
+  }
+  if (tabId !== state.tabId) {
+    state.tabId = tabId;
+    await pinPipelineTab(tabId);
+  }
+
+  const base = state.base || (await getApiBase());
+  state.base = base;
+  const automation = await fetchAutomationSettings(base);
+  if (!automation?.enabled) {
+    await finishPipelineRun(state, {
+      error: "Turn on Background enrich in Clin → Settings.",
+    });
+    return;
+  }
+
+  const suppressFocus = Boolean(state.suppressFocus);
+  const postScrollMs = state.postScrollMs || 2800;
+  const summary = state.summary;
+
+  try {
+    if (state.phase === "list") {
+      await setExtensionLiveStatus({
+        phase: "running",
+        scope: "pipeline",
+        title: "Automated capture",
+        detail: `Importing list — round ${state.listRoundIndex + 1} of ${state.listRoundsTotal}…`,
+        confirmMemberId: null,
+      });
+      const round = await importConnectionsListRound(
+        tabId,
+        base,
+        state.listRoundIndex,
+        postScrollMs,
+        { suppressFocus },
+      );
+      summary.listRoundsRun += 1;
+      state.listRoundIndex += 1;
+      if (!round.ok) {
+        const roundErr = round.error || "List import failed.";
+        summary.errors.push(roundErr);
+        if (/client pace:/i.test(roundErr)) {
+          await publishUserNotice(roundErr, { scope: "pipeline" });
+        }
+        if (round.stop) {
+          await beginProfilePhase(state, base, automation);
+        } else {
+          await savePipelineState(state);
+          await schedulePipelineTick(3000);
+          return;
+        }
+      } else {
+        const imported = round.imported || 0;
+        summary.listImported += imported;
+        if (state.fullRun) {
+          state.consecutiveNoRows = imported > 0 ? 0 : state.consecutiveNoRows + 1;
+        }
+        if (round.stop || (state.fullRun && state.consecutiveNoRows >= 2)) {
+          await beginProfilePhase(state, base, automation);
+        } else if (state.listRoundIndex >= state.listRoundsTotal) {
+          await beginProfilePhase(state, base, automation);
+        } else {
+          await savePipelineState(state);
+          await schedulePipelineTick(1500);
+          return;
+        }
+      }
+    }
+
+    if (state.phase === "profile") {
+      if (state.profileStepsTotal <= 0) {
+        await finishPipelineRun(state, { ok: true });
+        return;
+      }
+      if (state.profileStepIndex >= state.profileStepsTotal) {
+        await finishPipelineRun(state, { ok: true });
+        return;
+      }
+
+      await setExtensionLiveStatus({
+        phase: "running",
+        scope: "pipeline",
+        title: "Automated capture",
+        detail: state.campaignCaptureMode
+          ? `Capturing campaign profile ${state.profileStepIndex + 1}…`
+          : `Enriching profile ${state.profileStepIndex + 1} of ${state.profileStepsTotal}…`,
+        confirmMemberId: null,
+      });
+
+      const step = state.campaignCaptureMode
+        ? await captureOneCampaignMemberProfileStep(tabId, base, { suppressFocus })
+        : await enrichOneProfileStep(
+            tabId,
+            base,
+            state.profileStepIndex === 0 && state.listRoundsTotal === 0,
+            { suppressFocus },
+          );
+
+      summary.profileStepsRun += 1;
+      state.profileStepIndex += 1;
+
+      if (!step.ok) {
+        const stepErr = step.error || "Enrich step failed.";
+        summary.errors.push(stepErr);
+        if (/client pace:/i.test(stepErr)) {
+          await publishUserNotice(stepErr, { scope: "pipeline" });
+          if (/max per rolling hour/i.test(stepErr)) {
+            state.pauseUntil = Date.now() + 3 * 60 * 1000;
+            await setExtensionLiveStatus({
+              phase: "waiting",
+              scope: "pipeline",
+              title: "Automated capture — pace wait",
+              detail: "Hourly cap hit — resuming in ~3 minutes…",
+              confirmMemberId: null,
+            });
+            await savePipelineState(state);
+            await schedulePipelineTick(3 * 60 * 1000);
+            return;
+          }
+        }
+        if (step.done) {
+          await finishPipelineRun(state, { ok: true });
+          return;
+        }
+        state.transientErrors = (state.transientErrors || 0) + 1;
+        const delay = Math.min(30000, 2000 * state.transientErrors);
+        await savePipelineState(state);
+        await schedulePipelineTick(delay);
+        return;
+      }
+
+      state.transientErrors = 0;
+      if (step.done) {
+        await finishPipelineRun(state, { ok: true });
+        return;
+      }
+      summary.profilesCaptured += 1;
+      if (step.messagingCaptured) summary.messagingCaptured += 1;
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    summary.errors.push(msg);
+    state.transientErrors = (state.transientErrors || 0) + 1;
+    if (state.transientErrors >= 8) {
+      await finishPipelineRun(state, { error: msg });
+      return;
+    }
+    await savePipelineState(state);
+    await schedulePipelineTick(Math.min(30000, 3000 * state.transientErrors));
+    return;
+  }
+
+  await savePipelineState(state);
+  await schedulePipelineTick(1500 + Math.floor(Math.random() * 2000));
+}
+
+async function startClinPipeline(opts) {
+  const tabId = opts.tabId;
+  if (typeof tabId !== "number") {
+    return { ok: false, error: "Missing tab id." };
+  }
+  const base = await getApiBase();
+  const automation = await fetchAutomationSettings(base);
+  if (!automation?.enabled) {
+    return {
+      ok: false,
+      error: "Turn on Background enrich in Clin → Settings.",
+    };
+  }
+
+  let currentTab;
+  try {
+    currentTab = await chrome.tabs.get(tabId);
+  } catch {
+    return { ok: false, error: "LinkedIn tab was closed." };
+  }
+
+  const listRounds = Math.max(0, Math.min(20, Number(opts.listRounds) || 0));
+  const enrichSteps = Math.max(0, Math.min(25, Number(opts.enrichSteps) || 0));
+  const fullRun = Boolean(opts.fullRun);
+  const suppressFocus = Boolean(opts.suppressFocus);
+  const postScrollMs = Math.min(
+    12000,
+    Math.max(500, Number(opts.postScrollMs) || 2800),
+  );
+
+  let requestedListRounds = fullRun ? Math.max(1, listRounds || 12) : listRounds;
+  const canImportFromCurrentTab = Boolean(
+    currentTab?.url && isConnectionsListPageUrl(currentTab.url),
+  );
+  const summary = {
+    listImported: 0,
+    profilesCaptured: 0,
+    messagingCaptured: 0,
+    errors: [],
+    listRoundsRun: 0,
+    profileStepsRun: 0,
+    campaignCaptureMode: false,
+  };
+  if (requestedListRounds > 0 && !canImportFromCurrentTab) {
+    requestedListRounds = 0;
+    summary.errors.push(
+      "List import skipped: selected tab is not a people-search / Connections page. Continuing campaign profile capture only.",
+    );
+  }
+
+  await pinPipelineTab(tabId);
+  const state = {
+    active: true,
+    tabId,
+    suppressFocus,
+    postScrollMs,
+    fullRun,
+    enrichSteps,
+    listRoundIndex: 0,
+    listRoundsTotal: requestedListRounds,
+    profileStepIndex: 0,
+    profileStepsTotal: 0,
+    phase: requestedListRounds > 0 ? "list" : "profile",
+    consecutiveNoRows: 0,
+    transientErrors: 0,
+    pauseUntil: 0,
+    campaignCaptureMode: false,
+    summary,
+    base,
+  };
+
+  if (state.phase === "profile") {
+    await beginProfilePhase(state, base, automation);
+  }
+
+  await savePipelineState(state);
+  await chrome.storage.local.set({ [PIPELINE_RUN_KEY]: true });
+  await setExtensionLiveStatus({
+    phase: "running",
+    scope: "pipeline",
+    title: "Automated capture",
+    detail: suppressFocus
+      ? "Running in background — you can switch tabs freely."
+      : "Starting paced import and profile capture…",
+    confirmMemberId: null,
+  });
+  await schedulePipelineTick(400);
+  return { ok: true, started: true, summary };
+}
+
+async function resumePipelineIfNeeded() {
+  const state = await loadPipelineState();
+  if (!state?.active) return;
+  const stored = await chrome.storage.local.get([PIPELINE_RUN_KEY]);
+  if (!stored[PIPELINE_RUN_KEY]) {
+    await chrome.storage.local.set({ [PIPELINE_RUN_KEY]: true });
+  }
+  const alarm = await chrome.alarms.get(PIPELINE_ALARM);
+  if (!alarm) await schedulePipelineTick(2000);
 }
 
 async function pollPendingSelfCapture() {
@@ -5145,15 +5836,21 @@ chrome.runtime.onInstalled.addListener(() => {
   ensurePendingSelfAlarm();
   void clearStaleCaptureLiveStatus();
   pollPendingSelfCapture();
+  void resumePipelineIfNeeded();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   void clearStaleCaptureLiveStatus();
+  void resumePipelineIfNeeded();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === PENDING_SELF_ALARM) {
     pollPendingSelfCapture();
+    return;
+  }
+  if (alarm.name === PIPELINE_ALARM) {
+    void runPipelineTick();
   }
 });
 
@@ -5815,15 +6512,40 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "CLIN_RUN_PIPELINE_STOP") {
-    chrome.storage.local.set({ [PIPELINE_RUN_KEY]: false });
-    void setExtensionLiveStatus({
-      phase: "success",
-      scope: "pipeline",
-      title: "Automated capture stopping",
-      detail: "Finishing current step…",
-      confirmMemberId: null,
-    });
-    sendResponse({ ok: true });
+    void (async () => {
+      const state = await loadPipelineState();
+      if (state) {
+        state.active = false;
+        await savePipelineState(state);
+      }
+      await chrome.alarms.clear(PIPELINE_ALARM);
+      await chrome.storage.local.set({ [PIPELINE_RUN_KEY]: false });
+      if (state?.tabId) await unpinPipelineTab(state.tabId);
+      await chrome.storage.local.remove([PIPELINE_STATE_KEY]);
+      await setExtensionLiveStatus({
+        phase: "success",
+        scope: "pipeline",
+        title: "Automated capture stopping",
+        detail: "Stopped — no further steps will run.",
+        confirmMemberId: null,
+      });
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+  if (msg?.type === "CLIN_PIPELINE_STATUS") {
+    void (async () => {
+      const stored = await chrome.storage.local.get([
+        PIPELINE_RUN_KEY,
+        PIPELINE_STATE_KEY,
+        LIVE_STATUS_KEY,
+      ]);
+      sendResponse({
+        running: Boolean(stored[PIPELINE_RUN_KEY]),
+        state: stored[PIPELINE_STATE_KEY] || null,
+        liveStatus: stored[LIVE_STATUS_KEY] || null,
+      });
+    })();
     return true;
   }
   if (msg?.type !== "CLIN_RUN_PIPELINE") return;
@@ -5835,15 +6557,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       return;
     }
     try {
-      await chrome.storage.local.set({ [PIPELINE_RUN_KEY]: true });
-      const result = await runClinPipeline({
+      const existing = await loadPipelineState();
+      if (existing?.active) {
+        sendResponse({
+          ok: false,
+          error: "Automated capture is already running.",
+        });
+        return;
+      }
+      await chrome.storage.local.remove([PIPELINE_STATE_KEY]);
+      const result = await startClinPipeline({
         tabId,
         listRounds: msg.listRounds,
         enrichSteps: msg.enrichSteps,
         postScrollMs: msg.postScrollMs,
         fullRun: msg.fullRun,
         suppressFocus: msg.suppressFocus,
-        runKey: PIPELINE_RUN_KEY,
         selectedCampaignId:
           typeof msg.selectedCampaignId === "string"
             ? msg.selectedCampaignId
@@ -5855,12 +6584,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         ok: false,
         error: e instanceof Error ? e.message : String(e),
       });
-    } finally {
-      await chrome.storage.local.set({ [PIPELINE_RUN_KEY]: false });
-      const stored = await chrome.storage.local.get([LIVE_STATUS_KEY]);
-      if (stored[LIVE_STATUS_KEY]?.scope === "pipeline" && stored[LIVE_STATUS_KEY]?.phase === "running") {
-        await clearExtensionLiveStatus();
-      }
     }
   })();
 
@@ -5995,7 +6718,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 const OUTREACH_RUN_KEY = "clinOutreachRunActive";
 const OUTREACH_RUN_TAB_ID_KEY = "clinOutreachRunTabId";
-const PIPELINE_RUN_KEY = "clinPipelineRunActive";
 const LIVE_STATUS_KEY = "clinExtensionLiveStatus";
 
 /** @typedef {"idle"|"running"|"waiting"|"success"|"error"} LiveStatusPhase */
@@ -6096,16 +6818,324 @@ async function resolveOutreachRunTabId(preferredTabId) {
   return null;
 }
 
-/** Page world — best-effort DM composer fill on LinkedIn messaging. */
-function clinOutreachFillComposer(draftText, autoSend) {
+/** Page world — vanity slug from a LinkedIn profile URL. */
+function vanityFromProfileUrlPage(url) {
+  if (typeof url !== "string" || !url.trim()) return null;
+  try {
+    const m = new URL(url.trim(), "https://www.linkedin.com").pathname.match(
+      /^\/in\/([^/?#]+)\/?/i,
+    );
+    if (!m?.[1] || m[1].toLowerCase() === "me") return null;
+    return decodeURIComponent(m[1]).toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/** Page world — messaging thread roots that contain a composer. */
+function listMessagingThreadRootsPage() {
+  const roots = [];
+  const seen = new Set();
+  const selectors = [
+    ".msg-overlay-conversation-bubble",
+    ".msg-convo-wrapper",
+    ".msg-thread",
+    "main.scaffold-layout__main",
+    "main",
+  ];
+  for (const sel of selectors) {
+    for (const el of document.querySelectorAll(sel)) {
+      if (!(el instanceof HTMLElement) || seen.has(el)) continue;
+      if (!el.querySelector('.msg-form, [class*="msg-form"]')) continue;
+      seen.add(el);
+      roots.push(el);
+    }
+  }
+  return roots;
+}
+
+/** Page world — is the visible messaging thread for the expected contact? (self-contained for injection) */
+function verifyOutreachThreadReadyPage(expectedVanity, expectedName) {
+  function vanityFromUrl(url) {
+    if (typeof url !== "string" || !url.trim()) return null;
+    try {
+      const m = new URL(url.trim(), "https://www.linkedin.com").pathname.match(
+        /^\/in\/([^/?#]+)\/?/i,
+      );
+      if (!m?.[1] || m[1].toLowerCase() === "me") return null;
+      return decodeURIComponent(m[1]).toLowerCase();
+    } catch {
+      return null;
+    }
+  }
+
+  function normalizeVanity(v) {
+    return String(v || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+  }
+
+  function nameMatches(headerText, name) {
+    const tokens = String(name || "")
+      .toLowerCase()
+      .split(/[\s,.-]+/)
+      .filter((t) => t.length >= 2);
+    if (tokens.length === 0) return false;
+    const hay = String(headerText || "").toLowerCase();
+    const required = tokens.length >= 2 ? 2 : 1;
+    let hits = 0;
+    for (const t of tokens) {
+      if (hay.includes(t)) hits += 1;
+    }
+    return hits >= required;
+  }
+
+  function headerText(root) {
+    const scope = root instanceof HTMLElement ? root : document.body;
+    const header =
+      scope.querySelector(".msg-overlay-conversation-bubble-header") ||
+      scope.querySelector(".msg-thread__header") ||
+      scope.querySelector("[data-test-conversation-header]") ||
+      scope.querySelector("[class*='msg-thread'][class*='header']") ||
+      scope.querySelector(".msg-overlay-bubble-header");
+    return header?.textContent || "";
+  }
+
+  function listThreadRoots() {
+    const roots = [];
+    const seen = new Set();
+    for (const sel of [
+      ".msg-overlay-conversation-bubble",
+      ".msg-convo-wrapper",
+      ".msg-thread",
+      "main.scaffold-layout__main",
+      "main",
+    ]) {
+      for (const el of document.querySelectorAll(sel)) {
+        if (!(el instanceof HTMLElement) || seen.has(el)) continue;
+        if (!el.querySelector('.msg-form, [class*="msg-form"]')) continue;
+        seen.add(el);
+        roots.push(el);
+      }
+    }
+    return roots;
+  }
+
+  const vanity = String(expectedVanity || "").toLowerCase();
+  const normExpected = normalizeVanity(vanity);
+  const roots = listThreadRoots();
+  const scanRoots = roots.length > 0 ? roots : [document.body];
+
+  for (const root of scanRoots) {
+    for (const a of root.querySelectorAll('a[href*="/in/"]')) {
+      if (!(a instanceof HTMLAnchorElement)) continue;
+      const v = vanityFromUrl(a.href);
+      if (!v) continue;
+      if (v === vanity || normalizeVanity(v) === normExpected) {
+        return { ready: true, matchedVanity: v };
+      }
+    }
+    if (expectedName && nameMatches(headerText(root), expectedName)) {
+      return { ready: true, matchedBy: "name" };
+    }
+  }
+
+  if (expectedName && nameMatches(headerText(document.body), expectedName)) {
+    const hasComposer = Boolean(
+      document.querySelector(
+        '.msg-form__contenteditable, [data-lexical-editor="true"], [contenteditable="true"][role="textbox"]',
+      ),
+    );
+    if (hasComposer) {
+      return { ready: true, matchedBy: "name" };
+    }
+  }
+
+  const hasComposer = Boolean(
+    document.querySelector(
+      '.msg-form__contenteditable, [data-lexical-editor="true"], [contenteditable="true"][role="textbox"]',
+    ),
+  );
+  return {
+    ready: false,
+    hasWrongThread: hasComposer,
+    reason: hasComposer ? "wrong_thread" : "no_thread",
+  };
+}
+
+/** Page world — close a stale messaging overlay so profile Message opens the right thread. */
+function dismissWrongMessagingOverlayPage() {
+  const closeSelectors = [
+    "button.msg-overlay-bubble-header__control--close-btn",
+    'button[data-control-name="overlay.close_conversation_window"]',
+    'button[aria-label*="Close your conversation"]',
+    'button[aria-label*="Fermer la conversation"]',
+    'button[aria-label*="Fermer"]',
+  ];
+  for (const sel of closeSelectors) {
+    const btn = document.querySelector(sel);
+    if (btn instanceof HTMLButtonElement && !btn.disabled) {
+      btn.click();
+      return { closed: true };
+    }
+  }
+  return { closed: false };
+}
+
+/** Page world — best-effort DM composer fill on LinkedIn messaging (runs in MAIN world). */
+async function clinOutreachFillComposer(draftText, autoSend, expectedVanity) {
+  const text = String(draftText || "");
+  const vanity = (expectedVanity || "").toLowerCase();
+  const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  function editorContainsSnippet(editor, snippet) {
+    const needle = String(snippet || "").slice(0, Math.min(48, snippet.length)).trim();
+    if (!needle) return true;
+    const root =
+      editor.closest('[data-lexical-editor="true"]') ||
+      editor.closest(".msg-form") ||
+      editor;
+    const hay = root.textContent || root.innerText || "";
+    return hay.includes(needle);
+  }
+
+  function resolveLexicalEditor(editorEl) {
+    let node = editorEl;
+    while (node) {
+      if (node.__lexicalEditor) return node.__lexicalEditor;
+      node = node.parentElement;
+    }
+    const root = editorEl.closest('[data-lexical-editor="true"]');
+    return root?.__lexicalEditor || null;
+  }
+
+  function buildLexicalStateJson(body) {
+    const lines = String(body || "").split("\n");
+    const children = lines.map((line) => ({
+      children: line
+        ? [
+            {
+              detail: 0,
+              format: 0,
+              mode: "normal",
+              style: "",
+              text: line,
+              type: "text",
+              version: 1,
+            },
+          ]
+        : [],
+      direction: "ltr",
+      format: "",
+      indent: 0,
+      type: "paragraph",
+      version: 1,
+      textFormat: 0,
+      textStyle: "",
+    }));
+    if (!children.length) {
+      children.push({
+        children: [],
+        direction: "ltr",
+        format: "",
+        indent: 0,
+        type: "paragraph",
+        version: 1,
+        textFormat: 0,
+        textStyle: "",
+      });
+    }
+    return {
+      root: {
+        children,
+        direction: "ltr",
+        format: "",
+        indent: 0,
+        type: "root",
+        version: 1,
+      },
+    };
+  }
+
+  function dispatchSyntheticPaste(target, plainText) {
+    const data = new DataTransfer();
+    data.setData("text/plain", plainText);
+    data.setData("text/html", plainText.replace(/\n/g, "<br>"));
+    const evt = new Event("paste", {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    });
+    Object.defineProperty(evt, "clipboardData", {
+      value: data,
+      configurable: true,
+    });
+    return target.dispatchEvent(evt);
+  }
+
+  function focusEditor(editor) {
+    const form = editor.closest('.msg-form, [class*="msg-form"]');
+    const placeholder = form?.querySelector(
+      ".msg-form__placeholder, p.msg-form__placeholder",
+    );
+    if (placeholder instanceof HTMLElement) {
+      placeholder.click();
+    }
+    editor.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    editor.click?.();
+    editor.focus?.({ preventScroll: true });
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    } catch {
+      /* ignore */
+    }
+  }
+
   function findEditor() {
     const selectors = [
       '.msg-form__contenteditable[contenteditable="true"]',
       'div.msg-form__msg-content-container [contenteditable="true"]',
+      '[data-lexical-editor="true"][contenteditable="true"]',
       '[data-lexical-editor="true"]',
       '[contenteditable="true"][role="textbox"]',
       ".msg-form__contenteditable",
     ];
+
+    function pickFromRoot(root) {
+      const candidates = [];
+      for (const sel of selectors) {
+        for (const el of root.querySelectorAll(sel)) {
+          if (!(el instanceof HTMLElement)) continue;
+          const r = el.getBoundingClientRect();
+          if (r.width <= 0 || r.height <= 0) continue;
+          if (r.bottom < 0 || r.top > window.innerHeight) continue;
+          candidates.push({ el, area: r.width * r.height });
+        }
+      }
+      candidates.sort((a, b) => b.area - a.area);
+      return candidates[0]?.el || null;
+    }
+
+    if (vanity) {
+      for (const root of listMessagingThreadRootsPage()) {
+        let matched = false;
+        for (const a of root.querySelectorAll('a[href*="/in/"]')) {
+          if (vanityFromProfileUrlPage(a.href) === vanity) {
+            matched = true;
+            break;
+          }
+        }
+        if (!matched) continue;
+        const editor = pickFromRoot(root);
+        if (editor) return editor;
+      }
+    }
+
     const candidates = [];
     for (const sel of selectors) {
       for (const el of document.querySelectorAll(sel)) {
@@ -6120,66 +7150,99 @@ function clinOutreachFillComposer(draftText, autoSend) {
     return candidates[0]?.el || null;
   }
 
-  function fillEditor(editor, text) {
-    const lexicalRoot =
-      editor.closest('[data-lexical-editor="true"]') ||
-      (editor.getAttribute("data-lexical-editor") === "true" ? editor : null);
-    const lexical = editor.__lexicalEditor || lexicalRoot?.__lexicalEditor;
-    if (lexical && typeof lexical.setEditorState === "function") {
-      try {
-        const newState = lexical.parseEditorState(
-          JSON.stringify({
-            root: {
-              children: [
-                {
-                  children: [
-                    {
-                      detail: 0,
-                      format: 0,
-                      mode: "normal",
-                      text,
-                      type: "text",
-                      version: 1,
-                    },
-                  ],
-                  direction: "ltr",
-                  format: "",
-                  indent: 0,
-                  type: "paragraph",
-                  version: 1,
-                },
-              ],
-              direction: "ltr",
-              format: "",
-              indent: 0,
-              type: "root",
-              version: 1,
-            },
-          }),
-        );
-        lexical.setEditorState(newState);
-        return true;
-      } catch {
-        /* fall through */
-      }
-    }
-    editor.focus();
+  function fillViaLexical(editor, body) {
+    const lexical = resolveLexicalEditor(editor);
+    if (!lexical?.parseEditorState || !lexical?.setEditorState) return false;
     try {
-      document.execCommand("selectAll", false, null);
-      document.execCommand("insertText", false, text);
-      return true;
+      focusEditor(editor);
+      const state = lexical.parseEditorState(JSON.stringify(buildLexicalStateJson(body)));
+      lexical.setEditorState(state);
+      return editorContainsSnippet(editor, body);
     } catch {
-      editor.textContent = text;
-      return true;
+      return false;
     }
   }
 
-  const editor = findEditor();
+  function fillViaSyntheticPaste(editor, body) {
+    focusEditor(editor);
+    const targets = [
+      editor,
+      editor.closest('[data-lexical-editor="true"]'),
+      editor.closest(".msg-form__msg-content-container"),
+    ].filter(Boolean);
+    for (const target of targets) {
+      try {
+        document.execCommand("selectAll", false, null);
+        document.execCommand("delete", false, null);
+      } catch {
+        /* ignore */
+      }
+      dispatchSyntheticPaste(target, body);
+      if (editorContainsSnippet(editor, body)) return true;
+    }
+    return false;
+  }
+
+  function fillViaInsertText(editor, body) {
+    focusEditor(editor);
+    try {
+      document.execCommand("selectAll", false, null);
+      if (document.execCommand("insertText", false, body)) {
+        return editorContainsSnippet(editor, body);
+      }
+    } catch {
+      /* fall through */
+    }
+    return false;
+  }
+
+  async function fillViaClipboardPaste(editor, body) {
+    try {
+      await navigator.clipboard.writeText(body);
+      focusEditor(editor);
+      await delay(80);
+      document.execCommand("paste");
+      await delay(120);
+      return editorContainsSnippet(editor, body);
+    } catch {
+      return false;
+    }
+  }
+
+  async function fillEditor(editor) {
+    if (fillViaLexical(editor, text)) return true;
+    if (fillViaSyntheticPaste(editor, text)) return true;
+    if (await fillViaClipboardPaste(editor, text)) return true;
+    if (fillViaInsertText(editor, text)) return true;
+    return false;
+  }
+
+  let editor = null;
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    editor = findEditor();
+    if (editor) break;
+    await delay(400);
+  }
   if (!editor) {
     return { ok: false, error: "Composer not found — open the message thread first." };
   }
-  editor.click?.();
-  fillEditor(editor, draftText);
+
+  let filled = false;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    filled = await fillEditor(editor);
+    if (filled) break;
+    await delay(350);
+    editor = findEditor() || editor;
+  }
+
+  if (!editorContainsSnippet(editor, text)) {
+    return {
+      ok: false,
+      error:
+        "Could not insert draft into LinkedIn composer — paste from Clin manually.",
+    };
+  }
+
   if (!autoSend) {
     return { ok: true, sent: false, needsConfirm: true };
   }
@@ -6201,62 +7264,116 @@ function clinOutreachFillComposer(draftText, autoSend) {
   return { ok: true, sent: true };
 }
 
+/** Page world — composer visible for outreach (self-contained for injection). */
+function isOutreachComposerReadyPage() {
+  const selectors = [
+    '.msg-form__contenteditable[contenteditable="true"]',
+    'div.msg-form__msg-content-container [contenteditable="true"]',
+    '[data-lexical-editor="true"][contenteditable="true"]',
+    '[contenteditable="true"][role="textbox"]',
+    ".msg-form__contenteditable",
+  ];
+  for (const sel of selectors) {
+    for (const el of document.querySelectorAll(sel)) {
+      if (!(el instanceof HTMLElement)) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) return true;
+    }
+  }
+  return /\/messaging\/thread\//i.test(window.location.pathname);
+}
+
 /**
- * Navigate from profile (or wait on thread URL) until messaging composer is reachable.
+ * Navigate from profile until the messaging composer is reachable for this contact.
  */
-async function openMessagingForOutreach(tabId, targetUrl) {
-  if (isMessagingThreadUrl(targetUrl) || isMessagingPageUrl(targetUrl)) {
+async function openMessagingForOutreach(
+  tabId,
+  targetUrl,
+  expectedVanity,
+  expectedName,
+) {
+  async function verify() {
     try {
-      await waitForMessagingThreadTab(tabId, 45000);
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: verifyOutreachThreadReadyPage,
+        args: [expectedVanity || "", expectedName || ""],
+      });
+      return result || { ready: false, reason: "verify_failed" };
     } catch {
-      await sleep(3000);
+      return { ready: false, reason: "verify_failed" };
     }
-    return { ok: true };
   }
 
-  if (!isLinkedInProfilePageUrl(targetUrl)) {
-    await sleep(4500);
-    return { ok: true };
-  }
-
-  try {
-    await waitForLinkedInProfileTab(tabId, 45000);
-  } catch (e) {
-    return {
-      ok: false,
-      error: e instanceof Error ? e.message : String(e),
-    };
-  }
-
-  const [{ result: hasComposer }] = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: isOutreachComposerVisiblePage,
-  });
-  if (hasComposer) {
-    return { ok: true };
-  }
-
-  let msgUrl = null;
-  try {
-    const [{ result }] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: getMessagingHrefFromProfilePage,
-    });
-    msgUrl = typeof result === "string" ? result : null;
-  } catch {
-    /* ignore */
-  }
-
-  if (msgUrl) {
-    await chrome.tabs.update(tabId, { url: msgUrl });
+  async function composerReady() {
     try {
-      await waitForMessagingThreadTab(tabId, 45000);
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: isOutreachComposerReadyPage,
+      });
+      return Boolean(result);
     } catch {
-      return { ok: false, error: "Timed out opening message thread." };
+      return false;
     }
+  }
+
+  async function waitForComposerAfterOpen(timeoutMs = 20000) {
+    try {
+      await waitForMessagingThreadTab(tabId, timeoutMs);
+    } catch {
+      await sleep(2000);
+    }
+    await sleep(1000);
+    for (let i = 0; i < 8; i += 1) {
+      if (await composerReady()) return true;
+      const match = await verify();
+      if (match.ready) return true;
+      await sleep(400);
+    }
+    return false;
+  }
+
+  let match = await verify();
+  if (match.ready) return { ok: true };
+  if (await composerReady()) {
+    match = await verify();
+    if (match.ready || !match.hasWrongThread) return { ok: true };
+  }
+
+  if (isLinkedInProfilePageUrl(targetUrl)) {
+    try {
+      await waitForLinkedInProfileTab(tabId, 25000);
+    } catch (e) {
+      let tab;
+      try {
+        tab = await chrome.tabs.get(tabId);
+      } catch {
+        return {
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        };
+      }
+      const currentUrl = tab?.url || "";
+      if (
+        !isMessagingThreadUrl(currentUrl) &&
+        !isMessagingPageUrl(currentUrl) &&
+        !(await composerReady())
+      ) {
+        return {
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        };
+      }
+    }
+    await sleep(1500);
+  } else if (isMessagingThreadUrl(targetUrl) || isMessagingPageUrl(targetUrl)) {
+    await sleep(800);
+  } else {
     await sleep(1200);
-    return { ok: true };
   }
+
+  match = await verify();
+  if (match.ready) return { ok: true };
 
   let clicked = false;
   try {
@@ -6269,14 +7386,55 @@ async function openMessagingForOutreach(tabId, targetUrl) {
     /* ignore */
   }
 
-  if (clicked) {
-    try {
-      await waitForMessagingThreadTab(tabId, 45000);
-    } catch {
-      return { ok: false, error: "Message opened but thread did not load." };
-    }
-    await sleep(1200);
+  if (clicked && (await waitForComposerAfterOpen(20000))) {
     return { ok: true };
+  }
+
+  if (await composerReady()) return { ok: true };
+
+  let msgUrl = null;
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: getMessagingHrefFromProfilePage,
+    });
+    msgUrl = typeof result === "string" ? result : null;
+  } catch {
+    /* ignore */
+  }
+
+  if (msgUrl && !(await composerReady())) {
+    await chrome.tabs.update(tabId, { url: msgUrl });
+    if (await waitForComposerAfterOpen(20000)) {
+      return { ok: true };
+    }
+  }
+
+  if (await composerReady()) return { ok: true };
+
+  if (!clicked) {
+    try {
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: clickProfileMessageButton,
+      });
+      if (result?.clicked && (await waitForComposerAfterOpen(15000))) {
+        return { ok: true };
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (await composerReady()) return { ok: true };
+
+  match = await verify();
+  if (match.reason === "wrong_thread") {
+    return {
+      ok: false,
+      error:
+        "Wrong LinkedIn thread is open — close other conversations and retry.",
+    };
   }
 
   return {
@@ -6312,6 +7470,7 @@ async function outreachRunStep(tabId, base) {
   await setLastOutreachMemberContext(item);
   const contactLabel = item.fullName?.trim() || "contact";
   const url = item.linkedinUrl;
+  const expectedVanity = linkedinVanityFromUrl(url);
   if (!url) {
     await fetch(`${root}/api/extension/outreach-queue/ack`, {
       method: "POST",
@@ -6326,38 +7485,63 @@ async function outreachRunStep(tabId, base) {
     return { ok: true, skipped: true };
   }
 
-  await setExtensionLiveStatus({
-    phase: "running",
-    scope: "outreach",
-    title: "Outreach run",
-    detail: `Opening ${contactLabel} on LinkedIn…`,
-    confirmMemberId: null,
-  });
-  await chrome.tabs.update(tabId, { url });
-  await setExtensionLiveStatus({
-    phase: "running",
-    scope: "outreach",
-    title: "Outreach run",
-    detail: `Opening message thread for ${contactLabel}…`,
-    confirmMemberId: null,
-  });
-  const opened = await openMessagingForOutreach(tabId, url);
-  if (!opened.ok) {
-    await setExtensionLiveStatus({
-      phase: "waiting",
-      scope: "outreach",
-      title: "Outreach — needs you",
-      detail: opened.error || "Could not open messaging for this contact.",
-      confirmMemberId: item.memberId,
+  let threadAlreadyReady = false;
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: verifyOutreachThreadReadyPage,
+      args: [expectedVanity || "", item.fullName || ""],
     });
-    return {
-      ok: true,
-      item,
-      needsConfirm: true,
-      hint: opened.error || "Could not open messaging for this contact.",
-    };
+    threadAlreadyReady = Boolean(result?.ready);
+  } catch {
+    /* ignore */
   }
-  await sleep(800);
+
+  if (!threadAlreadyReady) {
+    await setExtensionLiveStatus({
+      phase: "running",
+      scope: "outreach",
+      title: "Outreach run",
+      detail: `Opening ${contactLabel} on LinkedIn…`,
+      confirmMemberId: null,
+    });
+    await chrome.tabs.update(tabId, { url });
+    try {
+      await waitForLinkedInProfileTab(tabId, 25000);
+    } catch {
+      /* openMessagingForOutreach will handle partial load */
+    }
+    await sleep(800);
+    await setExtensionLiveStatus({
+      phase: "running",
+      scope: "outreach",
+      title: "Outreach run",
+      detail: `Opening message thread for ${contactLabel}…`,
+      confirmMemberId: null,
+    });
+    const opened = await openMessagingForOutreach(
+      tabId,
+      url,
+      expectedVanity,
+      item.fullName || "",
+    );
+    if (!opened.ok) {
+      await setExtensionLiveStatus({
+        phase: "waiting",
+        scope: "outreach",
+        title: "Outreach — needs you",
+        detail: opened.error || "Could not open messaging for this contact.",
+        confirmMemberId: item.memberId,
+      });
+      return {
+        ok: true,
+        item,
+        needsConfirm: true,
+        hint: opened.error || "Could not open messaging for this contact.",
+      };
+    }
+  }
+  await sleep(1500);
 
   const autoSend = item.sendMode === "auto";
   await setExtensionLiveStatus({
@@ -6371,23 +7555,39 @@ async function outreachRunStep(tabId, base) {
   });
   const [{ result: fill }] = await chrome.scripting.executeScript({
     target: { tabId },
+    world: "MAIN",
     func: clinOutreachFillComposer,
-    args: [item.draftOutreach || "", autoSend],
+    args: [item.draftOutreach || "", autoSend, expectedVanity || ""],
   });
 
   if (!fill?.ok) {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        world: "MAIN",
+        func: (text) => {
+          navigator.clipboard.writeText(String(text || "")).catch(() => {});
+        },
+        args: [item.draftOutreach || ""],
+      });
+    } catch {
+      /* ignore */
+    }
+    const hint =
+      (fill?.error || "Open messaging for this contact, then confirm send.") +
+      " Draft copied to clipboard — paste with Ctrl+V if needed.";
     await setExtensionLiveStatus({
       phase: "waiting",
       scope: "outreach",
       title: "Outreach — needs you",
-      detail: fill?.error || "Open messaging for this contact, then confirm send.",
+      detail: hint,
       confirmMemberId: item.memberId,
     });
     return {
       ok: true,
       item,
       needsConfirm: true,
-      hint: fill?.error || "Open messaging for this contact, then confirm send.",
+      hint,
     };
   }
 
@@ -6620,18 +7820,311 @@ async function resolveCleaningRunTabId(preferred) {
   return typeof li?.id === "number" ? li.id : null;
 }
 
+/** Page world — fill a Lexical/contenteditable field (MAIN world). */
+async function clinFillLexicalContentPage(text) {
+  const body = String(text || "");
+  const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  function editorContainsSnippet(editor, snippet) {
+    const needle = String(snippet || "").slice(0, Math.min(48, snippet.length)).trim();
+    if (!needle) return true;
+    const root =
+      editor.closest('[data-lexical-editor="true"]') ||
+      editor.closest(".msg-form") ||
+      editor.closest(".comments-comment-box") ||
+      editor;
+    return (root.textContent || root.innerText || "").includes(needle);
+  }
+
+  function resolveLexicalEditor(editorEl) {
+    let node = editorEl;
+    while (node) {
+      if (node.__lexicalEditor) return node.__lexicalEditor;
+      node = node.parentElement;
+    }
+    return editorEl.closest('[data-lexical-editor="true"]')?.__lexicalEditor || null;
+  }
+
+  function buildLexicalStateJson(raw) {
+    const lines = String(raw || "").split("\n");
+    return {
+      root: {
+        children: lines.map((line) => ({
+          children: line
+            ? [{ detail: 0, format: 0, mode: "normal", style: "", text: line, type: "text", version: 1 }]
+            : [],
+          direction: "ltr",
+          format: "",
+          indent: 0,
+          type: "paragraph",
+          version: 1,
+          textFormat: 0,
+          textStyle: "",
+        })),
+        direction: "ltr",
+        format: "",
+        indent: 0,
+        type: "root",
+        version: 1,
+      },
+    };
+  }
+
+  function dispatchSyntheticPaste(target, plainText) {
+    const data = new DataTransfer();
+    data.setData("text/plain", plainText);
+    const evt = new Event("paste", { bubbles: true, cancelable: true, composed: true });
+    Object.defineProperty(evt, "clipboardData", { value: data, configurable: true });
+    target.dispatchEvent(evt);
+  }
+
+  function findEditor() {
+    const selectors = [
+      '.comments-comment-box__contenteditable[contenteditable="true"]',
+      ".comments-comment-texteditor [contenteditable='true']",
+      '.comments-comment-box [contenteditable="true"]',
+      '.msg-form__contenteditable[contenteditable="true"]',
+      '[data-lexical-editor="true"][contenteditable="true"]',
+      '[contenteditable="true"][role="textbox"]',
+    ];
+    const candidates = [];
+    for (const sel of selectors) {
+      for (const el of document.querySelectorAll(sel)) {
+        if (!(el instanceof HTMLElement)) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) continue;
+        candidates.push({ el, area: r.width * r.height });
+      }
+    }
+    candidates.sort((a, b) => b.area - a.area);
+    return candidates[0]?.el || null;
+  }
+
+  async function fillEditor(editor) {
+    editor.focus?.();
+    editor.click?.();
+    const lexical = resolveLexicalEditor(editor);
+    if (lexical?.parseEditorState && lexical?.setEditorState) {
+      try {
+        lexical.setEditorState(lexical.parseEditorState(JSON.stringify(buildLexicalStateJson(body))));
+        if (editorContainsSnippet(editor, body)) return true;
+      } catch {
+        /* fall through */
+      }
+    }
+    try {
+      document.execCommand("selectAll", false, null);
+      if (document.execCommand("insertText", false, body)) {
+        if (editorContainsSnippet(editor, body)) return true;
+      }
+    } catch {
+      /* ignore */
+    }
+    dispatchSyntheticPaste(editor, body);
+    if (editorContainsSnippet(editor, body)) return true;
+    try {
+      await navigator.clipboard.writeText(body);
+      await delay(80);
+      document.execCommand("paste");
+      await delay(120);
+    } catch {
+      /* ignore */
+    }
+    return editorContainsSnippet(editor, body);
+  }
+
+  let editor = null;
+  for (let i = 0; i < 12; i += 1) {
+    editor = findEditor();
+    if (editor) break;
+    await delay(350);
+  }
+  if (!editor) return { ok: false, error: "editor_not_found" };
+  const filled = await fillEditor(editor);
+  return filled ? { ok: true, filled: true } : { ok: false, error: "fill_failed" };
+}
+
+/** LinkedIn post age labels older than ~1 year (matches Clin server filter). */
+function clinIsStalePostAgeLabel(ageLabel) {
+  const raw = String(ageLabel || "").trim();
+  if (!raw) return false;
+  const s = raw.toLowerCase().replace(/\s+/g, " ").trim();
+  if (/^(today|yesterday|hier|aujourd)/i.test(s)) return false;
+  const years = s.match(/(\d+)\s*(?:y|yr|yrs|year|years|ans|an)\b/);
+  if (years) return parseInt(years[1], 10) >= 1;
+  const months = s.match(/(\d+)\s*(?:mo|mos|month|months|mois)\b/);
+  if (months) return parseInt(months[1], 10) >= 12;
+  const weeks = s.match(/(\d+)\s*(?:w|wk|wks|week|weeks|sem|semaine|semaines)\b/);
+  if (weeks) return parseInt(weeks[1], 10) * 7 > 365;
+  const days = s.match(/(\d+)\s*(?:d|day|days|j|jour|jours)\b/);
+  if (days) return parseInt(days[1], 10) > 365;
+  const yearIn = s.match(/\b(20\d{2})\b/);
+  if (yearIn) {
+    const y = parseInt(yearIn[1], 10);
+    if (new Date().getFullYear() - y > 1) return true;
+  }
+  return false;
+}
+
+function clinExtractCardAgeLabel(card) {
+  const t = (card.innerText || "").trim();
+  const ageM = t.match(
+    /(\d+\s*(?:j|d|w|mo|yr|h|min|semaines?|jours?|mois|ans)\b.*|\d{1,2}\s+[a-zéû]+(?:\s+\d{4})?)/i,
+  );
+  return ageM?.[0]?.trim() || null;
+}
+
+/** Page world — open first post comment box, paste, optionally submit (MAIN world). */
+async function clinEngageAutoCommentPage(commentText, autoSubmit) {
+  const text = String(commentText || "").trim();
+  const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+  if (!text) return { ok: false, error: "no_comment" };
+
+  for (let i = 0; i < 6; i += 1) {
+    window.scrollBy(0, Math.min(700, window.innerHeight || 600));
+    await delay(450);
+  }
+
+  const cards = [
+    ...document.querySelectorAll(
+      ".feed-shared-update-v2, div[class*='feed-shared-update'], [data-urn*='activity']",
+    ),
+  ];
+  let commentBtn = null;
+  for (const card of cards) {
+    if (!(card instanceof HTMLElement)) continue;
+    const ageLabel = clinExtractCardAgeLabel(card);
+    if (ageLabel && clinIsStalePostAgeLabel(ageLabel)) continue;
+    const btn =
+      card.querySelector('button[aria-label*="Comment"]') ||
+      card.querySelector('button[aria-label*="commentaire"]') ||
+      card.querySelector('button[aria-label*="Commenter"]') ||
+      [...card.querySelectorAll("button")].find((b) =>
+        /comment|commenter|commentaire/i.test(
+          (b.getAttribute("aria-label") || b.textContent || "").trim(),
+        ),
+      );
+    if (btn instanceof HTMLButtonElement && !btn.disabled) {
+      commentBtn = btn;
+      card.scrollIntoView({ block: "center", behavior: "instant" });
+      break;
+    }
+  }
+  if (!commentBtn) {
+    return { ok: false, error: "recent_post_not_found" };
+  }
+
+  commentBtn.click();
+  await delay(1500);
+
+  const fill = await clinFillLexicalContentPage(text);
+  if (!fill?.ok) return fill;
+
+  if (!autoSubmit) {
+    return { ok: true, filled: true, posted: false };
+  }
+
+  await delay(400);
+  const postBtn =
+    document.querySelector(
+      "button.comments-comment-box__submit-button:not([disabled])",
+    ) ||
+    [...document.querySelectorAll("button")].find((b) => {
+      if (b.disabled) return false;
+      const label = (b.getAttribute("aria-label") || b.textContent || "").trim();
+      return /^(post|comment|publier|commenter|reply|répondre)$/i.test(label);
+    });
+  if (!(postBtn instanceof HTMLButtonElement)) {
+    return { ok: true, filled: true, posted: false, error: "submit_button_not_found" };
+  }
+  postBtn.click();
+  await delay(1200);
+  return { ok: true, filled: true, posted: true };
+}
+
+/** Page world — profile More → Remove connection → confirm (MAIN world). */
+async function clinRemovalAutoDisconnectPage() {
+  const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const moreBtn =
+    document.querySelector('button[aria-label*="More actions"]') ||
+    document.querySelector('button[aria-label*="Plus d\'actions"]') ||
+    document.querySelector('[data-control-name="overflow"]') ||
+    document.querySelector(".pvs-profile-actions__action--overflow") ||
+    document.querySelector(".artdeco-dropdown__trigger");
+  if (!(moreBtn instanceof HTMLElement)) {
+    return { ok: false, error: "more_button_not_found" };
+  }
+  moreBtn.click();
+  await delay(900);
+
+  const removeEl = [...document.querySelectorAll(
+    "div[role='menu'] button, div[role='menuitem'], li.artdeco-dropdown__item, span.artdeco-dropdown__item-text",
+  )].find((el) =>
+    /remove connection|retirer.*relation|supprimer.*relation|remove\s+connection/i.test(
+      (el.textContent || "").trim(),
+    ),
+  );
+  if (!(removeEl instanceof HTMLElement)) {
+    return { ok: false, error: "remove_option_not_found" };
+  }
+  removeEl.click();
+  await delay(900);
+
+  const confirmBtn = [...document.querySelectorAll("button")].find((b) => {
+    if (b.disabled) return false;
+    const label = (b.textContent || b.getAttribute("aria-label") || "").trim();
+    return (
+      /^remove$/i.test(label) ||
+      /^retirer$/i.test(label) ||
+      /remove connection/i.test(label) ||
+      /retirer.*relation/i.test(label)
+    );
+  });
+  if (!(confirmBtn instanceof HTMLButtonElement)) {
+    return { ok: false, error: "confirm_not_found" };
+  }
+  confirmBtn.click();
+  await delay(1500);
+  return { ok: true, disconnected: true };
+}
+
 /** Page world — show Clin comment-angle hint on activity page. */
-function clinEngageShowHint(angle, hook) {
+function clinEngageShowHint(suggestedComment, angle, hook) {
   const id = "clin-engage-hint";
   let el = document.getElementById(id);
   if (!el) {
     el = document.createElement("div");
     el.id = id;
     el.style.cssText =
-      "position:fixed;bottom:16px;right:16px;max-width:320px;z-index:99999;" +
+      "position:fixed;bottom:16px;right:16px;max-width:360px;z-index:99999;" +
       "background:#1e293b;color:#f8fafc;padding:12px 14px;border-radius:10px;" +
-      "font:13px/1.4 system-ui,sans-serif;box-shadow:0 4px 20px rgba(0,0,0,.25);";
+      "font:13px/1.45 system-ui,sans-serif;box-shadow:0 4px 20px rgba(0,0,0,.25);";
     document.body.appendChild(el);
+  }
+  el.replaceChildren();
+  if (suggestedComment) {
+    const title = document.createElement("div");
+    title.textContent = "Suggested comment (paste on their post):";
+    title.style.cssText = "font-weight:600;margin-bottom:6px;font-size:12px;opacity:.9;";
+    const body = document.createElement("div");
+    body.textContent = suggestedComment;
+    body.style.cssText = "white-space:pre-wrap;margin-bottom:8px;";
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.textContent = "Copy comment";
+    copyBtn.style.cssText =
+      "border:0;border-radius:6px;padding:6px 10px;background:#3b82f6;color:#fff;" +
+      "font:12px system-ui,sans-serif;cursor:pointer;";
+    copyBtn.addEventListener("click", () => {
+      navigator.clipboard.writeText(suggestedComment).catch(() => {});
+      copyBtn.textContent = "Copied!";
+      setTimeout(() => {
+        copyBtn.textContent = "Copy comment";
+      }, 1500);
+    });
+    el.append(title, body, copyBtn);
+    return;
   }
   const parts = [];
   if (angle) parts.push(`Comment angle: ${angle}`);
@@ -6665,6 +8158,7 @@ async function removalRunStep(tabId, base) {
   }
 
   const item = nextJson.item;
+  const autoExec = item.execMode !== "manual_confirm";
   const contactLabel = item.fullName?.trim() || "contact";
   const url = item.linkedinUrl;
   if (!url) {
@@ -6684,17 +8178,51 @@ async function removalRunStep(tabId, base) {
     phase: "running",
     scope: "cleaning",
     title: "Removal run",
-    detail: `Opening ${contactLabel}…`,
+    detail: autoExec
+      ? `Removing connection with ${contactLabel}…`
+      : `Opening ${contactLabel}…`,
     confirmExecId: null,
     confirmExecKind: null,
   });
   await chrome.tabs.update(tabId, { url });
+  try {
+    await waitForLinkedInProfileTab(tabId, 25000);
+  } catch {
+    await sleep(2000);
+  }
   await sleep(1500);
+
+  if (autoExec) {
+    const [{ result: removal }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: clinRemovalAutoDisconnectPage,
+    });
+    if (removal?.ok && removal?.disconnected) {
+      await fetch(`${root}/api/extension/removal-queue/ack`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ execId: item.execId, outcome: "disconnected" }),
+      });
+      await setExtensionLiveStatus({
+        phase: "success",
+        scope: "cleaning",
+        title: "Removal — disconnected",
+        detail: `Removed ${contactLabel}. Next after pace gap.`,
+        confirmExecId: null,
+        confirmExecKind: null,
+      });
+      return { ok: true, item, completed: true };
+    }
+  }
+
   await setExtensionLiveStatus({
     phase: "waiting",
     scope: "cleaning",
     title: "Removal — disconnect manually",
-    detail: `On ${contactLabel}: More → Remove connection. Then confirm below.`,
+    detail: autoExec
+      ? `Auto-remove failed for ${contactLabel}. More → Remove connection, then confirm.`
+      : `On ${contactLabel}: More → Remove connection. Then confirm below.`,
     confirmExecId: item.execId,
     confirmExecKind: "removal",
   });
@@ -6731,6 +8259,7 @@ async function engageRunStep(tabId, base) {
   }
 
   const item = nextJson.item;
+  const autoExec = item.execMode !== "manual_confirm";
   const contactLabel = item.fullName?.trim() || "contact";
   const profileUrl = item.linkedinUrl;
   if (!profileUrl) {
@@ -6747,36 +8276,85 @@ async function engageRunStep(tabId, base) {
   }
 
   const activityUrl = profileRecentActivityUrl(profileUrl) || profileUrl;
+  const suggestedComment = item.suggestedComment || "";
   await setExtensionLiveStatus({
     phase: "running",
     scope: "cleaning",
     title: "Engage run",
-    detail: `Opening activity for ${contactLabel}…`,
+    detail: autoExec
+      ? `Commenting on a post for ${contactLabel}…`
+      : `Opening activity for ${contactLabel}…`,
     confirmExecId: null,
     confirmExecKind: null,
   });
   await chrome.tabs.update(tabId, { url: activityUrl });
-  await sleep(2000);
+  await sleep(2500);
+
+  if (autoExec && suggestedComment.trim()) {
+    const [{ result: engage }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: clinEngageAutoCommentPage,
+      args: [suggestedComment, true],
+    });
+    if (engage?.ok && engage?.posted) {
+      await fetch(`${root}/api/extension/engage-queue/ack`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ execId: item.execId, outcome: "commented" }),
+      });
+      await setExtensionLiveStatus({
+        phase: "success",
+        scope: "cleaning",
+        title: "Engage — commented",
+        detail: `Comment posted for ${contactLabel}. Next after pace gap.`,
+        confirmExecId: null,
+        confirmExecKind: null,
+      });
+      return { ok: true, item, completed: true };
+    }
+    if (engage?.ok && engage?.filled) {
+      await fetch(`${root}/api/extension/engage-queue/ack`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ execId: item.execId, outcome: "commented" }),
+      });
+      await setExtensionLiveStatus({
+        phase: "success",
+        scope: "cleaning",
+        title: "Engage — comment inserted",
+        detail: `Draft inserted for ${contactLabel} — verify on LinkedIn if needed.`,
+        confirmExecId: null,
+        confirmExecKind: null,
+      });
+      return { ok: true, item, completed: true };
+    }
+  }
+
   const angle = item.commentAngle || item.playbook || "";
   const hook = item.engagementHook || "";
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
       func: clinEngageShowHint,
-      args: [angle, hook],
+      args: [suggestedComment, angle, hook],
     });
   } catch {
     /* page may block injection */
   }
-  const detail = angle
-    ? `Comment angle: ${angle}`
-    : hook
-      ? `Hook: ${hook}`
-      : `Comment on a post for ${contactLabel}, then confirm.`;
+  const detail = suggestedComment
+    ? autoExec
+      ? `Auto-comment failed for ${contactLabel} (no recent post in feed?). Paste manually on a post from the last year, then confirm.`
+      : `Paste AI comment on a recent post for ${contactLabel}, then confirm.`
+    : angle
+      ? `Comment angle: ${angle}`
+      : hook
+        ? `Hook: ${hook}`
+        : `Comment on a post for ${contactLabel}, then confirm.`;
   await setExtensionLiveStatus({
     phase: "waiting",
     scope: "cleaning",
-    title: "Engage — comment manually",
+    title: suggestedComment ? "Engage — paste AI comment" : "Engage — comment manually",
     detail,
     confirmExecId: item.execId,
     confirmExecKind: "engage",
@@ -6835,6 +8413,11 @@ async function runCleaningLoop(opts) {
         hint: step.hint,
       };
     }
+    if (step.completed || step.skipped || step.sent) {
+      steps += 1;
+      await sleep(2000);
+      continue;
+    }
     steps += 1;
     await sleep(2000);
   }
@@ -6892,11 +8475,30 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           phase: "success",
           scope: "cleaning",
           title: kind === "removal" ? "Removal — done" : "Engage — done",
-          detail: "Marked complete. Next contact after pace gap.",
+          detail: "Marked complete. Continuing run…",
           confirmExecId: null,
           confirmExecKind: null,
         });
         sendResponse({ ok: true });
+
+        const runKey = kind === "removal" ? REMOVAL_RUN_KEY : ENGAGE_RUN_KEY;
+        const stepFn = kind === "removal" ? removalRunStep : engageRunStep;
+        const scopeTitle = kind === "removal" ? "Removal run" : "Engage run";
+        const stored = await chrome.storage.local.get([runKey]);
+        if (!stored[runKey]) return;
+        const tabId = await resolveCleaningRunTabId(
+          (await chrome.storage.local.get([CLEANING_RUN_TAB_ID_KEY]))[
+            CLEANING_RUN_TAB_ID_KEY
+          ],
+        );
+        if (typeof tabId !== "number") return;
+        void runCleaningLoop({
+          runKey,
+          stepFn,
+          scopeTitle,
+          tabId,
+          maxSteps: 20,
+        });
       } catch (e) {
         sendResponse({
           ok: false,
@@ -6908,6 +8510,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg?.type === "CLIN_REMOVAL_RUN_START") {
     (async () => {
+      let paused = false;
       try {
         const res = await runCleaningLoop({
           runKey: REMOVAL_RUN_KEY,
@@ -6916,6 +8519,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           tabId: msg.tabId,
           maxSteps: msg.maxSteps,
         });
+        paused = Boolean(res.paused);
         sendResponse(res);
       } catch (e) {
         sendResponse({
@@ -6923,15 +8527,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           error: e instanceof Error ? e.message : String(e),
         });
       } finally {
-        await chrome.storage.local.set({
-          [REMOVAL_RUN_KEY]: false,
-        });
+        if (!paused) {
+          await chrome.storage.local.set({
+            [REMOVAL_RUN_KEY]: false,
+            [CLEANING_RUN_TAB_ID_KEY]: null,
+          });
+        }
       }
     })();
     return true;
   }
   if (msg?.type === "CLIN_ENGAGE_RUN_START") {
     (async () => {
+      let paused = false;
       try {
         const res = await runCleaningLoop({
           runKey: ENGAGE_RUN_KEY,
@@ -6940,6 +8548,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           tabId: msg.tabId,
           maxSteps: msg.maxSteps,
         });
+        paused = Boolean(res.paused);
         sendResponse(res);
       } catch (e) {
         sendResponse({
@@ -6947,9 +8556,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           error: e instanceof Error ? e.message : String(e),
         });
       } finally {
-        await chrome.storage.local.set({
-          [ENGAGE_RUN_KEY]: false,
-        });
+        if (!paused) {
+          await chrome.storage.local.set({
+            [ENGAGE_RUN_KEY]: false,
+            [CLEANING_RUN_TAB_ID_KEY]: null,
+          });
+        }
       }
     })();
     return true;

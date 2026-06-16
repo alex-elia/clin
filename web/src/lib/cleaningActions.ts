@@ -10,7 +10,11 @@ import {
 } from "@/lib/cleaningBuckets";
 import { buildContactPlaybookFromAnalysis } from "@/lib/contactPlaybook";
 import { pickLatestAnalysisView } from "@/lib/contactLlmDisplay";
-import { assessContactReadiness } from "@/lib/contactReadiness";
+import {
+  assessContactReadiness,
+  loadMessagingCaptureFlags,
+} from "@/lib/contactReadiness";
+import { getLatestThreadAnalysisForContact } from "@/lib/inboxThreadAnalysisStore";
 import {
   listContactCleaningExtensionsMap,
   tryUpdateCleaningDismissedAt,
@@ -19,6 +23,8 @@ import {
 import { listContactLlmExtensionsMap } from "@/lib/contactSqlExtras";
 import { loadLatestProfileCapturesByContactId } from "@/lib/campaignMemberReadiness";
 import { enqueueCleaningExec } from "@/lib/cleaningExecQueue";
+import { generateEngageCommentForContact } from "@/lib/cleaningEngageComment";
+import { approveRemovalForContact } from "@/lib/cleaningRemovalApprove";
 
 const QUEUE_BUCKETS = new Set<CleaningBucket>([
   "review_remove",
@@ -52,12 +58,18 @@ async function loadContactContext(contactId: string) {
   const rawProv = parseEnvelope(ext?.llmProvisionalJson ?? null);
   const analysis = pickLatestAnalysisView(rawRefined, rawProv);
   const caps = await loadLatestProfileCapturesByContactId([contactId]);
-  const readiness = assessContactReadiness(row, caps, false);
+  const hasMessaging = loadMessagingCaptureFlags([contactId]).has(contactId);
+  const readiness = assessContactReadiness(row, caps, hasMessaging);
+  const threadStored = hasMessaging
+    ? getLatestThreadAnalysisForContact(contactId)
+    : null;
+  const threadAnalysis = threadStored?.analysis ?? null;
   const bucket = resolveCleaningBucket({
     readiness,
     analysis,
     segment: row.segment,
     hasLlmAnalysis: Boolean(analysis),
+    threadAnalysis,
     cleaningUserBucket: cleaningExt.cleaningUserBucket,
     cleaningDismissedAt: cleaningExt.cleaningDismissedAt,
   });
@@ -67,6 +79,7 @@ async function loadContactContext(contactId: string) {
     analysis,
     readiness,
     bucket,
+    threadAnalysis,
     rawOutput:
       (rawRefined as Record<string, unknown> | null) ??
       (rawProv as Record<string, unknown> | null),
@@ -81,8 +94,12 @@ export async function enqueueCleaningReviewForContact(
     throw new Error("Contact is not in an actionable bucket.");
   }
 
-  const { bucket, analysis } = ctx;
-  const suggestedAction = bucketSuggestedQueueText(bucket, analysis);
+  const { bucket, analysis, threadAnalysis } = ctx;
+  const suggestedAction = bucketSuggestedQueueText(
+    bucket,
+    analysis,
+    threadAnalysis,
+  );
   const priority = bucketQueuePriority(bucket);
   const kind = bucket === "reach_out_dm" ? "outreach_prep" : "review";
 
@@ -168,12 +185,22 @@ export async function enqueueEngageForContact(
   const playbook = buildContactPlaybookFromAnalysis({
     analysis: ctx.analysis,
     rawOutput: ctx.rawOutput,
+    threadAnalysis: ctx.threadAnalysis,
   });
+
+  const generated = await generateEngageCommentForContact(contactId);
+  if (!generated.ok) {
+    throw new Error(
+      generated.error ||
+        "Could not generate a tailored comment. Check Settings → Inference.",
+    );
+  }
 
   await enqueueCleaningExec({
     contactId,
     kind: "engage",
     payload: {
+      suggestedComment: generated.comment,
       commentAngle:
         playbook?.posts_signals?.suggested_comment_angle?.trim() ?? null,
       engagementHook: playbook?.posts_signals?.engagement_hook?.trim() ?? null,
@@ -181,6 +208,41 @@ export async function enqueueEngageForContact(
       rationale: playbook?.rationale?.trim() ?? null,
     },
   });
+}
+
+export type CleaningAcceptEffect =
+  | "removal_exec"
+  | "engage_exec"
+  | "review_queue";
+
+export async function acceptCleaningContact(
+  contactId: string,
+): Promise<CleaningAcceptEffect> {
+  const ctx = await loadContactContext(contactId);
+  if (!ctx?.bucket || !QUEUE_BUCKETS.has(ctx.bucket)) {
+    throw new Error("Contact is not in an actionable bucket.");
+  }
+
+  if (ctx.bucket === "review_remove") {
+    const rationale = bucketSuggestedQueueText(
+      ctx.bucket,
+      ctx.analysis,
+      ctx.threadAnalysis,
+    );
+    await approveRemovalForContact(contactId, rationale);
+    await dismissCleaningContact(contactId);
+    return "removal_exec";
+  }
+
+  if (ctx.bucket === "engage_comment") {
+    await enqueueEngageForContact(contactId);
+    await dismissCleaningContact(contactId);
+    return "engage_exec";
+  }
+
+  await enqueueCleaningReviewForContact(contactId);
+  await dismissCleaningContact(contactId);
+  return "review_queue";
 }
 
 export type CleaningBatchAction =
@@ -192,7 +254,7 @@ export type CleaningBatchAction =
   | "enqueue_engage";
 
 export type CleaningBatchResult =
-  | { contactId: string; ok: true }
+  | { contactId: string; ok: true; effect?: CleaningAcceptEffect }
   | { contactId: string; ok: false; error: string };
 
 export async function runCleaningBatchAction(opts: {
@@ -205,7 +267,11 @@ export async function runCleaningBatchAction(opts: {
   for (const contactId of opts.contactIds) {
     try {
       switch (opts.action) {
-        case "accept":
+        case "accept": {
+          const effect = await acceptCleaningContact(contactId);
+          results.push({ contactId, ok: true, effect });
+          continue;
+        }
         case "enqueue_review":
           await enqueueCleaningReviewForContact(contactId);
           break;
@@ -221,6 +287,7 @@ export async function runCleaningBatchAction(opts: {
           break;
         case "enqueue_engage":
           await enqueueEngageForContact(contactId);
+          await dismissCleaningContact(contactId);
           break;
         default:
           throw new Error("Unknown action.");

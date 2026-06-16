@@ -47,6 +47,11 @@ export type IngestInput = {
     profilePosts?: {
       text: string;
       ageLabel?: string;
+      postKind?: "original" | "reshare" | "news_share";
+      userComment?: string;
+      sharedTitle?: string;
+      sharedExcerpt?: string;
+      sharedSource?: string;
       reactions?: number;
       comments?: number;
       postUrl?: string;

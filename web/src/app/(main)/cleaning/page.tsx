@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Suspense } from "react";
 import { AutopilotBatchPanel } from "@/app/(main)/autopilot/AutopilotBatchPanel";
+import { CleaningExecQueuePanel } from "@/components/CleaningExecQueuePanel";
 import { CleaningBoard } from "@/components/CleaningBoard";
 import { CleaningExecPanels } from "@/components/CleaningExecPanels";
 import { getDb } from "@/db";
@@ -12,16 +13,20 @@ import {
   buildCleaningBoard,
   collectEngageContactIds,
 } from "@/lib/cleaningBoard";
+import { listPendingCleaningExecItems } from "@/lib/cleaningExecQueueList";
 
 export const dynamic = "force-dynamic";
 
 export default async function CleaningPage() {
   getDb();
-  const [board, settings, pending] = await Promise.all([
+  const [board, settings, pending, execItems] = await Promise.all([
     buildCleaningBoard(),
     getAutopilotSettings(),
     Promise.resolve(countContactsPendingLlmAnalysis()),
+    listPendingCleaningExecItems({ limit: 100 }),
   ]);
+  const engageQueue = execItems.filter((i) => i.kind === "engage");
+  const removalQueue = execItems.filter((i) => i.kind === "removal");
 
   return (
     <div className="mx-auto max-w-3xl space-y-10">
@@ -60,11 +65,11 @@ export default async function CleaningPage() {
             the extension runners for paced LinkedIn work.
           </li>
           <li>
-            Removal is two-stage: review on{" "}
-            <Link href="/queue" className="clin-link">
-              Review queue
-            </Link>
-            , approve, then disconnect via the extension. Outreach prep:{" "}
+            Accept on a bucket queues work below — edit engage comments, then run
+            paced tasks in the extension Cleaning tab (todo lists + auto runs).
+          </li>
+          <li>
+            Outreach prep still lives on{" "}
             <Link href="/decisions" className="clin-link">
               Decisions
             </Link>
@@ -76,6 +81,11 @@ export default async function CleaningPage() {
       <Suspense fallback={<p className="text-sm text-[var(--clin-muted)]">Loading buckets…</p>}>
         <CleaningBoard data={board} />
       </Suspense>
+
+      <CleaningExecQueuePanel
+        initialEngage={engageQueue}
+        initialRemoval={removalQueue}
+      />
 
       <CleaningExecPanels
         engageBucketCount={board.summary.bucketCounts.engage_comment ?? 0}

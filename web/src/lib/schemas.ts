@@ -8,6 +8,11 @@ const messagingMessageSchema = z.object({
 const profilePostSchema = z.object({
   text: z.string().min(1).max(12_000),
   ageLabel: z.string().max(120).optional(),
+  postKind: z.enum(["original", "reshare", "news_share"]).optional(),
+  userComment: z.string().max(4000).optional(),
+  sharedTitle: z.string().max(500).optional(),
+  sharedExcerpt: z.string().max(2000).optional(),
+  sharedSource: z.string().max(200).optional(),
   reactions: z.number().int().nonnegative().optional(),
   comments: z.number().int().nonnegative().optional(),
   postUrl: z.string().url().optional(),

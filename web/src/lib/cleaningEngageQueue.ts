@@ -16,6 +16,8 @@ export type EngageQueueItem = {
   commentAngle: string | null;
   engagementHook: string | null;
   playbook: string | null;
+  suggestedComment: string | null;
+  execMode: "auto" | "manual_confirm";
 };
 
 export async function getNextEngageItem(): Promise<
@@ -83,6 +85,11 @@ export async function getNextEngageItem(): Promise<
           ? payload.engagementHook
           : null,
       playbook: typeof payload.playbook === "string" ? payload.playbook : null,
+      suggestedComment:
+        typeof payload.suggestedComment === "string"
+          ? payload.suggestedComment
+          : null,
+      execMode: settings.engageExecMode,
     },
     waitMs: 0,
   };

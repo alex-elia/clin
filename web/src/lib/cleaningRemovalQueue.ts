@@ -14,6 +14,7 @@ export type RemovalQueueItem = {
   fullName: string | null;
   linkedinUrl: string | null;
   rationale: string | null;
+  execMode: "auto" | "manual_confirm";
 };
 
 export async function getNextRemovalItem(): Promise<
@@ -76,6 +77,7 @@ export async function getNextRemovalItem(): Promise<
       linkedinUrl: contact.linkedinUrlCanonical,
       rationale:
         typeof payload.rationale === "string" ? payload.rationale : null,
+      execMode: settings.removalExecMode,
     },
     waitMs: 0,
   };

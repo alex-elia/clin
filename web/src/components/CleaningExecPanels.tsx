@@ -89,19 +89,16 @@ export function CleaningExecPanels({
       <div className="clin-card space-y-3 p-5">
         <h2 className="clin-section-title">Removal batch</h2>
         <p className="text-sm text-[var(--clin-muted)]">
-          {removalBucketCount} contact{removalBucketCount === 1 ? "" : "s"} flagged
-          for removal review. After you approve on the{" "}
-          <Link href="/queue" className="clin-link">
-            review queue
-          </Link>
-          , {removalExecPending} pending for extension disconnect.
+          {removalBucketCount} contact{removalBucketCount === 1 ? "" : "s"} in
+          the removal bucket. Accept on the board queues them directly — see{" "}
+          <strong className="clin-strong">Exec queues</strong> above.{" "}
+          {removalExecPending > 0
+            ? `${removalExecPending} waiting in the extension removal queue.`
+            : ""}
         </p>
-        <Link href="/queue" className="clin-btn-secondary inline-block text-sm">
-          Open review queue
-        </Link>
         <p className="text-xs text-[var(--clin-muted)]">
           Clin opens each profile — you disconnect on LinkedIn and confirm in the
-          extension.
+          extension todo list or removal run.
         </p>
       </div>
 

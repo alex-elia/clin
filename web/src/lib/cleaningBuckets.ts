@@ -1,5 +1,10 @@
 import type { ContactReadiness } from "@/lib/contactReadinessShared";
 import type { LlmAnalysisView } from "@/lib/contactLlmDisplay";
+import {
+  cleaningAdviceFromThread,
+  threadSuggestsRemoval,
+} from "@/lib/cleaningThreadHelpers";
+import type { InboxThreadAnalysis } from "@/lib/inboxThreadAnalysisTypes";
 
 export const CLEANING_BUCKETS = [
   "enrich_first",
@@ -81,6 +86,7 @@ export function resolveCleaningBucket(input: {
   analysis: LlmAnalysisView | null;
   segment: string;
   hasLlmAnalysis: boolean;
+  threadAnalysis?: InboxThreadAnalysis | null;
   cleaningUserBucket?: CleaningBucket | null;
   cleaningDismissedAt?: number | null;
 }): CleaningBucket | null {
@@ -108,6 +114,14 @@ export function resolveCleaningBucket(input: {
     return "needs_review";
   }
 
+  const thread = input.threadAnalysis;
+  if (threadSuggestsRemoval(thread)) {
+    return "review_remove";
+  }
+  if (thread?.thread_stage === "social_only") {
+    return "keep_passive";
+  }
+
   const stewardship = input.analysis?.stewardship?.recommendation;
   if (
     stewardship === "consider_removing" ||
@@ -115,6 +129,18 @@ export function resolveCleaningBucket(input: {
     input.analysis?.suggestedActions.includes("consider_removing")
   ) {
     return "review_remove";
+  }
+
+  if (input.segment === "ghost" && thread) {
+    if (
+      thread.thread_stage === "ghosted" ||
+      thread.thread_stage === "cold_no_reply"
+    ) {
+      return "review_remove";
+    }
+    if (stewardship !== "keep") {
+      return "needs_review";
+    }
   }
 
   const fit = input.analysis?.outreachFit?.recommendation;
@@ -146,7 +172,11 @@ export function resolveCleaningBucket(input: {
 export function bucketSuggestedQueueText(
   bucket: CleaningBucket,
   analysis: LlmAnalysisView | null,
+  threadAnalysis?: InboxThreadAnalysis | null,
 ): string {
+  const threadAdvice = cleaningAdviceFromThread(threadAnalysis);
+  if (threadAdvice && bucket === "review_remove") return threadAdvice;
+
   const playbook = analysis?.cleaningPlan?.playbook?.trim();
   if (playbook) return playbook;
 
@@ -154,7 +184,10 @@ export function bucketSuggestedQueueText(
     case "enrich_first":
       return "Capture full profile on LinkedIn (extension Import & enrich).";
     case "review_remove":
-      return "Review whether to disconnect on LinkedIn — Clin does not remove for you.";
+      return (
+        threadAdvice ||
+        "Review whether to disconnect on LinkedIn — Clin does not remove for you."
+      );
     case "reach_out_dm":
       return analysis?.outreachFit?.rationale
         ? `Reach out: ${analysis.outreachFit.rationale}`

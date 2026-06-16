@@ -214,7 +214,8 @@ export default async function SettingsPage() {
           </h3>
           <p className="text-sm text-[var(--clin-muted)]">
             Paced extension queues for engage-comment and removal disconnect.
-            You still comment or remove on LinkedIn yourself.
+            When auto mode is on, the extension posts comments or removes
+            connections on LinkedIn for you (with pace caps).
           </p>
           <label className="flex cursor-pointer items-start gap-3 text-sm">
             <input
@@ -230,12 +231,34 @@ export default async function SettingsPage() {
           <label className="flex cursor-pointer items-start gap-3 text-sm">
             <input
               type="checkbox"
+              name="engageAutoExec"
+              defaultChecked={cleaningExec.engageExecMode === "auto"}
+              className="mt-1"
+            />
+            <span className="text-[var(--clin-text)]">
+              Engage: auto-post comment (off = open activity and confirm manually)
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <input
+              type="checkbox"
               name="removalEnabled"
               defaultChecked={cleaningExec.removalEnabled}
               className="mt-1"
             />
             <span className="font-medium text-[var(--clin-text)]">
               Enable removal disconnect runner
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              name="removalAutoExec"
+              defaultChecked={cleaningExec.removalExecMode === "auto"}
+              className="mt-1"
+            />
+            <span className="text-[var(--clin-text)]">
+              Removal: auto-disconnect (off = open profile and confirm manually)
             </span>
           </label>
           <div className="grid gap-4 sm:grid-cols-2">

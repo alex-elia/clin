@@ -19,7 +19,11 @@ import type {
 import { RecommendationPanel } from "@/components/RecommendationPanel";
 
 type BatchResult =
-  | { contactId: string; ok: true }
+  | {
+      contactId: string;
+      ok: true;
+      effect?: "removal_exec" | "engage_exec" | "review_queue";
+    }
   | { contactId: string; ok: false; error: string };
 
 type Props = {
@@ -46,6 +50,7 @@ export function CleaningBoard({ data }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastResults, setLastResults] = useState<BatchResult[] | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   function selectBucket(id: CleaningBucket) {
     setSelected(new Set());
@@ -85,6 +90,7 @@ export function CleaningBoard({ data }: Props) {
     if (ids.length === 0) return;
     setBusy(true);
     setError(null);
+    setSuccess(null);
     setLastResults(null);
     try {
       const res = await fetch("/api/cleaning/batch", {
@@ -97,7 +103,29 @@ export function CleaningBoard({ data }: Props) {
         setError(body?.error || `HTTP ${res.status}`);
         return;
       }
-      setLastResults(body.results ?? []);
+      const results: BatchResult[] = body.results ?? [];
+      setLastResults(results);
+      if (action === "accept") {
+        const ok = results.filter((r) => r.ok);
+        const removals = ok.filter((r) => r.effect === "removal_exec").length;
+        const engages = ok.filter((r) => r.effect === "engage_exec").length;
+        const reviews = ok.filter((r) => r.effect === "review_queue").length;
+        const parts: string[] = [];
+        if (removals)
+          parts.push(
+            `${removals} queued for removal — see Exec queues below and extension Cleaning tab`,
+          );
+        if (engages)
+          parts.push(
+            `${engages} queued for engage — edit comments in Exec queues below`,
+          );
+        if (reviews) parts.push(`${reviews} sent to review queue`);
+        if (parts.length) setSuccess(parts.join(". "));
+      } else if (action === "enqueue_engage") {
+        setSuccess(
+          "Queued for engage — edit comments in Exec queues below, then use extension Cleaning tab.",
+        );
+      }
       setSelected(new Set());
       router.refresh();
     } catch (e) {
@@ -120,6 +148,7 @@ export function CleaningBoard({ data }: Props) {
   ) {
     setBusy(true);
     setError(null);
+    setSuccess(null);
     try {
       const res = await fetch("/api/cleaning/batch", {
         method: "POST",
@@ -131,6 +160,27 @@ export function CleaningBoard({ data }: Props) {
         setError(body?.error || `HTTP ${res.status}`);
         return;
       }
+      const result = (body.results ?? [])[0] as BatchResult | undefined;
+      if (result?.ok && action === "accept") {
+        if (result.effect === "removal_exec") {
+          setSuccess(
+            "Queued for removal — see Exec queues below and extension Cleaning tab.",
+          );
+        } else if (result.effect === "engage_exec") {
+          setSuccess(
+            "Queued for engage — edit the AI comment in Exec queues below.",
+          );
+        } else {
+          setSuccess("Accepted — added to review queue.");
+        }
+      } else if (result?.ok && action === "enqueue_engage") {
+        setSuccess(
+          "Queued for engage — see Exec queues below to edit comments.",
+        );
+      } else if (!result?.ok && result?.error) {
+        setError(result.error);
+        return;
+      }
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -140,6 +190,9 @@ export function CleaningBoard({ data }: Props) {
   }
 
   const failedCount = lastResults?.filter((r) => !r.ok).length ?? 0;
+  const firstFailedError = lastResults?.find(
+    (r): r is Extract<BatchResult, { ok: false }> => !r.ok,
+  )?.error;
 
   return (
     <div className="space-y-8">
@@ -212,10 +265,21 @@ export function CleaningBoard({ data }: Props) {
       {error ? (
         <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
       ) : null}
+      {success ? (
+        <p className="text-sm text-emerald-700 dark:text-emerald-300">
+          {success}
+        </p>
+      ) : null}
       {lastResults && failedCount > 0 ? (
         <p className="text-sm text-amber-700 dark:text-amber-300">
           {failedCount} contact{failedCount === 1 ? "" : "s"} failed — check
           selection and retry.
+          {firstFailedError ? (
+            <>
+              {" "}
+              First error: {firstFailedError}
+            </>
+          ) : null}
         </p>
       ) : null}
 
@@ -457,6 +521,11 @@ function ContactBucketCard({
               <span className="clin-pill text-xs">
                 {EXTRACTION_READINESS_LABELS[card.readiness.extractionLevel]}
               </span>
+              {card.threadStageLabel ? (
+                <span className="clin-pill text-xs text-amber-900 dark:text-amber-100">
+                  Thread: {card.threadStageLabel}
+                </span>
+              ) : null}
               {card.compositeScore != null ? (
                 <span className="clin-pill text-xs tabular-nums">
                   Score {card.compositeScore}
@@ -475,6 +544,14 @@ function ContactBucketCard({
             <p className="mt-2 text-sm">
               <span className="font-medium">{outreachFitHeadline(fit)}:</span>{" "}
               {fit.rationale}
+            </p>
+          ) : null}
+          {card.threadAnalysis?.thread_summary ? (
+            <p className="mt-2 text-sm text-[var(--clin-muted)]">
+              <span className="font-medium text-[var(--clin-text)]">
+                Thread:
+              </span>{" "}
+              {card.threadAnalysis.thread_summary}
             </p>
           ) : null}
           {playbook ? (
@@ -501,9 +578,9 @@ function ContactBucketCard({
               </Link>
             ) : null}
             {card.bucket === "review_remove" ? (
-              <Link href="/queue" className="clin-link">
-                Review queue
-              </Link>
+              <span className="text-xs text-[var(--clin-muted)]">
+                Accept queues removal in extension
+              </span>
             ) : null}
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--clin-border)] pt-3">

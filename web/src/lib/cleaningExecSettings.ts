@@ -6,15 +6,21 @@ import { nextRandomizedGapMs } from "@/lib/pace";
 export const CLEANING_EXEC_KEYS = {
   removalEnabled: "cleaning.removal_enabled",
   engageEnabled: "cleaning.engage_enabled",
+  engageExecMode: "cleaning.engage_exec_mode",
+  removalExecMode: "cleaning.removal_exec_mode",
   minSecondsBetweenActions: "cleaning.min_seconds_between_actions",
   maxPerDay: "cleaning.max_per_day",
   jitterPercent: "cleaning.jitter_percent",
   afterActionGapMs: "cleaning.after_action_gap_ms",
 } as const;
 
+export type CleaningExecMode = "auto" | "manual_confirm";
+
 export type CleaningExecSettings = {
   removalEnabled: boolean;
   engageEnabled: boolean;
+  engageExecMode: CleaningExecMode;
+  removalExecMode: CleaningExecMode;
   minSecondsBetweenActions: number;
   maxPerDay: number;
   jitterPercent: number;
@@ -23,6 +29,8 @@ export type CleaningExecSettings = {
 const DEFAULTS: CleaningExecSettings = {
   removalEnabled: false,
   engageEnabled: false,
+  engageExecMode: "auto",
+  removalExecMode: "auto",
   minSecondsBetweenActions: 90,
   maxPerDay: 20,
   jitterPercent: 35,
@@ -91,6 +99,14 @@ export async function getCleaningExecSettings(): Promise<CleaningExecSettings> {
       map.get(CLEANING_EXEC_KEYS.engageEnabled),
       DEFAULTS.engageEnabled,
     ),
+    engageExecMode:
+      map.get(CLEANING_EXEC_KEYS.engageExecMode) === "manual_confirm"
+        ? "manual_confirm"
+        : "auto",
+    removalExecMode:
+      map.get(CLEANING_EXEC_KEYS.removalExecMode) === "manual_confirm"
+        ? "manual_confirm"
+        : "auto",
     minSecondsBetweenActions: clamp(
       "minSecondsBetweenActions",
       parseStored(
@@ -133,6 +149,22 @@ export async function updateCleaningExecSettings(
   await upsertAppSetting(
     CLEANING_EXEC_KEYS.engageEnabled,
     next.engageEnabled ? "1" : "0",
+  );
+  if (patch.engageExecMode) {
+    next.engageExecMode =
+      patch.engageExecMode === "manual_confirm" ? "manual_confirm" : "auto";
+  }
+  if (patch.removalExecMode) {
+    next.removalExecMode =
+      patch.removalExecMode === "manual_confirm" ? "manual_confirm" : "auto";
+  }
+  await upsertAppSetting(
+    CLEANING_EXEC_KEYS.engageExecMode,
+    next.engageExecMode,
+  );
+  await upsertAppSetting(
+    CLEANING_EXEC_KEYS.removalExecMode,
+    next.removalExecMode,
   );
   await upsertAppSetting(
     CLEANING_EXEC_KEYS.minSecondsBetweenActions,
