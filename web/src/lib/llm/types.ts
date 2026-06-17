@@ -27,5 +27,7 @@ export type CompleteChatParams = {
   jsonMode?: boolean;
   temperature?: number;
   timeoutMs?: number;
+  /** Ollama only: cap context window to limit RAM (default set per call site). */
+  numCtx?: number;
   meta?: Record<string, string | number | boolean | null>;
 };

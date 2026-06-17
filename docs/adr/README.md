@@ -16,6 +16,7 @@ ADRs document **significant, stable** choices for Clin. They complement [DESIGN.
 | [0008](./0008-editorial-autopilot-jobs-sources.md) | Editorial autopilot: job queue, sources, market calendar, runners |
 | [0009](./0009-desktop-distribution-portable-electron.md) | Desktop distribution strategy: portable Electron + GitHub Releases |
 | [0010](./0010-unified-contact-analysis-playbook.md) | Unified contact analysis: staged capture pipeline, context bundle, contact playbook |
+| [0011](./0011-campaign-engage-shared-exec-queue.md) | Campaign `engage_comment` ICP action reuses `cleaning_exec_queue`; parallel DM path |
 
 ## Conventions
 

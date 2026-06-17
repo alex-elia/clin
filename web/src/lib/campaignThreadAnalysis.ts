@@ -28,13 +28,6 @@ export function maybeAutopilotThreadAnalysisAfterMessagingCapture(
       const thread = await getMergedMessagingThreadForContact(contactId);
       if (!thread?.messages.length) return;
 
-      const shouldAnalyze =
-        thread.replyState.needsReply ||
-        thread.replyState.lastFrom === "them" ||
-        thread.replyState.theirMessageCount > 0;
-
-      if (!shouldAnalyze) return;
-
       const stored = getThreadAnalysis(contactId, thread.threadKey);
       if (!isThreadAnalysisStale(stored, thread.messageCount)) return;
 

@@ -637,7 +637,7 @@
               <span style="margin-bottom: 4px">Execution mode</span>
               <label style="display: flex; align-items: center; gap: 8px; font-size: 12px">
                 <input id="pipeline-background-mode" type="checkbox" checked />
-                Run in background (do not bring LinkedIn tab to front)
+                Run in background (recommended — keeps running when you switch tabs)
               </label>
             </label>
             <div class="stack-tight">
@@ -701,10 +701,30 @@
         </section>
 
         <section id="panel-cleaning" class="panel" role="tabpanel" hidden>
-          <p class="section-title">Engage (comment)</p>
+          <p class="section-title">Engage queue</p>
           <p class="hint">
-            Opens each contact&apos;s recent activity with a comment angle from Clin.
-            You write the comment on LinkedIn, then confirm below.
+            Todo list from Clin cleaning — each card shows the post to comment on
+            and the AI draft. Paste on LinkedIn yourself, then mark done.
+          </p>
+          <button id="refresh-cleaning-engage" type="button" class="btn btn-secondary">
+            Refresh engage queue
+          </button>
+          <div id="cleaning-engage-queue" style="margin-top: 10px"></div>
+
+          <p class="section-title" style="margin-top: 16px">Removal queue</p>
+          <p class="hint">
+            Profiles queued for disconnect after you accepted removal on the
+            cleaning board.
+          </p>
+          <button id="refresh-cleaning-removal" type="button" class="btn btn-secondary">
+            Refresh removal queue
+          </button>
+          <div id="cleaning-removal-queue" style="margin-top: 10px"></div>
+
+          <p class="section-title" style="margin-top: 16px">Paced runs</p>
+          <p class="hint">
+            Auto mode (Settings) opens each contact in sequence. Manual mode: use
+            the todo lists above item by item.
           </p>
           <div class="stack-tight">
             <button id="engage-run-start" type="button" class="btn btn-primary">
@@ -716,8 +736,8 @@
           </div>
           <p class="section-title" style="margin-top: 16px">Removal (disconnect)</p>
           <p class="hint">
-            Opens each approved profile. Use More → Remove connection on LinkedIn,
-            then confirm disconnected here.
+            Removes connections when auto mode is on in Settings, otherwise opens
+            each profile for manual disconnect + confirm.
           </p>
           <div class="stack-tight">
             <button id="removal-run-start" type="button" class="btn btn-primary">

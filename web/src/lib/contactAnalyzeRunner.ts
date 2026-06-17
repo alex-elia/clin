@@ -18,6 +18,10 @@ import {
 import type { LlmConfig } from "@/lib/llm/types";
 import type { ContactContextBundle } from "@/lib/contactContextBundle";
 import { buildContactContextBundle } from "@/lib/contactContextBundle";
+import {
+  ensureCleaningThreadAnalysis,
+  formatThreadAnalysisForContactAnalyze,
+} from "@/lib/cleaningThreadAnalysis";
 import { syncCleaningQueueFromAnalysis } from "@/lib/cleaningQueue";
 import { contactAnalyzeBodySchema } from "@/lib/schemas";
 
@@ -70,6 +74,11 @@ export async function executeContactAnalysis(
   const contextBundle =
     opts?.contextBundle ?? (await buildContactContextBundle(contactId));
 
+  const threadCtx = await ensureCleaningThreadAnalysis(contactId, llm);
+  const threadAnalysisForPrompt = threadCtx.analysis
+    ? formatThreadAnalysisForContactAnalyze(threadCtx.analysis)
+    : null;
+
   const result = await runContactLlmAnalysis(db, {
     contactId,
     tier: tierIn,
@@ -78,6 +87,7 @@ export async function executeContactAnalysis(
     llmMeta: opts?.llmMeta,
     contextBundle,
     salesCoachBlock: opts?.salesCoachBlock,
+    threadAnalysis: threadAnalysisForPrompt,
   });
 
   const jsonStr = JSON.stringify(result.envelope);
@@ -87,6 +97,7 @@ export async function executeContactAnalysis(
     contactId,
     result.envelope,
     row.segment,
+    threadCtx.analysis,
   );
 
   const updated = await db.query.contacts.findFirst({

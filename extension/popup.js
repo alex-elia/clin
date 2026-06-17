@@ -4,6 +4,8 @@ const LAST_PACE_KEY = "clin_last_pace_message";
 
 const baseInput = document.getElementById("base");
 const outreachEl = document.getElementById("outreach");
+const cleaningEngageEl = document.getElementById("cleaning-engage-queue");
+const cleaningRemovalEl = document.getElementById("cleaning-removal-queue");
 const brandingPostsEl = document.getElementById("branding-posts");
 const dashLink = document.getElementById("dash-link");
 const liveStatusBar = document.getElementById("live-status-bar");
@@ -102,7 +104,7 @@ function renderLiveStatus(state) {
           phase: "success",
           scope: "cleaning",
           title: "Cleaning — done",
-          detail: "Marked complete.",
+          detail: "Marked complete. Run continuing…",
           persist: true,
         });
       } else {
@@ -339,6 +341,10 @@ function initTabs() {
       if (btn.dataset.panel === "data") void refreshCampaignUi();
       if (btn.dataset.panel === "branding") void loadReadyBranding();
       if (btn.dataset.panel === "outreach") void loadOutreachSendSettings();
+      if (btn.dataset.panel === "cleaning") {
+        void loadCleaningEngageQueue();
+        void loadCleaningRemovalQueue();
+      }
     });
   });
   settingsGear?.addEventListener("click", () => activate("settings"));
@@ -992,10 +998,9 @@ async function runFullCampaignCaptureFlow() {
           const msg = chrome.runtime.lastError.message || "";
           if (isMessageChannelClosedError(msg)) {
             resolve({
-              ok: false,
+              ok: true,
+              started: true,
               transient: true,
-              error:
-                "Connection to extension worker closed while waiting. If the run started, it may still continue in background.",
             });
             return;
           }
@@ -1008,12 +1013,19 @@ async function runFullCampaignCaptureFlow() {
   });
 
   if (!resp.ok) {
-    if (resp.transient) {
-      setStatus(resp.error, "");
-    } else {
-      setStatus(resp.error || "Pipeline failed.", "err");
-    }
+    setStatus(resp.error || "Pipeline failed.", "err");
     void refreshPipelineStatus();
+    return;
+  }
+
+  if (resp.started) {
+    setStatus(
+      suppressFocus
+        ? "Automated capture running in background — switch tabs freely. Watch the status bar above; use Stop to cancel."
+        : "Automated capture started — keep the LinkedIn tab available.",
+      "ok",
+    );
+    void pollPipelineUntilDone();
     return;
   }
 
@@ -1197,20 +1209,69 @@ async function refreshPipelineStatus() {
   if (!pipelineStatusEl) return;
   const base = getBase();
   try {
-    const res = await clinFetch(`${base}/api/automation/status`);
-    const j = await res.json();
-    if (!res.ok) {
+    const [automationRes, pipeRes] = await Promise.all([
+      clinFetch(`${base}/api/automation/status`),
+      new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: "CLIN_PIPELINE_STATUS" }, (r) => {
+          if (chrome.runtime.lastError) {
+            resolve({ running: false });
+            return;
+          }
+          resolve(r || { running: false });
+        });
+      }),
+    ]);
+    const j = await automationRes.json();
+    if (!automationRes.ok) {
       pipelineStatusEl.textContent = "";
       return;
     }
     const a = j.automation;
     const need = j.needsProfileCount ?? "?";
+    const runLine = pipeRes.running
+      ? " · Automated capture running in background"
+      : "";
     pipelineStatusEl.textContent = a?.enabled
-      ? `${need} need full profile · ${j.todayCount ?? "?"}/${a.maxPerDay} opens today (${j.remainingToday ?? "?"} left)`
+      ? `${need} need full profile · ${j.todayCount ?? "?"}/${a.maxPerDay} opens today (${j.remainingToday ?? "?"} left)${runLine}`
       : "Background enrich is off — enable in Clin → Settings.";
   } catch {
     pipelineStatusEl.textContent = "";
   }
+}
+
+async function pollPipelineUntilDone() {
+  for (let i = 0; i < 360; i += 1) {
+    await new Promise((r) => setTimeout(r, 5000));
+    const status = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ type: "CLIN_PIPELINE_STATUS" }, (r) => {
+        if (chrome.runtime.lastError) {
+          resolve({ running: false });
+          return;
+        }
+        resolve(r || { running: false });
+      });
+    });
+    void refreshPipelineStatus();
+    void syncLiveStatusFromStorage();
+    if (!status.running) {
+      const s = status.state?.summary;
+      if (s) {
+        const errLine =
+          s.errors?.length > 0
+            ? `\nNotes: ${s.errors.slice(0, 2).join(" · ")}`
+            : "";
+        setStatus(
+          `Capture finished. List: ~${s.listImported ?? 0} imported · Profiles: ${s.profilesCaptured ?? 0} · Threads: ${s.messagingCaptured ?? 0}.${errLine}`,
+          "ok",
+        );
+      }
+      return;
+    }
+  }
+  setStatus(
+    "Automated capture still running in background (poll timed out). Check status bar or Clin app.",
+    "",
+  );
 }
 
 async function postAck(base, contactId, outcome) {
@@ -1592,6 +1653,346 @@ function renderOutreachCard(it, base) {
   return card;
 }
 
+function renderCleaningEngageCard(it, base) {
+  const card = document.createElement("div");
+  card.className = "card";
+
+  const h3 = document.createElement("h3");
+  h3.className = "card-title";
+  h3.textContent = it.fullName || "Unknown";
+  card.appendChild(h3);
+
+  if (it.targetPostPreview) {
+    const kindLabel =
+      it.targetPostKind === "news_share"
+        ? "Shared article"
+        : it.targetPostKind === "reshare"
+          ? "Reshare"
+          : null;
+    const postLabel = document.createElement("p");
+    postLabel.className = "outreach-meta";
+    postLabel.textContent = kindLabel
+      ? `Post to comment on · ${kindLabel}${it.targetPostAge ? ` · ${it.targetPostAge}` : ""}`
+      : it.targetPostAge
+        ? `Post to comment on · ${it.targetPostAge}`
+        : "Post to comment on";
+    card.appendChild(postLabel);
+    const postBlock = document.createElement("p");
+    postBlock.className = "hint";
+    postBlock.style.whiteSpace = "pre-wrap";
+    postBlock.textContent = it.targetPostPreview;
+    card.appendChild(postBlock);
+    if (kindLabel) {
+      const note = document.createElement("p");
+      note.className = "hint";
+      note.textContent =
+        "Interest signal — comment on their take or the topic, not as if they wrote the article.";
+      card.appendChild(note);
+    }
+  } else {
+    const noPost = document.createElement("p");
+    noPost.className = "hint";
+    noPost.textContent =
+      "No post within the last year captured — pick a recent post on their activity page.";
+    card.appendChild(noPost);
+  }
+
+  const ta = document.createElement("textarea");
+  ta.className = "card-draft";
+  ta.value = it.suggestedComment?.trim() || "(No comment — regenerate in Clin)";
+  card.appendChild(ta);
+
+  const row1 = document.createElement("div");
+  row1.className = "btn-row";
+
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "btn btn-secondary";
+  copyBtn.textContent = "Copy comment";
+  copyBtn.addEventListener("click", () => {
+    const text = ta.value || "";
+    navigator.clipboard.writeText(text).catch(() => {
+      window.prompt("Copy:", text);
+    });
+  });
+  row1.appendChild(copyBtn);
+
+  const activityUrl = it.activityUrl || it.linkedinUrl;
+  if (activityUrl) {
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "btn btn-secondary";
+    openBtn.textContent = "Open activity";
+    openBtn.addEventListener("click", () => {
+      window.open(activityUrl, "_blank", "noopener,noreferrer");
+    });
+    row1.appendChild(openBtn);
+  }
+  card.appendChild(row1);
+
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "btn btn-secondary";
+  saveBtn.style.marginTop = "8px";
+  saveBtn.textContent = "Save comment to Clin";
+  saveBtn.addEventListener("click", async () => {
+    saveBtn.disabled = true;
+    try {
+      const r = await fetch(`${base}/api/cleaning/exec-queue/${it.execId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ suggestedComment: ta.value }),
+      });
+      if (!r.ok) {
+        setStatus((await r.json().catch(() => ({})))?.error || `Save failed ${r.status}`, "err");
+        saveBtn.disabled = false;
+        return;
+      }
+      setStatus("Comment saved.", "ok");
+    } catch (e) {
+      setStatus(String(e), "err");
+      saveBtn.disabled = false;
+    }
+  });
+  card.appendChild(saveBtn);
+
+  const doneBtn = document.createElement("button");
+  doneBtn.type = "button";
+  doneBtn.className = "btn btn-primary";
+  doneBtn.style.marginTop = "8px";
+  doneBtn.textContent = "Mark commented";
+  doneBtn.addEventListener("click", async () => {
+    doneBtn.disabled = true;
+    try {
+      const r = await fetch(`${base}/api/extension/engage-queue/ack`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ execId: it.execId, outcome: "commented" }),
+      });
+      if (!r.ok) {
+        setStatus(await r.text(), "err");
+        doneBtn.disabled = false;
+        return;
+      }
+      setStatus("Marked commented.", "ok");
+      loadCleaningEngageQueue();
+    } catch (e) {
+      setStatus(String(e), "err");
+      doneBtn.disabled = false;
+    }
+  });
+  card.appendChild(doneBtn);
+
+  const skipBtn = document.createElement("button");
+  skipBtn.type = "button";
+  skipBtn.className = "btn btn-secondary";
+  skipBtn.style.marginTop = "8px";
+  skipBtn.textContent = "Skip";
+  skipBtn.addEventListener("click", async () => {
+    skipBtn.disabled = true;
+    try {
+      const r = await fetch(`${base}/api/extension/engage-queue/ack`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ execId: it.execId, outcome: "skipped" }),
+      });
+      if (!r.ok) {
+        setStatus(await r.text(), "err");
+        skipBtn.disabled = false;
+        return;
+      }
+      setStatus("Skipped.", "ok");
+      loadCleaningEngageQueue();
+    } catch (e) {
+      setStatus(String(e), "err");
+      skipBtn.disabled = false;
+    }
+  });
+  card.appendChild(skipBtn);
+
+  return card;
+}
+
+function renderCleaningRemovalCard(it, base) {
+  const card = document.createElement("div");
+  card.className = "card";
+
+  const h3 = document.createElement("h3");
+  h3.className = "card-title";
+  h3.textContent = it.fullName || "Unknown";
+  card.appendChild(h3);
+
+  if (it.rationale) {
+    const rationale = document.createElement("p");
+    rationale.className = "hint";
+    rationale.textContent = it.rationale;
+    card.appendChild(rationale);
+  }
+
+  const row1 = document.createElement("div");
+  row1.className = "btn-row";
+  if (it.linkedinUrl) {
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "btn btn-secondary";
+    openBtn.textContent = "Open profile";
+    openBtn.addEventListener("click", () => {
+      window.open(it.linkedinUrl, "_blank", "noopener,noreferrer");
+    });
+    row1.appendChild(openBtn);
+  }
+  card.appendChild(row1);
+
+  const doneBtn = document.createElement("button");
+  doneBtn.type = "button";
+  doneBtn.className = "btn btn-primary";
+  doneBtn.textContent = "Mark disconnected";
+  doneBtn.addEventListener("click", async () => {
+    doneBtn.disabled = true;
+    try {
+      const r = await fetch(`${base}/api/extension/removal-queue/ack`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ execId: it.execId, outcome: "disconnected" }),
+      });
+      if (!r.ok) {
+        setStatus(await r.text(), "err");
+        doneBtn.disabled = false;
+        return;
+      }
+      setStatus("Marked disconnected.", "ok");
+      loadCleaningRemovalQueue();
+    } catch (e) {
+      setStatus(String(e), "err");
+      doneBtn.disabled = false;
+    }
+  });
+  card.appendChild(doneBtn);
+
+  const skipBtn = document.createElement("button");
+  skipBtn.type = "button";
+  skipBtn.className = "btn btn-secondary";
+  skipBtn.style.marginTop = "8px";
+  skipBtn.textContent = "Skip";
+  skipBtn.addEventListener("click", async () => {
+    skipBtn.disabled = true;
+    try {
+      const r = await fetch(`${base}/api/extension/removal-queue/ack`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ execId: it.execId, outcome: "skipped" }),
+      });
+      if (!r.ok) {
+        setStatus(await r.text(), "err");
+        skipBtn.disabled = false;
+        return;
+      }
+      setStatus("Skipped.", "ok");
+      loadCleaningRemovalQueue();
+    } catch (e) {
+      setStatus(String(e), "err");
+      skipBtn.disabled = false;
+    }
+  });
+  card.appendChild(skipBtn);
+
+  return card;
+}
+
+async function loadCleaningEngageQueue() {
+  if (!cleaningEngageEl) return;
+  cleaningEngageEl.replaceChildren();
+  const hint = document.createElement("p");
+  hint.className = "text-muted";
+  hint.textContent = "Loading…";
+  cleaningEngageEl.appendChild(hint);
+
+  const base = getBase();
+  try {
+    const res = await clinFetch(`${base}/api/extension/cleaning-engage/ready`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      hint.textContent = data?.error || `HTTP ${res.status}`;
+      hint.classList.add("is-err");
+      return;
+    }
+    cleaningEngageEl.replaceChildren();
+    const items = data.items || [];
+    if (items.length === 0) {
+      const p = document.createElement("p");
+      p.className = "text-muted";
+      p.textContent =
+        "Engage queue empty. Accept contacts on Clin → Cleaning (engage bucket).";
+      cleaningEngageEl.appendChild(p);
+      return;
+    }
+    const cap = document.createElement("p");
+    cap.className = "text-muted";
+    cap.textContent = `${data.count} pending (showing ${Math.min(10, items.length)}).`;
+    cleaningEngageEl.appendChild(cap);
+    for (const it of items.slice(0, 10)) {
+      cleaningEngageEl.appendChild(renderCleaningEngageCard(it, base));
+    }
+  } catch (e) {
+    cleaningEngageEl.replaceChildren();
+    const p = document.createElement("p");
+    p.className = "text-muted is-err";
+    p.textContent = String(e);
+    cleaningEngageEl.appendChild(p);
+  }
+}
+
+async function loadCleaningRemovalQueue() {
+  if (!cleaningRemovalEl) return;
+  cleaningRemovalEl.replaceChildren();
+  const hint = document.createElement("p");
+  hint.className = "text-muted";
+  hint.textContent = "Loading…";
+  cleaningRemovalEl.appendChild(hint);
+
+  const base = getBase();
+  try {
+    const res = await clinFetch(`${base}/api/extension/cleaning-removal/ready`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      hint.textContent = data?.error || `HTTP ${res.status}`;
+      hint.classList.add("is-err");
+      return;
+    }
+    cleaningRemovalEl.replaceChildren();
+    const items = data.items || [];
+    if (items.length === 0) {
+      const p = document.createElement("p");
+      p.className = "text-muted";
+      p.textContent =
+        "Removal queue empty. Accept removals on Clin → Cleaning (review remove bucket).";
+      cleaningRemovalEl.appendChild(p);
+      return;
+    }
+    const cap = document.createElement("p");
+    cap.className = "text-muted";
+    cap.textContent = `${data.count} pending (showing ${Math.min(10, items.length)}).`;
+    cleaningRemovalEl.appendChild(cap);
+    for (const it of items.slice(0, 10)) {
+      cleaningRemovalEl.appendChild(renderCleaningRemovalCard(it, base));
+    }
+  } catch (e) {
+    cleaningRemovalEl.replaceChildren();
+    const p = document.createElement("p");
+    p.className = "text-muted is-err";
+    p.textContent = String(e);
+    cleaningRemovalEl.appendChild(p);
+  }
+}
+
+document.getElementById("refresh-cleaning-engage")?.addEventListener("click", () => {
+  void loadCleaningEngageQueue();
+});
+
+document.getElementById("refresh-cleaning-removal")?.addEventListener("click", () => {
+  void loadCleaningRemovalQueue();
+});
+
 const outreachAutoSendEl = document.getElementById("outreach-auto-send");
 const outreachSendModeHintEl = document.getElementById("outreach-send-mode-hint");
 
@@ -1737,7 +2138,7 @@ async function startCleaningRun(type) {
     detail: "Starting…",
     persist: true,
   });
-  const res = await chrome.runtime.sendMessage({ type: msgType, maxSteps: 5 });
+  const res = await chrome.runtime.sendMessage({ type: msgType, maxSteps: 20 });
   if (chrome.runtime.lastError) {
     setLiveStatus({
       phase: "error",

@@ -2,6 +2,10 @@ import { asc, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contentAiMessages, contentAiThreads } from "@/db/schema";
 import type { CoachAction } from "@/lib/brandCoachTypes";
+import {
+  COACH_LIMITS,
+  truncateForCoach,
+} from "@/lib/coachContextLimits";
 
 export type CoachThreadScope = "studio" | "post" | "home";
 
@@ -36,12 +40,20 @@ export async function getOrCreateThread(options: {
 
 export async function listThreadMessages(threadId: string, limit = 40) {
   const db = getDb();
-  return db
+  const rows = await db
     .select()
     .from(contentAiMessages)
     .where(eq(contentAiMessages.threadId, threadId))
     .orderBy(asc(contentAiMessages.createdAt))
     .limit(limit);
+  return rows.map((row) => ({
+    ...row,
+    content: truncateForCoach(row.content, COACH_LIMITS.historyMessage),
+  }));
+}
+
+function truncateStoredCoachMessage(content: string): string {
+  return truncateForCoach(content, COACH_LIMITS.historyMessage * 2);
 }
 
 export async function appendThreadMessage(
@@ -52,11 +64,15 @@ export async function appendThreadMessage(
 ): Promise<void> {
   const db = getDb();
   const now = new Date();
+  const storedContent =
+    role === "assistant"
+      ? truncateStoredCoachMessage(content)
+      : truncateForCoach(content, COACH_LIMITS.userMessage);
   await db.insert(contentAiMessages).values({
     id: crypto.randomUUID(),
     threadId,
     role,
-    content,
+    content: storedContent,
     actionsJson: actionsJson?.length ? actionsJson : null,
     createdAt: now,
   });

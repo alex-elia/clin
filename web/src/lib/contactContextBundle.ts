@@ -1,7 +1,9 @@
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { captureSessions } from "@/db/schema";
+import { safeTruncate } from "@/lib/llm/sanitizePromptText";
 import { getLatestProfileContextForOutreach } from "@/lib/profileCaptureContext";
+import { filterRecentProfilePosts } from "@/lib/profilePostRecency";
 
 export type ContextDepth = "missing" | "thin" | "ok";
 
@@ -55,13 +57,9 @@ function postsDepthFromJson(
   if (!json) return "missing";
   const posts = json.profilePosts;
   if (!Array.isArray(posts)) return "missing";
-  const withText = posts.filter(
-    (p) =>
-      p &&
-      typeof p === "object" &&
-      typeof (p as { text?: string }).text === "string" &&
-      (p as { text: string }).text.trim().length >= 8,
-  );
+  const withText = filterRecentProfilePosts(
+    posts as { text?: string; ageLabel?: string }[],
+  ).filter((p) => (p.text?.trim().length ?? 0) >= 8);
   if (withText.length >= 2) return "ok";
   if (withText.length >= 1) return "thin";
   return "missing";
@@ -166,7 +164,7 @@ function formatCompanyIntelBlock(
 
   let text = parts.join("\n\n");
   if (!text) return "";
-  if (text.length > maxChars) text = `${text.slice(0, maxChars - 1)}…`;
+  if (text.length > maxChars) text = safeTruncate(text, maxChars);
   return text;
 }
 

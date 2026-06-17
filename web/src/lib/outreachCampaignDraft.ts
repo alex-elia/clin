@@ -20,6 +20,8 @@ import {
   getSenderIdentity,
 } from "@/lib/senderIdentity";
 import { getUserContextForLlm, userContextHasLlmSignal } from "@/lib/userContext";
+import { POST_ORIGIN_LLM_RULE } from "@/lib/profilePostKinds";
+import { POST_RECENCY_LLM_RULE } from "@/lib/profilePostRecency";
 
 const outSchema = z.object({ message: z.string() });
 
@@ -29,7 +31,11 @@ The user message includes who YOU are (sender) and who the recipient is. Write i
 
 If your runtime exposes web search, browsing, or URL fetch tools (e.g. Ollama web_search / web_fetch or an app-integrated browser): use them before you draft when the recipient names a company or organization in Company or Headline. Run a few focused queries—such as "<company> official about products", "<company> news", or the company name plus the person's role from Headline—to ground one concrete, truthful hook (what they build, sector, or a recent public milestone). Do not invent financials, headcount, or non-public facts. If tools are unavailable or results are empty, write using only the Clin-provided fields.
 
-Tone: professional, warm, concise. Be specific; avoid generic templates.`;
+Tone: professional, warm, concise. Be specific; avoid generic templates.
+
+${POST_RECENCY_LLM_RULE}
+
+${POST_ORIGIN_LLM_RULE}`;
 
 /** Appended to the user message so it applies even when the campaign overrides the system prompt. */
 const USER_WEB_RESEARCH_BLOCK = `Research and grounding (read carefully):
@@ -52,6 +58,17 @@ export async function generateOutreachDraftForMember(
     where: eq(outreachCampaignMembers.id, memberId),
   });
   if (!member) return { ok: false, error: "Member not found", stage: "load" };
+  if (
+    member.status === "skipped" ||
+    member.status === "sent" ||
+    member.status === "closed"
+  ) {
+    return {
+      ok: false,
+      error: `Member status is "${member.status}" — cannot draft outreach.`,
+      stage: "status",
+    };
+  }
   const campaign = await db.query.outreachCampaigns.findFirst({
     where: eq(outreachCampaigns.id, member.campaignId),
   });

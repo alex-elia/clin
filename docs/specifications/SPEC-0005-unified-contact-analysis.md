@@ -1,8 +1,8 @@
 # SPEC-0005: Unified contact analysis (capture chain, context bundle, playbook)
 
-**Status:** Target — ADR-0010 accepted; implementation phased (see rollout section).  
+**Status:** Partially implemented — ADR-0010 accepted; Phases 1–4 largely as-built; company/web chain (5a/5b) in progress.  
 **Scope:** `web/` server, `extension/` autopilot, Cleaning + Campaigns UI.  
-**Related:** [ADR-0010](../adr/0010-unified-contact-analysis-playbook.md), [SPEC-0001](./SPEC-0001-clin-system-specification.md), [ADR-0005](../adr/0005-unified-llm-inference-layer.md), [ADR-0008](../adr/0008-editorial-autopilot-jobs-sources.md).
+**Related:** [ADR-0010](../adr/0010-unified-contact-analysis-playbook.md), [SPEC-0001](./SPEC-0001-clin-system-specification.md), [SPEC-0006](./SPEC-0006-cleaning-exec-campaign-engage.md), [ADR-0005](../adr/0005-unified-llm-inference-layer.md), [ADR-0008](../adr/0008-editorial-autopilot-jobs-sources.md), [ADR-0011](../adr/0011-campaign-engage-shared-exec-queue.md).
 
 ---
 
@@ -180,7 +180,12 @@ type ContactPlaybook = {
   campaign_overlay?: {
     campaignId: string;
     icp_match: "strong" | "partial" | "weak" | "unknown";
-    recommended_action: "keep_and_draft" | "keep" | "review_remove" | "skip";
+    recommended_action:
+      | "keep_and_draft"
+      | "keep"
+      | "engage_comment"
+      | "review_remove"
+      | "skip";
   };
 };
 ```
@@ -188,8 +193,9 @@ type ContactPlaybook = {
 ### 5.3 Merge rules
 
 1. **Base** from latest `contact_analyze` (`cleaning_plan.bucket` → `ContactNextAction` map).
-2. **Campaign overlay** when member exists: `strong` + `keep_and_draft` biases toward `message`; `weak` / `review_remove` toward `review_remove` or `hold`; `partial` + `keep` toward `nurture` or `engage_comment`.
+2. **Campaign overlay** when member exists: `strong` + `keep_and_draft` → `message`; `engage_comment` → `engage_comment`; `weak` / `review_remove` → `review_remove` or `hold`; `partial` + `keep` → `nurture` or `engage_comment`.
 3. On conflict, campaign overlay adjusts `action` but preserves contact `rationale` unless ICP rationale is newer and higher confidence.
+4. **Post signals:** `interest_signals` and `post_notes` (with `postKind`) inform engage vs message; reshares are interest-only, not personal claims. Recency ≤ 365 days ([SPEC-0006](./SPEC-0006-cleaning-exec-campaign-engage.md)).
 
 ### 5.4 Mapping from legacy cleaning buckets
 
@@ -212,9 +218,10 @@ All use ADR-0005 `completeChat`.
 | Feature tag | When | Input | Output |
 |-------------|------|-------|--------|
 | `contact_analyze` | Phase C; manual analyze | `ContactContextBundle` + owner context + motion playbook | Extended JSON → playbook base |
-| `campaign_icp_check` | Phase C; manual Check ICP | Bundle + campaign ICP text | Member `icp_*` + playbook overlay |
+| `campaign_icp_check` | Phase C; manual Check ICP; orchestrate | Bundle + campaign ICP text | Member `icp_*` + playbook overlay; may recommend `engage_comment` |
+| `cleaning_engage_comment` | Cleaning accept; campaign Queue engage | Contact + playbook (+ campaign context) | JSON `{ comment }` → `cleaning_exec_queue` |
 | `contact_intel_summarize` | Optional pre-pass when company intel &gt; token budget | Raw company/jobs JSON | Short bullet summary for bundle |
-| `outreach_draft` | After ICP fit | Bundle + campaign writer instructions | Member `draft_outreach` |
+| `outreach_draft` | After ICP fit (`keep_and_draft` / partial keep) | Bundle + campaign writer instructions | Member `draft_outreach` |
 
 ### 6.1 contact_analyze prompt structure
 
@@ -279,12 +286,12 @@ Additive fields on `capturePayloadSchema`:
 
 | Surface | Change |
 |---------|--------|
-| `/cleaning` | Cards show `ContactPlaybook` via shared `RecommendationPanel` |
-| `/campaigns/[id]` (exec tab) | Playbook block + ICP badge; filters unchanged |
+| `/cleaning` | Cards show `ContactPlaybook` via `RecommendationPanel`; **Exec queues** panel for engage/removal |
+| `/campaigns/[id]` (exec tab) | Playbook + ICP badges; **Queue engage**; **Orchestrate campaign**; filters include `engage_queued` |
 | `/contacts/[id]` | `ContactLlmPanel` shows strategic/tactical layers and intel completeness |
-| `/settings` | Toggles for capture chain and Tavily contact intel budget |
+| `/settings` | Toggles for capture chain, cleaning exec engage/removal, Tavily contact intel budget |
 
-Member readiness filters (as-built): `review_draft` = open members with draft text not yet `ready`; `extension_ready` = `status = ready`.
+Member readiness filters (as-built): `review_draft` = open members with draft text not yet `ready`; `extension_ready` = `status = ready`; `engage_queued` = `status = engage` or pending engage exec item.
 
 ---
 
@@ -304,14 +311,17 @@ Member readiness filters (as-built): `review_draft` = open members with draft te
 
 ## 11. Rollout phases
 
-| Phase | Deliverable |
-|-------|-------------|
-| 1 | Autopilot posts chain + settings |
-| 2 | `ContactContextBundle`; enrich `contact_analyze` with bundle + posts_signals |
-| 3 | `ContactPlaybook` + `RecommendationPanel`; Cleaning + Campaign UI |
-| 4 | `postCaptureAnalysis` orchestrator + `captureChainComplete` contract |
-| 5a | `company_linkedin_url`, `company` / `company_jobs` capture types + chain |
-| 5b | `web_page` ingest, optional Tavily `contact_intel` |
+| Phase | Deliverable | Status |
+|-------|-------------|--------|
+| 1 | Autopilot posts chain + settings | **Done** |
+| 2 | `ContactContextBundle`; enrich `contact_analyze` with bundle + posts_signals | **Done** |
+| 3 | `ContactPlaybook` + `RecommendationPanel`; Cleaning + Campaign UI | **Done** |
+| 4 | `postCaptureAnalysis` orchestrator + `captureChainComplete` contract | **Done** |
+| 4b | Cleaning exec queues + campaign `engage_comment` → shared queue ([SPEC-0006](./SPEC-0006-cleaning-exec-campaign-engage.md)) | **Done** |
+| 4c | Post recency (365d) + `postKind` origin signals | **Done** |
+| 4d | Extension resilient step-based capture pipeline | **Done** |
+| 5a | `company_linkedin_url`, `company` / `company_jobs` capture types + chain | In progress |
+| 5b | `web_page` ingest, optional Tavily `contact_intel` | Planned |
 
 ---
 

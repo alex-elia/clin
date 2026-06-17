@@ -4,6 +4,7 @@ import type { CleaningBucket } from "@/lib/cleaningBuckets";
 import type { ContactPlaybook } from "@/lib/contactPlaybook";
 import type { LlmAnalysisView } from "@/lib/contactLlmDisplay";
 import type { ContactReadiness } from "@/lib/contactReadinessShared";
+import type { InboxThreadAnalysis } from "@/lib/inboxThreadAnalysisTypes";
 
 export type CleaningContactCard = {
   contactId: string;
@@ -20,6 +21,8 @@ export type CleaningContactCard = {
   playbook: ContactPlaybook | null;
   compositeScore: number | null;
   queueId: string | null;
+  threadAnalysis: InboxThreadAnalysis | null;
+  threadStageLabel: string | null;
 };
 
 export type CleaningBoardSummary = {

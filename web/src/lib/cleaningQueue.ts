@@ -8,9 +8,13 @@ import {
   type CleaningBucket,
 } from "@/lib/cleaningBuckets";
 import { pickLatestAnalysisView } from "@/lib/contactLlmDisplay";
-import { assessContactReadiness } from "@/lib/contactReadiness";
 import { loadLatestProfileCapturesByContactId } from "@/lib/campaignMemberReadiness";
 import { listContactCleaningExtensionsMap } from "@/lib/cleaningSqlExtras";
+import type { InboxThreadAnalysis } from "@/lib/inboxThreadAnalysisTypes";
+import {
+  assessContactReadiness,
+  loadMessagingCaptureFlags,
+} from "@/lib/contactReadiness";
 
 const QUEUE_BUCKETS = new Set<CleaningBucket>([
   "review_remove",
@@ -25,6 +29,7 @@ export async function syncCleaningQueueFromAnalysis(
   contactId: string,
   envelope: Record<string, unknown>,
   segment: string,
+  threadAnalysis?: InboxThreadAnalysis | null,
 ): Promise<void> {
   const view = pickLatestAnalysisView(envelope);
   if (!view) return;
@@ -36,7 +41,8 @@ export async function syncCleaningQueueFromAnalysis(
   if (!row) return;
 
   const caps = await loadLatestProfileCapturesByContactId([contactId]);
-  const readiness = assessContactReadiness(row, caps, false);
+  const hasMessaging = loadMessagingCaptureFlags([contactId]).has(contactId);
+  const readiness = assessContactReadiness(row, caps, hasMessaging);
   const cleaningExt = listContactCleaningExtensionsMap([contactId]).get(
     contactId,
   ) ?? { cleaningUserBucket: null, cleaningDismissedAt: null };
@@ -45,6 +51,7 @@ export async function syncCleaningQueueFromAnalysis(
     analysis: view,
     segment,
     hasLlmAnalysis: true,
+    threadAnalysis: threadAnalysis ?? null,
     cleaningUserBucket: cleaningExt.cleaningUserBucket,
     cleaningDismissedAt: cleaningExt.cleaningDismissedAt,
   });
@@ -52,7 +59,11 @@ export async function syncCleaningQueueFromAnalysis(
 
   if (!QUEUE_BUCKETS.has(bucket)) return;
 
-  const suggestedAction = bucketSuggestedQueueText(bucket, view);
+  const suggestedAction = bucketSuggestedQueueText(
+    bucket,
+    view,
+    threadAnalysis ?? null,
+  );
   const priority = bucketQueuePriority(bucket);
   const kind =
     bucket === "reach_out_dm" ? "outreach_prep" : "review";

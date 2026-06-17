@@ -21,4 +21,28 @@ Desktop installers and the extension zip are **new and lightly tested**. If you 
 
 ## Changes
 
-<!-- List user-visible changes for this release -->
+### Cleaning & exec queues
+
+- **Cleaning board** accept flows: removal → disconnect exec queue; engage → AI comment + engage exec queue.
+- Dashboard **Exec queues** panel: edit comments, regenerate, skip; syncs with extension **Cleaning** todo lists.
+- Extension **engage** and **removal** runners with pace caps (Settings).
+
+### Campaigns
+
+- ICP can recommend **Engage via comment** (`engage_comment`) in addition to draft / skip / remove.
+- **Orchestrate campaign** auto-queues engage or drafts based on ICP.
+- **Queue engage** per member; **DM draft and Ready for extension** work in parallel with engage.
+- Member filter **Engage queued**; status badges for engage pending + ready for extension.
+
+### Capture & analysis
+
+- **Post origin** on activity capture: original vs reshare vs news share (better comment hooks).
+- **Post recency**: prompts and engage skip posts older than 1 year.
+- **Automated capture pipeline**: step-based, alarm-driven; more resilient when switching tabs or using the computer.
+
+### Docs
+
+- [SPEC-0006](https://github.com/alex-elia/clin/blob/main/docs/specifications/SPEC-0006-cleaning-exec-campaign-engage.md) — cleaning exec + campaign engage (release reference).
+- Updated [SPEC-0001](https://github.com/alex-elia/clin/blob/main/docs/specifications/SPEC-0001-clin-system-specification.md) and [ADR-0011](https://github.com/alex-elia/clin/blob/main/docs/adr/0011-campaign-engage-shared-exec-queue.md).
+
+**Extension version:** 0.2.58+ recommended for post origin and pipeline improvements.

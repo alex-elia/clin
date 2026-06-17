@@ -40,6 +40,12 @@ export async function PATCH(req: Request) {
   if (typeof b.jitterPercent === "number") {
     patch.jitterPercent = b.jitterPercent;
   }
+  if (b.engageExecMode === "auto" || b.engageExecMode === "manual_confirm") {
+    patch.engageExecMode = b.engageExecMode;
+  }
+  if (b.removalExecMode === "auto" || b.removalExecMode === "manual_confirm") {
+    patch.removalExecMode = b.removalExecMode;
+  }
   const settings = await updateCleaningExecSettings(patch);
   return NextResponse.json({ cleaningExec: settings });
 }

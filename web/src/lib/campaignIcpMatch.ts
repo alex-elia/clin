@@ -17,6 +17,7 @@ export const campaignIcpMatchSchema = z.object({
   recommended_action: z.enum([
     "keep_and_draft",
     "keep",
+    "engage_comment",
     "review_remove",
     "skip",
   ]),
@@ -96,13 +97,14 @@ Respond with JSON only:
 {
   "icp_match": "strong" | "partial" | "weak" | "unknown",
   "rationale": "1-3 sentences",
-  "recommended_action": "keep_and_draft" | "keep" | "review_remove" | "skip"
+  "recommended_action": "keep_and_draft" | "keep" | "engage_comment" | "review_remove" | "skip"
 }
 - strong: clear ICP fit, worth personalized outreach now.
 - partial: plausible but missing data or timing; keep but maybe nurture.
 - weak: poor fit vs ICP; skip or review_remove if clearly wrong person.
 - unknown: not enough data — say what is missing in rationale.
 - keep_and_draft: strong fit with enough profile to draft a DM.
+- engage_comment: partial/nurture fit with a concrete recent-post hook — comment on their post first to warm the relationship; not ready for a cold DM.
 Do not invent facts.`,
     user,
     jsonMode: true,

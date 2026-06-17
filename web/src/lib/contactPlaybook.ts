@@ -1,7 +1,14 @@
 import type { CampaignIcpMatch } from "@/lib/campaignIcpMatch";
+import {
+  cleaningAdviceFromThread,
+  threadSuggestsRemoval,
+} from "@/lib/cleaningThreadHelpers";
 import type { CleaningPlanView, LlmAnalysisView } from "@/lib/contactLlmDisplay";
 import { pickLatestAnalysisView } from "@/lib/contactLlmDisplay";
+import type { InboxThreadAnalysis } from "@/lib/inboxThreadAnalysisTypes";
 import type { LlmAnalysisOutput } from "@/lib/llmAnalysis";
+import { POST_ORIGIN_LLM_RULE } from "@/lib/profilePostKinds";
+import { POST_RECENCY_LLM_RULE } from "@/lib/profilePostRecency";
 import type { SalesMotion } from "@/lib/salesCoachPlaybook";
 
 export type ContactNextAction =
@@ -24,11 +31,14 @@ export type ContactPlaybook = {
     | "campaign_icp"
     | "posts_signals"
     | "company_intel"
+    | "thread_analysis"
   )[];
   analyzedAt: string;
   strategic_summary?: string;
   posts_signals?: {
     topics?: string[];
+    interest_signals?: string[];
+    post_notes?: { kind: string; summary: string }[];
     hiring_or_role_change?: boolean;
     engagement_hook?: string;
     suggested_comment_angle?: string;
@@ -89,6 +99,22 @@ function parsePostsSignals(
       typeof p.suggested_comment_angle === "string"
         ? p.suggested_comment_angle
         : undefined,
+    interest_signals: Array.isArray(p.interest_signals)
+      ? p.interest_signals.filter((t): t is string => typeof t === "string")
+      : undefined,
+    post_notes: Array.isArray(p.post_notes)
+      ? p.post_notes
+          .filter(
+            (n): n is { kind: string; summary: string } =>
+              Boolean(n) &&
+              typeof n === "object" &&
+              typeof (n as { summary?: string }).summary === "string",
+          )
+          .map((n) => ({
+            kind: String((n as { kind?: string }).kind || "unknown"),
+            summary: (n as { summary: string }).summary,
+          }))
+      : undefined,
   };
 }
 
@@ -113,6 +139,7 @@ export function buildContactPlaybookFromAnalysis(opts: {
   motion?: SalesMotion;
   companyIntelSummary?: string | null;
   campaignOverlay?: ContactPlaybook["campaign_overlay"];
+  threadAnalysis?: InboxThreadAnalysis | null;
 }): ContactPlaybook | null {
   const plan = opts.analysis?.cleaningPlan;
   if (!plan) return null;
@@ -135,6 +162,11 @@ export function buildContactPlaybookFromAnalysis(opts: {
       rationale = overlay.icp_match
         ? `${rationale} Campaign ICP: ${overlay.icp_match}.`
         : rationale;
+    } else if (overlay.recommended_action === "engage_comment") {
+      action = "engage_comment";
+      rationale = overlay.icp_match
+        ? `${rationale} Campaign ICP: ${overlay.icp_match} — engage via comment first.`
+        : rationale;
     } else if (
       overlay.icp_match === "strong" &&
       overlay.recommended_action === "keep_and_draft"
@@ -145,7 +177,7 @@ export function buildContactPlaybookFromAnalysis(opts: {
     }
   }
 
-  return {
+  let playbook: ContactPlaybook = {
     action,
     confidence: plan.confidence,
     rationale,
@@ -160,6 +192,36 @@ export function buildContactPlaybookFromAnalysis(opts: {
     company_intel_summary: opts.companyIntelSummary?.trim() || undefined,
     campaign_overlay: overlay,
   };
+
+  const thread = opts.threadAnalysis;
+  if (thread) {
+    const threadAdvice = cleaningAdviceFromThread(thread);
+    const sources: ContactPlaybook["sources"] = [
+      ...playbook.sources,
+      "thread_analysis",
+    ];
+    playbook = {
+      ...playbook,
+      sources,
+      strategic_summary:
+        thread.thread_summary?.trim() || playbook.strategic_summary,
+    };
+    if (threadSuggestsRemoval(thread)) {
+      playbook = {
+        ...playbook,
+        action: "review_remove",
+        rationale: thread.sales_rationale?.trim() || playbook.rationale,
+        playbook: threadAdvice || playbook.playbook,
+      };
+    } else if (threadAdvice) {
+      playbook = {
+        ...playbook,
+        playbook: threadAdvice,
+      };
+    }
+  }
+
+  return playbook;
 }
 
 export function pickContactPlaybookFromEnvelope(
@@ -226,6 +288,18 @@ export function formatContactPlaybookForDraftPrompt(
         `- Suggested public comment angle: ${playbook.posts_signals.suggested_comment_angle.trim()}`,
       );
     }
+    const interests = playbook.posts_signals?.interest_signals?.filter(Boolean);
+    if (interests?.length) {
+      lines.push(
+        `- Interests / communities (from reshares — not personal claims): ${interests.join(", ")}`,
+      );
+    }
+    const notes = playbook.posts_signals?.post_notes?.filter((n) => n.summary);
+    if (notes?.length) {
+      for (const n of notes.slice(0, 3)) {
+        lines.push(`- Post note (${n.kind}): ${n.summary}`);
+      }
+    }
     if (playbook.company_intel_summary?.trim()) {
       lines.push(
         `- Company intel: ${playbook.company_intel_summary.trim()}`,
@@ -253,6 +327,8 @@ export function formatContactPlaybookForDraftPrompt(
 
   lines.push(
     "- Ground the message in captured profile/posts/company data. Do not contradict the analysis or advice above.",
+    `- ${POST_RECENCY_LLM_RULE}`,
+    `- ${POST_ORIGIN_LLM_RULE}`,
   );
 
   return lines.join("\n");

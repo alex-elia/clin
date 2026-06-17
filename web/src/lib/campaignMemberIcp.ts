@@ -20,6 +20,7 @@ const VALID_MATCH = new Set<string>(["strong", "partial", "weak", "unknown"]);
 const VALID_ACTION = new Set<string>([
   "keep_and_draft",
   "keep",
+  "engage_comment",
   "review_remove",
   "skip",
 ]);

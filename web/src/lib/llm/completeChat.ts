@@ -2,6 +2,7 @@ import { completeChatOllama } from "@/lib/llm/adapters/ollama";
 import { completeChatOpenAiCompatible } from "@/lib/llm/adapters/openaiCompatible";
 import { appendLlmCallLog } from "@/lib/llm/llmCallLog";
 import { estimateCloudCostEur, resolveUsageTokens } from "@/lib/llm/llmPricing";
+import { sanitizeLlmPromptText } from "@/lib/llm/sanitizePromptText";
 import type { CompleteChatParams } from "@/lib/llm/types";
 
 export type { CompleteChatParams, LlmConfig, LlmProvider } from "@/lib/llm/types";
@@ -24,12 +25,15 @@ export type { LlmConfigPublic } from "@/lib/llm/config";
 export async function completeChat(params: CompleteChatParams): Promise<string> {
   const started = Date.now();
   const feature = params.feature ?? "llm";
+  const system = sanitizeLlmPromptText(params.system);
+  const user = sanitizeLlmPromptText(params.user);
+  const sanitized = { ...params, system, user };
   const base = {
     feature,
     provider: params.config.provider,
     model: params.config.model,
-    systemChars: params.system.length,
-    userChars: params.user.length,
+    systemChars: system.length,
+    userChars: user.length,
     meta: params.meta,
   };
 
@@ -37,10 +41,10 @@ export async function completeChat(params: CompleteChatParams): Promise<string> 
     let result: Awaited<ReturnType<typeof completeChatOllama>>;
     switch (params.config.provider) {
       case "ollama":
-        result = await completeChatOllama(params);
+        result = await completeChatOllama(sanitized);
         break;
       case "openai_compatible":
-        result = await completeChatOpenAiCompatible(params);
+        result = await completeChatOpenAiCompatible(sanitized);
         break;
       default: {
         const _exhaustive: never = params.config.provider;

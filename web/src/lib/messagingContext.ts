@@ -1,6 +1,7 @@
 import { and, asc, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { captureSessions } from "@/db/schema";
+import { safeTruncate } from "@/lib/llm/sanitizePromptText";
 import { canonicalizeLinkedInUrl } from "@/lib/url";
 export type {
   MergedMessagingThread,
@@ -109,8 +110,9 @@ export function formatMessagingMessagesForContext(
     return `${who}: ${m.body}`;
   });
   let text = lines.join("\n");
-  if (text.length > maxChars) {
-    const tail = text.slice(-maxChars);
+  if ([...text].length > maxChars) {
+    const reversed = [...text].reverse().join("");
+    const tail = safeTruncate(reversed, maxChars, "");
     text = `…(truncated)\n${tail}`;
   }
   return text;

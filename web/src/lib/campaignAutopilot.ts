@@ -167,6 +167,7 @@ export function countCampaignMembersPendingAnalysis(
           eq(outreachCampaignMembers.campaignId, campaignId),
           ne(outreachCampaignMembers.status, "sent"),
           ne(outreachCampaignMembers.status, "skipped"),
+          ne(outreachCampaignMembers.status, "engage"),
         ),
       )
       .all();

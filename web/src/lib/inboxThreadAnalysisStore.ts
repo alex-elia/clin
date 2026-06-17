@@ -121,3 +121,45 @@ export function isThreadAnalysisStale(
   if (!stored) return true;
   return stored.messageCount !== currentMessageCount;
 }
+
+/** Most recent stored analysis for a contact (any thread key). */
+export function getLatestThreadAnalysisForContact(
+  contactId: string,
+): StoredThreadAnalysis | null {
+  const sqlite = getSqlite();
+  const row = sqlite
+    .prepare(
+      `SELECT contact_id, thread_key, analysis_json, message_count, model, analyzed_at
+       FROM inbox_thread_analysis
+       WHERE contact_id = ?
+       ORDER BY analyzed_at DESC
+       LIMIT 1`,
+    )
+    .get(contactId) as
+    | {
+        contact_id: string;
+        thread_key: string;
+        analysis_json: string;
+        message_count: number;
+        model: string | null;
+        analyzed_at: number;
+      }
+    | undefined;
+
+  if (!row) return null;
+  let analysis: InboxThreadAnalysis;
+  try {
+    analysis = JSON.parse(row.analysis_json) as InboxThreadAnalysis;
+  } catch {
+    return null;
+  }
+
+  return {
+    contactId: row.contact_id,
+    threadKey: row.thread_key,
+    analysis,
+    messageCount: row.message_count,
+    model: row.model,
+    analyzedAt: new Date(row.analyzed_at),
+  };
+}

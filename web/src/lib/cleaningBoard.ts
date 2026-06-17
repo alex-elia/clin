@@ -11,9 +11,13 @@ import {
   pickLatestAnalysisView,
   type LlmAnalysisView,
 } from "@/lib/contactLlmDisplay";
+import { threadStageLabel } from "@/lib/cleaningThreadHelpers";
+import type { InboxThreadAnalysis } from "@/lib/inboxThreadAnalysisTypes";
+import { getLatestThreadAnalysisForContact } from "@/lib/inboxThreadAnalysisStore";
 import {
   assessContactReadiness,
   assessRecentContactsReadiness,
+  loadMessagingCaptureFlags,
   type ContactReadiness,
 } from "@/lib/contactReadiness";
 import type {
@@ -51,12 +55,14 @@ function resolveAiBucket(input: {
   analysis: LlmAnalysisView | null;
   segment: string;
   hasLlm: boolean;
+  threadAnalysis: InboxThreadAnalysis | null;
 }): CleaningBucket | null {
   return resolveCleaningBucket({
     readiness: input.readiness,
     analysis: input.analysis,
     segment: input.segment,
     hasLlmAnalysis: input.hasLlm,
+    threadAnalysis: input.threadAnalysis,
     cleaningUserBucket: null,
     cleaningDismissedAt: null,
   });
@@ -73,18 +79,21 @@ function buildCard(
   },
   queueId: string | null,
   rawOutput: Record<string, unknown> | null,
+  threadAnalysis: InboxThreadAnalysis | null,
 ): CleaningContactCard | null {
   const aiBucket = resolveAiBucket({
     readiness,
     analysis,
     segment: row.segment,
     hasLlm,
+    threadAnalysis,
   });
   const bucket = resolveCleaningBucket({
     readiness,
     analysis,
     segment: row.segment,
     hasLlmAnalysis: hasLlm,
+    threadAnalysis,
     cleaningUserBucket: cleaningExt.cleaningUserBucket,
     cleaningDismissedAt: cleaningExt.cleaningDismissedAt,
   });
@@ -93,6 +102,7 @@ function buildCard(
   const playbook = buildContactPlaybookFromAnalysis({
     analysis,
     rawOutput,
+    threadAnalysis,
   });
 
   return {
@@ -110,6 +120,8 @@ function buildCard(
     playbook,
     compositeScore: compositeScore(analysis),
     queueId,
+    threadAnalysis,
+    threadStageLabel: threadStageLabel(threadAnalysis?.thread_stage),
   };
 }
 
@@ -138,6 +150,13 @@ export async function buildCleaningBoard(opts?: {
 
   const readinessMap = await assessRecentContactsReadiness(contactLimit);
   const contactIds = rows.map((r) => r.id);
+  const messagingIds = loadMessagingCaptureFlags(contactIds);
+  const threadAnalysisByContact = new Map<string, InboxThreadAnalysis | null>();
+  for (const id of contactIds) {
+    if (!messagingIds.has(id)) continue;
+    const stored = getLatestThreadAnalysisForContact(id);
+    threadAnalysisByContact.set(id, stored?.analysis ?? null);
+  }
   const extMap = listContactLlmExtensionsMap(contactIds);
   const cleaningMap = listContactCleaningExtensionsMap(contactIds);
 
@@ -190,6 +209,7 @@ export async function buildCleaningBoard(opts?: {
       cleaningExt,
       queueByContact.get(row.id) ?? null,
       rawOutput,
+      threadAnalysisByContact.get(row.id) ?? null,
     );
     if (!card) continue;
 

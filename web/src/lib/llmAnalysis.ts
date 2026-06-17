@@ -16,6 +16,8 @@ import {
   userContextHasLlmSignal,
   type UserContextForLlm,
 } from "@/lib/userContext";
+import { POST_RECENCY_LLM_RULE } from "@/lib/profilePostRecency";
+import { POST_ORIGIN_LLM_RULE } from "@/lib/profilePostKinds";
 
 type Db = BetterSQLite3Database<typeof schema>;
 
@@ -60,6 +62,15 @@ export const llmAnalysisOutputSchema = z.object({
   posts_signals: z
     .object({
       topics: z.array(z.string()).nullish(),
+      interest_signals: z.array(z.string()).nullish(),
+      post_notes: z
+        .array(
+          z.object({
+            kind: z.enum(["original", "reshare", "news_share", "unknown"]),
+            summary: z.string(),
+          }),
+        )
+        .nullish(),
       hiring_or_role_change: z.boolean().nullish(),
       engagement_hook: z.string().nullish(),
       suggested_comment_angle: z.string().nullish(),
@@ -179,7 +190,7 @@ Respond with a single JSON object (no markdown) matching this shape:
   "outreach_fit": { "recommendation": "reach_out" | "nurture" | "skip" | "unclear", "rationale": "string", "icp_signals": ["short strings"] },
   "reasoning_steps": ["optional 2-4 short bullets — internal reasoning"],
   "strategic_assessment": "optional 2-3 sentences — strategic layer only",
-  "posts_signals": { "topics": ["string"], "hiring_or_role_change": boolean, "engagement_hook": "string", "suggested_comment_angle": "string" },
+  "posts_signals": { "topics": ["string"], "interest_signals": ["string — themes/communities from reshares, not personal claims"], "post_notes": [{"kind":"original|reshare|news_share|unknown","summary":"what this tells us"}], "hiring_or_role_change": boolean, "engagement_hook": "string", "suggested_comment_angle": "string" },
   "cleaning_plan": { "bucket": "enrich_first" | "needs_review" | "review_remove" | "reach_out_dm" | "engage_comment" | "nurture_light" | "keep_passive", "confidence": "low" | "medium" | "high", "rationale": "string", "playbook": "one short next step for the user" }
 }
 
@@ -193,7 +204,11 @@ When the user message includes a non-empty "message_context" (pasted LinkedIn DM
 - Align suggested_actions with stewardship (e.g. consider_removing → include "consider_removing" when appropriate).
 - This is guidance for the user's own CRM only — they still remove connections manually on LinkedIn if they choose.
 
-When "message_context" is null or empty, omit "connection_stewardship" or set recommendation to "unclear" with rationale "no thread pasted".
+When "thread_analysis" is present (structured inbox coach output from captured messaging):
+- Treat it as authoritative for thread_stage (e.g. ghosted, cold_no_reply). Align connection_stewardship and cleaning_plan with it — ghosted after engagement → consider_removing and review_remove bucket unless clear mutual value remains.
+- Do not contradict thread_analysis.thread_summary or action_rationale; refine playbook wording only.
+
+When "message_context" is null or empty and "thread_analysis" is absent, omit "connection_stewardship" or set recommendation to "unclear" with rationale "no thread pasted".
 Use null or omit optional fields — do not set optional strings to JSON null.
 
 When "owner_context" includes goals or positioning_and_offer, you MUST include "outreach_fit":
@@ -211,7 +226,9 @@ You MUST include "cleaning_plan" on every response:
 - enrich_first: list-only or missing About/Experience — user should capture more on LinkedIn first.
 - review_remove: stewardship or cleanup suggests pruning the connection.
 - reach_out_dm: strong outreach_fit reach_out with enough profile context for a DM.
-- engage_comment: nurture fit OR weak timing for DM but relationship worth a public comment/react first; prefer when PROFILE_AND_POSTS or posts_signals suggest a concrete hook.
+- engage_comment: nurture fit OR weak timing for DM but relationship worth a public comment/react first; prefer when PROFILE_AND_POSTS or posts_signals suggest a concrete hook from original posts within the last year. Reshares/news_share indicate interest only.
+
+When PROFILE_AND_POSTS labels posts as Reshare or Shared news/article, populate posts_signals.interest_signals and post_notes — do not treat shared headlines as the contact's own achievements or opinions.
 - nurture_light: keep warm, revisit later; no pitch now.
 - keep_passive: skip outreach but keep connection; or clearly low priority.
 - needs_review: contradictory signals or very thin data despite a profile row.
@@ -220,6 +237,10 @@ You MUST include "cleaning_plan" on every response:
 
 If data is thin (list-only capture, missing headline), give **provisional** scores and say so in data_gaps.
 If richer profile + optional messages exist, be more confident (refined). Never claim certainty you lack.
+
+${POST_RECENCY_LLM_RULE}
+
+${POST_ORIGIN_LLM_RULE}
 
 Do not invent private facts. Do not output anything outside JSON.`;
 
@@ -237,6 +258,7 @@ function buildUserPayload(input: {
   messageContext: string | null;
   ownerContext: UserContextForLlm | null;
   contextBundle?: ContactContextBundle | null;
+  threadAnalysis?: Record<string, unknown> | null;
 }): string {
   const cr = input.contact;
   const body: Record<string, unknown> = {
@@ -262,6 +284,7 @@ function buildUserPayload(input: {
     },
     recent_captures: input.captureSummary,
     message_context: input.messageContext?.trim() || null,
+    thread_analysis: input.threadAnalysis ?? null,
     ...(input.contextBundle
       ? formatContactContextBundleForPrompt(input.contextBundle)
       : {}),
@@ -289,6 +312,7 @@ export async function runContactLlmAnalysis(
     llmMeta?: Record<string, string | number | boolean | null>;
     contextBundle?: ContactContextBundle | null;
     salesCoachBlock?: string;
+    threadAnalysis?: Record<string, unknown> | null;
   },
 ): Promise<{
   tier: "provisional" | "refined";
@@ -327,6 +351,7 @@ export async function runContactLlmAnalysis(
       messageContext: input.messageContext,
       ownerContext,
       contextBundle,
+      threadAnalysis: input.threadAnalysis,
     }),
     jsonMode: true,
     timeoutMs: 120_000,

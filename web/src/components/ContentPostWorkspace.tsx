@@ -257,7 +257,7 @@ export function ContentPostWorkspace({
 
         <PostWritingAssistant
           postId={post.id}
-          coachDraft={coachDraft()}
+          getCoachDraft={coachDraft}
           speechLanguage={language}
           onApplyPatch={applyPatch}
         />

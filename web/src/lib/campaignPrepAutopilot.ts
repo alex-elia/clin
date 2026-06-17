@@ -265,6 +265,7 @@ export async function runCampaignPrepAutopilot(opts: {
       if (
         m.member.status === "sent" ||
         m.member.status === "skipped" ||
+        m.member.status === "engage" ||
         m.member.status === "closed"
       ) {
         continue;

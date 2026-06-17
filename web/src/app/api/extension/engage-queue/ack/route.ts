@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { cleaningExecQueue, contacts } from "@/db/schema";
 import { completeCleaningExec } from "@/lib/cleaningExecQueue";
+import { findMemberById, updateMemberStatus } from "@/lib/outreachCampaigns";
 import {
   getCleaningExecSettings,
   logCleaningExecAction,
@@ -49,6 +50,16 @@ export async function POST(req: Request) {
   if (outcome === "commented") {
     const settings = await getCleaningExecSettings();
     await rollActionGapAfterSuccess(settings);
+
+    const payload = row.payloadJson ?? {};
+    const memberId =
+      typeof payload.memberId === "string" ? payload.memberId.trim() : "";
+    if (memberId) {
+      const member = await findMemberById(memberId);
+      if (member?.status === "engage") {
+        await updateMemberStatus(memberId, "draft");
+      }
+    }
   }
 
   await logCleaningExecAction({

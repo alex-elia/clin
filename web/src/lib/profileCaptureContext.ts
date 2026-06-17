@@ -1,6 +1,15 @@
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { captureSessions } from "@/db/schema";
+import { safeTruncate, stripLoneSurrogates } from "@/lib/llm/sanitizePromptText";
+import {
+  filterRecentProfilePosts,
+  POST_RECENCY_PROMPT_EMPTY_NOTE,
+} from "@/lib/profilePostRecency";
+import {
+  formatSinglePostForPrompt,
+  type ProfilePostCapture,
+} from "@/lib/profilePostKinds";
 
 function asStringArray(v: unknown, maxLen: number, maxItems: number): string[] | undefined {
   if (!Array.isArray(v)) return undefined;
@@ -10,7 +19,7 @@ function asStringArray(v: unknown, maxLen: number, maxItems: number): string[] |
     if (typeof x !== "string") continue;
     const t = x.replace(/\s+/g, " ").trim();
     if (!t) continue;
-    out.push(t.length > maxLen ? `${t.slice(0, maxLen - 1)}…` : t);
+    out.push(t.length > maxLen ? safeTruncate(t, maxLen) : t);
   }
   return out.length ? out : undefined;
 }
@@ -23,7 +32,9 @@ export function formatRichProfileForPrompt(
   if (!extracted || typeof extracted !== "object") return "";
 
   const about =
-    typeof extracted.about === "string" ? extracted.about.trim() : "";
+    typeof extracted.about === "string"
+      ? stripLoneSurrogates(extracted.about.trim())
+      : "";
   const exp = asStringArray(extracted.experienceBullets, 520, 18);
   const edu = asStringArray(extracted.educationBullets, 420, 12);
 
@@ -47,7 +58,7 @@ export function formatRichProfileForPrompt(
   if (postsBlock) parts.push(postsBlock);
 
   let text = parts.join("\n\n");
-  if (text.length > maxChars) text = `${text.slice(0, maxChars - 1)}…`;
+  if (text.length > maxChars) text = safeTruncate(text, maxChars);
   return text;
 }
 
@@ -74,26 +85,31 @@ function formatProfilePostsForPrompt(
 ): string {
   const posts = extracted?.profilePosts;
   if (!Array.isArray(posts) || posts.length === 0) return "";
+  const recent = filterRecentProfilePosts(
+    posts as ProfilePostCapture[],
+  );
   const lines: string[] = [];
-  for (let i = 0; i < posts.length && i < 12; i++) {
-    const p = posts[i];
-    if (!p || typeof p !== "object") continue;
-    const text =
-      typeof (p as { text?: string }).text === "string"
-        ? (p as { text: string }).text.trim()
-        : "";
-    if (!text) continue;
-    const age =
-      typeof (p as { ageLabel?: string }).ageLabel === "string"
-        ? (p as { ageLabel: string }).ageLabel.trim()
-        : "";
-    lines.push(
-      `${i + 1}. ${age ? `[${age}] ` : ""}${text.length > 900 ? `${text.slice(0, 897)}…` : text}`,
-    );
+  for (let i = 0; i < recent.length && i < 12; i++) {
+    const p = recent[i] as ProfilePostCapture;
+    if (!p?.text?.trim() && !p?.sharedTitle?.trim()) continue;
+    lines.push(formatSinglePostForPrompt(p, i));
   }
-  if (!lines.length) return "";
-  let block = `Recent LinkedIn posts (captured):\n${lines.join("\n")}`;
-  if (block.length > maxChars) block = `${block.slice(0, maxChars - 1)}…`;
+  if (!lines.length) {
+    const hadPosts = posts.some(
+      (p) =>
+        p &&
+        typeof p === "object" &&
+        typeof (p as { text?: string }).text === "string" &&
+        (p as { text: string }).text.trim().length > 0,
+    );
+    if (hadPosts) {
+      return `${POST_RECENCY_PROMPT_EMPTY_NOTE} Do not reference older posts in outreach or comments.`;
+    }
+    return "";
+  }
+  let block =
+    `Recent LinkedIn posts (last year only, captured):\n${lines.join("\n")}`;
+  if (block.length > maxChars) block = safeTruncate(block, maxChars);
   return block;
 }
 

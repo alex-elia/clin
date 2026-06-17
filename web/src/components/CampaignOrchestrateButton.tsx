@@ -12,6 +12,7 @@ const initialState: OrchestrateCampaignWorkflowState = {
   message: "",
   processed: 0,
   drafted: 0,
+  engaged: 0,
   skipped: 0,
   failed: 0,
 };
