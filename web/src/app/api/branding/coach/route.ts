@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { applyCoachActions } from "@/lib/brandCoachApply";
+import { patchFromCoachAction } from "@/lib/brandCoachClient";
 import { runBrandCoachTurn } from "@/lib/brandCoach";
+import type { PostFormPatch } from "@/components/ContentPostWorkspace";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,9 +59,16 @@ export async function POST(req: Request) {
   let appliedCount = 0;
   let appliedFields: string[] = [];
   let applyErrors: string[] = [];
+  let appliedPatch: PostFormPatch | undefined;
   let clientActions = result.actions;
 
   if (isPostCoach && result.actions.length > 0) {
+    const updateAction = result.actions.find(
+      (a) => a.type === "update_post",
+    );
+    if (updateAction) {
+      appliedPatch = patchFromCoachAction(updateAction) ?? undefined;
+    }
     const applied = await applyCoachActions(result.actions);
     savedToDb = applied.applied > 0;
     appliedCount = applied.applied;
@@ -78,6 +87,7 @@ export async function POST(req: Request) {
     savedToDb,
     appliedCount,
     appliedFields,
+    appliedPatch,
     applyErrors,
     resolvedLanguage: result.resolvedLanguage.language,
     languageHint: result.resolvedLanguage.source,

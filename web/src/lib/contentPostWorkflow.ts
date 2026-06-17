@@ -70,6 +70,14 @@ export function getComposeCoachPrompt(language: ResolvedPostLanguage): string {
     : POST_COMPOSE_COACH_PROMPT_EN;
 }
 
+/** Autopilot: one-shot compose — no clarifying questions. */
+export function getAutopilotCoachPrompt(language: ResolvedPostLanguage): string {
+  const base = getComposeCoachPrompt(language);
+  return language === "fr"
+    ? `${base} Mode autopilot : rédige maintenant à partir du brief. Envoie une seule action update_post (accroche, corps, titre, format, créneau). Ne pose pas de questions de clarification.`
+    : `${base} Autopilot mode: write now from the brief. Emit exactly one update_post action (hook, body, title, format, schedule). Do not ask clarifying questions.`;
+}
+
 export function hasPostTextForImage(draft: PostWorkflowDraft): boolean {
   return [draft.hook, draft.body, draft.ideaNotes, draft.title].some(
     (s) => (s ?? "").trim().length >= 12,
@@ -151,6 +159,11 @@ export type BrandCoachClientResult = {
   threadId?: string;
   reply: string;
   actions: CoachAction[];
+  savedToDb?: boolean;
+  appliedCount?: number;
+  appliedFields?: string[];
+  appliedPatch?: PostFormPatch;
+  applyErrors?: string[];
   resolvedLanguage?: ResolvedPostLanguage;
   languageHint?: string;
   debug?: BrandCoachTurnDebug;
@@ -177,6 +190,11 @@ export async function requestBrandCoachTurn(input: {
   });
   const data = (await res.json()) as BrandCoachClientResult & {
     error?: string;
+    savedToDb?: boolean;
+    appliedCount?: number;
+    appliedFields?: string[];
+    applyErrors?: string[];
+    appliedPatch?: PostFormPatch;
   };
   if (!res.ok) {
     return { ok: false, error: data.error ?? "Coach failed.", debug: data.debug };
@@ -187,6 +205,11 @@ export async function requestBrandCoachTurn(input: {
       threadId: data.threadId,
       reply: data.reply ?? "",
       actions: data.actions ?? [],
+      savedToDb: data.savedToDb,
+      appliedCount: data.appliedCount,
+      appliedFields: data.appliedFields,
+      appliedPatch: data.appliedPatch,
+      applyErrors: data.applyErrors,
       resolvedLanguage: data.resolvedLanguage,
       languageHint: data.languageHint,
       debug: data.debug,
@@ -230,7 +253,15 @@ export type CoachTurnIssue =
   | { kind: "no_actions"; message: string; debug?: BrandCoachTurnDebug };
 
 export function classifyCoachTurn(data: BrandCoachClientResult): CoachTurnIssue | null {
+  if (data.savedToDb && (data.appliedCount ?? 0) > 0) return null;
   if (data.actions.length > 0) return null;
+  if (
+    data.savedToDb &&
+    (data.debug?.parse.actionsCount ?? 0) > 0 &&
+    data.debug?.parse.schemaValid
+  ) {
+    return null;
+  }
   if (coachReplyNeedsComplement(data.reply, 0)) {
     return {
       kind: "needs_complement",

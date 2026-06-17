@@ -7,7 +7,7 @@ import {
   assessBriefGaps,
   classifyCoachTurn,
   generatePostImageClient,
-  getComposeCoachPrompt,
+  getAutopilotCoachPrompt,
   hasPostTextForImage,
   languageLabel,
   POST_MIN_BRIEF_CHARS,
@@ -162,6 +162,8 @@ export async function runPostAutopilot(
   let failedStep: PostAutopilotStepId = "prepare";
   let workingDraft: PostWorkflowDraft = { ...opts.getDraft() };
   let coachActions: import("@/lib/brandCoachTypes").CoachAction[] = [];
+  let coachSavedToDb = false;
+  let coachAppliedPatch: import("@/components/ContentPostWorkspace").PostFormPatch | undefined;
   let lastCoachDebug: import("@/lib/coachDebug").BrandCoachTurnDebug | undefined;
   let resolvedLang: ResolvedPostLanguage = "fr";
   let imagePrompt = "";
@@ -224,7 +226,7 @@ export async function runPostAutopilot(
   };
 
   const runCoachCompose = async (): Promise<void> => {
-    const message = getComposeCoachPrompt(resolvedLang);
+    const message = getAutopilotCoachPrompt(resolvedLang);
     for (let round = 0; round < MAX_COMPLEMENT_ROUNDS; round++) {
       workingDraft = {
         ...opts.getDraft(),
@@ -248,6 +250,12 @@ export async function runPostAutopilot(
       lastCoachDebug = turn.data.debug;
       if (turn.data.resolvedLanguage) {
         resolvedLang = turn.data.resolvedLanguage;
+      }
+      if (turn.data.savedToDb && (turn.data.appliedCount ?? 0) > 0) {
+        coachSavedToDb = true;
+        coachAppliedPatch = turn.data.appliedPatch;
+        applied = turn.data.appliedCount ?? 0;
+        return;
       }
       const issue = classifyCoachTurn(turn.data);
       if (!issue) {
@@ -288,6 +296,18 @@ export async function runPostAutopilot(
     await runTimed("assistant", runCoachCompose);
 
     await runTimed("apply", async () => {
+      if (coachSavedToDb) {
+        if (coachAppliedPatch) {
+          opts.onApplyPatch(coachAppliedPatch);
+          workingDraft = {
+            ...workingDraft,
+            ...coachAppliedPatch,
+          };
+        } else {
+          workingDraft = { ...opts.getDraft(), ...workingDraft };
+        }
+        return `Saved ${applied} update(s) to post`;
+      }
       const result = await applyBrandCoachTurn({
         actions: coachActions,
         postId: opts.postId,
