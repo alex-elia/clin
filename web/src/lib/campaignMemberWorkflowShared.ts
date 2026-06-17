@@ -8,6 +8,7 @@ import type { MergedMessagingThread } from "@/lib/messagingTypes";
 export type CampaignMemberStatus =
   | "draft"
   | "ready"
+  | "engage"
   | "sent"
   | "skipped"
   | "closed";
@@ -15,6 +16,7 @@ export type CampaignMemberStatus =
 export type CampaignWorkflowPhase =
   | "prep"
   | "ready_for_send"
+  | "engage_queued"
   | "message_sent"
   | "awaiting_reply"
   | "in_conversation"
@@ -33,6 +35,7 @@ export type CampaignCloseReason =
 export const WORKFLOW_PHASE_LABELS: Record<CampaignWorkflowPhase, string> = {
   prep: "Preparing outreach",
   ready_for_send: "Ready to send",
+  engage_queued: "Engage queued",
   message_sent: "Message sent",
   awaiting_reply: "Awaiting their reply",
   in_conversation: "In conversation",
@@ -65,6 +68,7 @@ export function deriveMemberWorkflowPhase(input: {
   const st = input.memberStatus;
   if (st === "closed") return "campaign_ended";
   if (st === "skipped") return "skipped";
+  if (st === "engage") return "engage_queued";
   if (st === "ready") return "ready_for_send";
   if (st === "draft") return "prep";
 
@@ -165,6 +169,8 @@ export function workflowPhaseBadgeClass(phase: CampaignWorkflowPhase): string {
       return "bg-violet-100 text-violet-900 dark:bg-violet-950/50 dark:text-violet-100";
     case "ready_for_send":
       return "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-100";
+    case "engage_queued":
+      return "bg-fuchsia-100 text-fuchsia-900 dark:bg-fuchsia-950/50 dark:text-fuchsia-100";
     case "skipped":
       return "bg-zinc-100 text-zinc-700 dark:bg-zinc-900 dark:text-zinc-300";
     default:

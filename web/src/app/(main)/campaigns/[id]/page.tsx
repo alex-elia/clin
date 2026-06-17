@@ -13,9 +13,11 @@ import { CampaignMemberIcpCheckButton } from "@/components/CampaignMemberIcpChec
 import { RecommendationPanel } from "@/components/RecommendationPanel";
 import { pickContactPlaybookFromEnvelope } from "@/lib/contactPlaybook";
 import {
+  ICP_ACTION_LABELS,
   ICP_MATCH_LABELS,
   icpMatchBadgeClass,
 } from "@/lib/campaignMemberIcpShared";
+import { loadPendingEngageExecByMemberId } from "@/lib/campaignEngageQueue";
 import { RemoveFromCampaignForm } from "@/components/RemoveFromCampaignForm";
 import {
   approveCampaignMemberReadyAction,
@@ -23,6 +25,7 @@ import {
   generateOneOutreachDraftAction,
   markCampaignMemberSentAction,
   markCampaignMemberSkippedAction,
+  queueCampaignMemberEngageAction,
   reopenCampaignMemberDraftAction,
   saveCampaignMemberDraftAction,
   setCaptureTargetAndActiveExtensionAction,
@@ -92,6 +95,7 @@ const MEMBER_FILTER_CHIPS: { key: MemberReadinessFilter; label: string }[] = [
   { key: "need_draft", label: "Need draft" },
   { key: "review_draft", label: "Review draft" },
   { key: "extension_ready", label: "Ready for extension" },
+  { key: "engage_queued", label: "Engage queued" },
   { key: "done", label: "Sent / skipped" },
   { key: "conversation_active", label: "In outreach" },
   { key: "suggest_end", label: "Suggest end" },
@@ -116,6 +120,8 @@ export default async function CampaignDetailPage({
     batchOk?: string;
     batchInfo?: string;
     draftWarn?: string;
+    engageOk?: string;
+    engageErr?: string;
     memberFilter?: string;
     tab?: string;
   }>;
@@ -133,6 +139,9 @@ export default async function CampaignDetailPage({
   const isCaptureTarget = captureTargetId === id;
 
   const membersEnriched = await enrichCampaignMembers(membersRaw);
+  const pendingEngageExecByMemberId = await loadPendingEngageExecByMemberId(
+    membersRaw.map((r) => r.member.id),
+  );
   const outreachExtras = await loadMemberOutreachExtras(
     membersRaw.map((r) => r.member.id),
   );
@@ -178,6 +187,7 @@ export default async function CampaignDetailPage({
     messagingByContactId,
     outreachExtras,
     threadAnalysisByContactId,
+    pendingEngageExecByMemberId,
   };
   const messagingSummary = getCampaignMessagingSummary(
     membersEnriched,
@@ -241,6 +251,20 @@ export default async function CampaignDetailPage({
               Execution
             </Link>
             .
+          </p>
+        ) : null}
+        {sp.engageErr ? (
+          <p className="mt-3 whitespace-pre-wrap rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/50 dark:text-red-100">
+            {sp.engageErr}
+          </p>
+        ) : null}
+        {sp.engageOk === "1" ? (
+          <p className="mt-3 rounded-md border border-fuchsia-200 bg-fuchsia-50 px-3 py-2 text-sm text-fuchsia-900 dark:border-fuchsia-900 dark:bg-fuchsia-950/40 dark:text-fuchsia-100">
+            Queued for engage — run from{" "}
+            <Link href="/cleaning" className="font-medium underline">
+              Cleaning exec queue
+            </Link>{" "}
+            or the extension engage todo.
           </p>
         ) : null}
         {sp.batchInfo ? (
@@ -506,6 +530,7 @@ export default async function CampaignDetailPage({
                 lastProfileCapturedAt,
                 icpMatch,
                 icpRationale,
+                icpRecommendedAction,
                 icpCheckedAt,
               } = row;
               const draft = member.draftOutreach ?? "";
@@ -540,6 +565,11 @@ export default async function CampaignDetailPage({
                 member.status === "sent" ||
                 member.status === "skipped" ||
                 member.status === "closed";
+              const pendingEngageExecId =
+                pendingEngageExecByMemberId.get(member.id) ?? null;
+              const isEngagePath =
+                member.status === "engage" || Boolean(pendingEngageExecId);
+              const showWorkflowBadge = isPostSend || member.status === "engage";
               return (
                 <div
                   key={`${member.id}-${member.updatedAt.getTime()}`}
@@ -556,11 +586,18 @@ export default async function CampaignDetailPage({
                       <span className="clin-pill text-xs">
                         {member.status === "ready"
                           ? "ready for extension"
-                          : member.status === "closed"
-                            ? "campaign ended"
-                            : member.status}
+                          : member.status === "engage"
+                            ? "engage queued"
+                            : member.status === "closed"
+                              ? "campaign ended"
+                              : member.status}
                       </span>
-                      {isPostSend ? (
+                      {pendingEngageExecId && member.status !== "engage" ? (
+                        <span className="clin-pill border-fuchsia-400/40 text-xs text-fuchsia-900 dark:text-fuchsia-100">
+                          engage pending
+                        </span>
+                      ) : null}
+                      {showWorkflowBadge ? (
                         <span
                           className={`rounded px-1.5 py-0.5 text-xs font-medium ${workflowPhaseBadgeClass(workflowPhase)}`}
                         >
@@ -594,6 +631,14 @@ export default async function CampaignDetailPage({
                           ICP not checked
                         </span>
                       )}
+                      {icpRecommendedAction ? (
+                        <span
+                          className="clin-pill border-fuchsia-400/40 text-xs text-fuchsia-900 dark:text-fuchsia-100"
+                          title={icpRationale ?? undefined}
+                        >
+                          {ICP_ACTION_LABELS[icpRecommendedAction]}
+                        </span>
+                      ) : null}
                       {member.status === "sent" && !thread ? (
                         <span className="clin-pill border-sky-400/50 text-xs text-sky-900 dark:text-sky-100">
                           Need thread
@@ -664,6 +709,17 @@ export default async function CampaignDetailPage({
                       {draft}
                     </p>
                   ) : null}
+                  {isEngagePath ? (
+                    <p className="mt-3 text-sm text-[var(--clin-muted)]">
+                      Engage comment queued — run from{" "}
+                      <Link href="/cleaning" className="clin-link font-medium">
+                        Cleaning exec queue
+                      </Link>
+                      {pendingEngageExecId ? " (pending)" : ""}. You can still
+                      draft a private message below and mark ready for extension
+                      in parallel.
+                    </p>
+                  ) : null}
                   {extras?.messageSentAt ? (
                     <p className="mt-2 text-xs text-clin-muted">
                       Sent (recorded):{" "}
@@ -714,7 +770,23 @@ export default async function CampaignDetailPage({
                         </button>
                       </form>
                     )}
-                    {member.status !== "sent" && member.status !== "skipped" ? (
+                    {!pendingEngageExecId &&
+                    member.status !== "sent" &&
+                    member.status !== "skipped" ? (
+                      <form action={queueCampaignMemberEngageAction}>
+                        <input type="hidden" name="campaignId" value={id} />
+                        <input type="hidden" name="memberId" value={member.id} />
+                        <button
+                          type="submit"
+                          className="rounded-md bg-fuchsia-800 px-2 py-1 text-xs text-white dark:bg-fuchsia-700"
+                          title="Generate AI comment and add to Cleaning engage queue"
+                        >
+                          Queue engage
+                        </button>
+                      </form>
+                    ) : null}
+                    {member.status !== "sent" &&
+                    member.status !== "skipped" ? (
                       <>
                         <form action={markCampaignMemberSentAction}>
                           <input type="hidden" name="campaignId" value={id} />

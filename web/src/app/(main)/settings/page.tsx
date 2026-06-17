@@ -30,7 +30,10 @@ export default async function SettingsPage() {
   const automation = await getAutomationSettings();
   const autopilot = await getAutopilotSettings();
   const llm = await getLlmConfigPublic();
-  const ollamaInstalled = await listOllamaModels(llm.ollama.baseUrl);
+  const ollamaInstalled =
+    llm.provider === "ollama"
+      ? await listOllamaModels(llm.ollama.baseUrl)
+      : { ok: false as const, error: "Cloud provider selected" };
   const dataPaths = await getDataPathInfo();
   const lastBackup = await getLastBackupMeta();
   const outreachSend = await getOutreachSendSettings();

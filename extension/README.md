@@ -1,6 +1,8 @@
 # Clin Chrome extension (MV3)
 
-Companion to the local Clin web app: capture visible LinkedIn data, manage campaign context, and run **optional paced automation** (list sprint, hygiene, outreach) when enabled in Clin **Settings**.
+Companion to the local Clin web app: capture visible LinkedIn data, manage campaign context, run **cleaning engage/removal** todos, and run **optional paced automation** (list sprint, hygiene, outreach) when enabled in Clin **Settings**.
+
+**Current version:** see `manifest.json` (e.g. **0.2.58** — post origin detection, resilient capture pipeline).
 
 ## Load unpacked
 
@@ -16,15 +18,20 @@ Companion to the local Clin web app: capture visible LinkedIn data, manage campa
 
 | Tab | Purpose |
 |-----|---------|
-| **Data** | Capture, list sprint, hygiene batch (search/list or profile workflows) |
+| **Data** | Capture, list sprint, hygiene batch, automated capture pipeline (step-based, alarm-driven) |
 | **Outreach** | Ready campaigns, paced outreach run |
+| **Cleaning** | Engage comment and removal disconnect todo lists (from `/cleaning` accepts and campaign engage queue) |
 | **Branding** | Ready content posts: copy text, download or copy image, mark published |
 
 Use the **gear** in the header for **Settings** (API base URL and health check).
 
 ## Capture
 
-Click **Capture LinkedIn tab** on a profile (or use **list sprint** when allowed in Settings) to send visible fields to `POST /api/ingest/capture` or the connections ingest endpoint.
+Click **Capture LinkedIn tab** on a profile (or use **list sprint** / automated pipeline when allowed in Settings) to send visible fields to `POST /api/ingest/capture` or the connections ingest endpoint.
+
+**Posts capture** records activity cards with optional **`postKind`** (`original`, `reshare`, `news_share`), user comments on reshares, and shared titles. Posts older than one year are skipped for engage targeting.
+
+**Automated pipeline** (0.2.57+): multi-step profile/posts chain uses `chrome.alarms`, pins the automation tab, and survives background tab throttling. Popup returns immediately and polls pipeline status.
 
 ## Pacing
 
@@ -32,7 +39,18 @@ The background script calls `GET /api/settings` and applies the same pacing as t
 
 ## Outreach handoff
 
-Approve drafts in the dashboard (**Decisions** / campaigns → Ready). The popup loads ready items via `/api/outreach/ready` and campaign APIs. You can **copy drafts**, **open profiles**, **mark sent**, or start a **paced outreach run** when configured.
+Approve drafts in the dashboard (**Campaigns → Exec** → **Ready for extension**). The popup loads ready items via `/api/outreach/ready` and campaign APIs. You can **copy drafts**, **open profiles**, **mark sent**, or start a **paced outreach run** when configured.
+
+Campaign members may also be on the **engage** path (public comment) while a DM draft is prepared in parallel — see dashboard Cleaning exec queue.
+
+## Cleaning exec handoff
+
+From **Cleaning** or **Campaigns** (Queue engage):
+
+- **Engage** — AI-suggested comment, post preview, copy/open/mark commented/skip (`GET /api/extension/cleaning-engage/ready`, ack via engage-queue API).
+- **Removal** — disconnect workflow (`GET /api/extension/cleaning-removal/ready`).
+
+Enable engage/removal runners and pace in Clin → **Settings** (cleaning exec section).
 
 ## Branding handoff
 
@@ -45,6 +63,7 @@ In Clin → **Content plan**, add a **photo** or **text graphic** (section 3), s
 | **List sprint** | Scroll/load a connections list and import visible rows (keep the popup open). |
 | **Hygiene runner** | Open profiles from your local queue on a timer, with a daily cap. |
 | **Outreach run** | Paced campaign outreach steps with confirm/skip. |
+| **Cleaning engage / removal** | Paced exec from `cleaning_exec_queue` with daily caps. |
 
 Enable each feature in Clin → **Settings**. Start with default caps; increase only if you accept platform and account risk.
 

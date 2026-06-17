@@ -52,6 +52,7 @@ When autopilot enrich is enabled, Clin may chain **multiple captures per contact
 - **Default posture:** chaining steps are **opt-in** in Settings; each step counts toward the same pacing and hourly caps as profile capture.
 - **Higher risk surface:** company and jobs pages are additional LinkedIn navigation; treat like other autopilot (user accepts account risk).
 - **Analysis timing:** LLM contact analysis and campaign ICP run **after** the chain completes (raw intel stored first), not on every intermediate ingest.
+- **Campaign engage:** ICP may recommend public **engage_comment** (shared `cleaning_exec_queue`) alongside optional DM drafts — see [SPEC-0006](./specifications/SPEC-0006-cleaning-exec-campaign-engage.md).
 
 ---
 

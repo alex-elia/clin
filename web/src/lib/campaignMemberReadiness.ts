@@ -122,7 +122,7 @@ export type EnrichedCampaignMember = CampaignMemberRowLite & {
   icpCheckedAt: Date | null;
 };
 
-/** Still in the outreach pipeline (not sent, skipped, or closed). */
+/** Still in the DM outreach pipeline (not sent, skipped, or closed). Engage-queued members can still draft. */
 export function memberPipelineOpen(m: EnrichedCampaignMember): boolean {
   const st = m.member.status;
   return st !== "sent" && st !== "skipped" && st !== "closed";
@@ -160,6 +160,7 @@ export type MemberReadinessFilter =
   | "need_draft"
   | "review_draft"
   | "extension_ready"
+  | "engage_queued"
   | "done"
   | "conversation_active"
   | "campaign_ended"
@@ -185,6 +186,7 @@ export type MemberReadinessFilterContext = {
     string,
     import("@/lib/inboxThreadAnalysisTypes").InboxThreadAnalysis | null
   >;
+  pendingEngageExecByMemberId?: Map<string, string>;
 };
 
 export function parseMemberReadinessFilter(
@@ -198,6 +200,7 @@ export function parseMemberReadinessFilter(
     "need_draft",
     "review_draft",
     "extension_ready",
+    "engage_queued",
     "done",
     "conversation_active",
     "campaign_ended",
@@ -241,6 +244,11 @@ export function enrichedMemberMatchesFilter(
       return open && hasDraft && st !== "ready";
     case "extension_ready":
       return open && st === "ready";
+    case "engage_queued":
+      return (
+        st === "engage" ||
+        Boolean(ctx?.pendingEngageExecByMemberId?.get(row.member.id))
+      );
     case "done":
       return st === "sent" || st === "skipped";
     case "conversation_active":
@@ -354,6 +362,9 @@ export function readinessFilterCounts(
     ).length,
     extension_ready: rows.filter(
       (m) => memberPipelineOpen(m) && m.member.status === "ready",
+    ).length,
+    engage_queued: rows.filter((m) =>
+      enrichedMemberMatchesFilter(m, "engage_queued", ctx),
     ).length,
     done: rows.filter(
       (m) =>

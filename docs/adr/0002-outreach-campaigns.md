@@ -10,7 +10,7 @@ Users need to run **batch-style outreach prep**: shared pitch context, per-conta
 
 ## Decision
 
-1. Introduce **`outreach_campaigns`** (name, `context_text`, optional writer instructions and system prompt override) and **`outreach_campaign_members`** (link to `contacts`, `draft_outreach`, `status`: draft → ready → sent | skipped).
+1. Introduce **`outreach_campaigns`** (name, `context_text`, optional writer instructions and system prompt override) and **`outreach_campaign_members`** (link to `contacts`, `draft_outreach`, `status`: draft → ready | engage → sent | skipped | closed).
 2. Store **`extension.capture_target_campaign_id`** in **`app_settings`**: the extension polls **`GET /api/extension/campaign-context`** and attaches **`outreachCampaignId`** to ingests so new captures **add members** to that campaign when appropriate.
 3. Store **`extension.active_outreach_campaign_id`** for the extension **Outreach** tab / ready-queue UX tied to a single active campaign.
 4. Generate drafts with **local Ollama** from server-side code; prompts include campaign text + contact fields + **latest profile capture JSON** (About, experience/education bullets). **No** LinkedIn DM history in scope.

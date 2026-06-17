@@ -39,8 +39,15 @@ export type EngageCommentResult =
   | { ok: true; comment: string }
   | { ok: false; error: string };
 
+export type EngageCommentCampaignContext = {
+  name: string;
+  contextText: string;
+  icpText?: string | null;
+};
+
 export async function generateEngageCommentForContact(
   contactId: string,
+  opts?: { campaignContext?: EngageCommentCampaignContext },
 ): Promise<EngageCommentResult> {
   const db = getDb();
   const contact = await db.query.contacts.findFirst({
@@ -101,6 +108,16 @@ export async function generateEngageCommentForContact(
   const playbookBlock = formatContactPlaybookForDraftPrompt(playbook);
   if (playbookBlock) {
     user += `\n${playbookBlock}\n`;
+  }
+
+  const campaignCtx = opts?.campaignContext;
+  if (campaignCtx) {
+    user += `\nCampaign context (tone only — do not pitch in the public comment):\n`;
+    user += `- Campaign: ${campaignCtx.name}\n`;
+    if (campaignCtx.icpText?.trim()) {
+      user += `- ICP: ${campaignCtx.icpText.trim()}\n`;
+    }
+    user += `- Offer framing: ${campaignCtx.contextText.trim().slice(0, 1200)}\n`;
   }
 
   user +=

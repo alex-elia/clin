@@ -162,6 +162,11 @@ export function buildContactPlaybookFromAnalysis(opts: {
       rationale = overlay.icp_match
         ? `${rationale} Campaign ICP: ${overlay.icp_match}.`
         : rationale;
+    } else if (overlay.recommended_action === "engage_comment") {
+      action = "engage_comment";
+      rationale = overlay.icp_match
+        ? `${rationale} Campaign ICP: ${overlay.icp_match} — engage via comment first.`
+        : rationale;
     } else if (
       overlay.icp_match === "strong" &&
       overlay.recommended_action === "keep_and_draft"

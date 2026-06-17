@@ -27,6 +27,7 @@ import {
   updateOutreachSendSettings,
   type OutreachSendSettingsPatch,
 } from "@/lib/outreachSend";
+import { enqueueCampaignEngage, loadPendingEngageExecByMemberId } from "@/lib/campaignEngageQueue";
 import { generateOutreachDraftForMember } from "@/lib/outreachCampaignDraft";
 import { runCampaignPostCaptureWorkflow } from "@/lib/campaignPostCaptureWorkflow";
 import {
@@ -409,12 +410,13 @@ export async function addSegmentToCampaignAction(formData: FormData) {
   revalidatePath(`/campaigns/${campaignId}`);
 }
 
-/** Backfill old campaign members: run missing ICP + draft workflow in batch. */
+/** Backfill old campaign members: run missing ICP + draft/engage workflow in batch. */
 export type OrchestrateCampaignWorkflowState = {
   ok: boolean;
   message: string;
   processed: number;
   drafted: number;
+  engaged: number;
   skipped: number;
   failed: number;
 };
@@ -430,6 +432,7 @@ export async function orchestrateCampaignWorkflowAction(
       message: "Missing campaign id.",
       processed: 0,
       drafted: 0,
+      engaged: 0,
       skipped: 0,
       failed: 0,
     };
@@ -438,20 +441,32 @@ export async function orchestrateCampaignWorkflowAction(
 
   const rows = await listCampaignMembers(campaignId);
   const enriched = await enrichCampaignMembers(rows);
+  const pendingEngageExecByMemberId = await loadPendingEngageExecByMemberId(
+    rows.map((r) => r.member.id),
+  );
   const targets = enriched
     .filter((m) => memberPipelineOpen(m))
-    .filter((m) => m.profileDepth === "ok")
     .filter((m) => {
       const hasDraft = Boolean((m.member.draftOutreach ?? "").trim());
       const fit = m.icpMatch === "strong" || m.icpMatch === "partial";
       const needsIcp = !m.icpCheckedAt;
-      const needsDraft = fit && !hasDraft;
-      return needsIcp || needsDraft;
+      const hasPendingEngage = pendingEngageExecByMemberId.has(m.member.id);
+      const needsEngage =
+        m.icpRecommendedAction === "engage_comment" &&
+        m.member.status !== "engage" &&
+        !hasPendingEngage;
+      const needsDraft =
+        fit &&
+        !hasDraft &&
+        m.icpRecommendedAction !== "engage_comment";
+      if (needsEngage) return needsIcp || needsEngage;
+      return m.profileDepth === "ok" && (needsIcp || needsDraft);
     })
     .slice(0, limit);
 
   let processed = 0;
   let drafted = 0;
+  let engaged = 0;
   let skipped = 0;
   let failed = 0;
   for (const t of targets) {
@@ -462,6 +477,7 @@ export async function orchestrateCampaignWorkflowAction(
       });
       processed += 1;
       if (r.drafted) drafted += 1;
+      else if (r.engaged) engaged += 1;
       else skipped += 1;
     } catch {
       failed += 1;
@@ -471,9 +487,10 @@ export async function orchestrateCampaignWorkflowAction(
   revalidatePath(`/campaigns/${campaignId}`);
   return {
     ok: failed === 0,
-    message: `Workflow orchestration done: ${processed} processed, ${drafted} drafted, ${skipped} no-draft decisions, ${failed} failed.`,
+    message: `Workflow orchestration done: ${processed} processed, ${drafted} drafted, ${engaged} queued for engage, ${skipped} no-action decisions, ${failed} failed.`,
     processed,
     drafted,
+    engaged,
     skipped,
     failed,
   };
@@ -693,6 +710,27 @@ export async function markCampaignMemberSkippedAction(formData: FormData) {
   if (!m || m.campaignId !== campaignId) return;
   await updateMemberStatus(memberId, "skipped");
   revalidatePath(`/campaigns/${campaignId}`);
+}
+
+export async function queueCampaignMemberEngageAction(formData: FormData) {
+  const campaignId = String(formData.get("campaignId") ?? "").trim();
+  const memberId = String(formData.get("memberId") ?? "").trim();
+  if (!campaignId || !memberId) return;
+  const m = await findMemberById(memberId);
+  if (!m || m.campaignId !== campaignId) return;
+  const result = await enqueueCampaignEngage({
+    campaignId,
+    memberId,
+    contactId: m.contactId,
+    requireRecentPost: false,
+  });
+  revalidatePath(`/campaigns/${campaignId}`);
+  if (!result.ok) {
+    redirect(
+      `/campaigns/${campaignId}?tab=exec&engageErr=${encodeURIComponent(result.error.slice(0, 500))}`,
+    );
+  }
+  redirect(`/campaigns/${campaignId}?tab=exec&engageOk=1`);
 }
 
 export async function removeMemberFromCampaignAction(formData: FormData) {

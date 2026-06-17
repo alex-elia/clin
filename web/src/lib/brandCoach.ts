@@ -1,4 +1,5 @@
 import { completeChat, getLlmConfig } from "@/lib/llm/completeChat";
+import { appendLlmCallLog } from "@/lib/llm/llmCallLog";
 import { listPostAnalyticsSnapshots } from "@/lib/accountAnalytics";
 import { getGlobalWriterInstructions } from "@/lib/brand";
 import {
@@ -10,9 +11,13 @@ import {
 import { getOrCreateContentBrandContext } from "@/lib/contentBrandContext";
 import {
   getContentPostById,
-  listContentPosts,
-  listRecentPublished,
+  listContentPostsPipelineSummary,
+  listRecentPublishedSummaries,
 } from "@/lib/contentPosts";
+import {
+  coercePostCoachActions,
+  summarizeCoachReplyForChat,
+} from "@/lib/brandCoachClient";
 import type { CoachAction } from "@/lib/brandCoachTypes";
 import {
   buildCoachLanguageInstruction,
@@ -34,6 +39,11 @@ import {
   parseCoachActionsFromLlm,
 } from "@/lib/coachActionsParse";
 import {
+  COACH_LIMITS,
+  truncateForCoach,
+  trimCoachDraft,
+} from "@/lib/coachContextLimits";
+import {
   LINKEDIN_MENTION_COACH_HINT,
   LINKEDIN_POST_COPY_RULES,
 } from "@/lib/linkedinPostClipboard";
@@ -45,6 +55,7 @@ Your user is a B2B practitioner (IA en entreprise, transformation, souveraineté
 - ${LINKEDIN_POST_COPY_RULES}
 - Do not repeat the hook at the start of body
 - One-shot compose: prefer a single update_post action filling title, hook, body, format, scheduledAt, status=drafting when asked to write
+- When update_post includes body or articleBody: keep prose reply SHORT (summary only). Put the full text ONLY in the JSON patch — never duplicate the full draft in prose and JSON.
 - Plan editorial calendar when asked (spacing, Tue/Thu morning slots when rhythm says so)
 - Coach on risks (e.g. avoid fake attributed quotes; prefer real citations + their twist)
 - Use concrete hooks when they share quotes they heard in the field
@@ -109,13 +120,15 @@ export type BrandCoachDraft = {
 };
 
 async function buildPipelineContext(): Promise<string> {
-  const posts = await listContentPosts({ limit: 80 });
+  const posts = await listContentPostsPipelineSummary(
+    COACH_LIMITS.pipelinePosts,
+  );
   if (!posts.length) return "Pipeline: (empty)";
   const lines = posts.map((p) => {
     const sched = p.scheduledAt
       ? new Date(p.scheduledAt).toISOString().slice(0, 16)
       : "unscheduled";
-    const hook = p.hook?.slice(0, 80) ?? "";
+    const hook = p.hook?.slice(0, COACH_LIMITS.pipelineHook) ?? "";
     return `- id=${p.id} | ${p.status} | ${sched} | ${p.format} | ${p.title}${hook ? ` | hook: ${hook}` : ""}`;
   });
   return `Pipeline:\n${lines.join("\n")}`;
@@ -165,21 +178,38 @@ export async function runBrandCoachTurn(input: {
     }
   | { ok: false; error: string; debug?: import("@/lib/coachDebug").BrandCoachTurnDebug }
 > {
-  const trimmed = input.message.trim();
+  const trimmed = truncateForCoach(
+    input.message.trim(),
+    COACH_LIMITS.userMessage,
+  );
   if (trimmed.length < 2) {
     return { ok: false, error: "Message too short." };
+  }
+
+  const draft = input.draft ? trimCoachDraft({ ...input.draft }) : undefined;
+
+  let llm;
+  try {
+    llm = await getLlmConfig();
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "LLM not configured.",
+    };
   }
 
   const scope: CoachThreadScope =
     input.scope ?? (input.postId ? "post" : "studio");
 
+  let phase = "context";
+  try {
   const [userCtx, brandCtx, globalWriter, pipeline, published, analytics] =
     await Promise.all([
       getOrCreateUserContext(),
       getOrCreateContentBrandContext(),
       getGlobalWriterInstructions(),
       buildPipelineContext(),
-      listRecentPublished(5),
+      listRecentPublishedSummaries(5),
       buildAnalyticsContext(),
     ]);
 
@@ -189,14 +219,14 @@ export async function runBrandCoachTurn(input: {
   }
 
   const postText = postTextForLanguageDetection({
-    title: input.draft?.title ?? activePost?.title,
-    ideaNotes: input.draft?.ideaNotes ?? activePost?.ideaNotes,
-    hook: input.draft?.hook ?? activePost?.hook,
-    body: input.draft?.body ?? activePost?.body,
-    articleBody: input.draft?.articleBody ?? activePost?.articleBody,
+    title: draft?.title ?? activePost?.title,
+    ideaNotes: draft?.ideaNotes ?? activePost?.ideaNotes,
+    hook: draft?.hook ?? activePost?.hook,
+    body: draft?.body ?? activePost?.body,
+    articleBody: draft?.articleBody ?? activePost?.articleBody,
   });
 
-  const draftLang = input.draft?.language ?? activePost?.language;
+  const draftLang = draft?.language ?? activePost?.language;
   const postLangOverride =
     draftLang === "fr" || draftLang === "en" ? draftLang : null;
 
@@ -214,20 +244,20 @@ export async function runBrandCoachTurn(input: {
   if (activePost) {
     const lang =
       postLangOverride ??
-      input.draft?.language ??
+      draft?.language ??
       activePost.language ??
       resolvedLanguage.language;
     postBlock = `Active post (id=${activePost.id}):
-title: ${input.draft?.title ?? activePost.title}
+title: ${draft?.title ?? activePost.title}
 status: ${activePost.status}
-format: ${input.draft?.format ?? activePost.format}
+format: ${draft?.format ?? activePost.format}
 language: ${lang ?? resolvedLanguage.language}
 scheduledAt: ${activePost.scheduledAt?.toISOString() ?? "none"}
-ideaNotes: ${input.draft?.ideaNotes ?? activePost.ideaNotes ?? ""}
-hook: ${input.draft?.hook ?? activePost.hook ?? ""}
-body: ${input.draft?.body ?? activePost.body ?? ""}
-articleBody: ${input.draft?.articleBody ?? activePost.articleBody ?? ""}
-styleNotes: ${activePost.styleNotes ?? ""}`;
+ideaNotes: ${truncateForCoach(draft?.ideaNotes ?? activePost.ideaNotes, COACH_LIMITS.ideaNotes)}
+hook: ${truncateForCoach(draft?.hook ?? activePost.hook, COACH_LIMITS.hook)}
+body: ${truncateForCoach(draft?.body ?? activePost.body, COACH_LIMITS.body)}
+articleBody: ${truncateForCoach(draft?.articleBody ?? activePost.articleBody, COACH_LIMITS.articleBody)}
+styleNotes: ${truncateForCoach(activePost.styleNotes, 1_500)}`;
   }
 
   const publishedLines = published
@@ -257,13 +287,13 @@ styleNotes: ${activePost.styleNotes ?? ""}`;
     scope === "home" ? `\n\n${await buildNetworkContext()}` : "";
 
   const contextBlock = `Author context:
-goals: ${userCtx.goalsText ?? "(none)"}
-positioning: ${userCtx.positioningSummary ?? "(none)"}
-global_writer: ${globalWriter ?? "(none)"}
-doctrine: ${brandCtx.contentDoctrine ?? "(none)"}
-expertise: ${brandCtx.expertiseSummary ?? "(none)"}
-stance: ${brandCtx.stanceNotes ?? "(none)"}
-${brandCtx.mentionRoster?.trim() ? `${LINKEDIN_MENTION_COACH_HINT}${brandCtx.mentionRoster.trim()}` : "mention_roster: (none — add people/companies on /me)"}
+goals: ${truncateForCoach(userCtx.goalsText, 2_000) || "(none)"}
+positioning: ${truncateForCoach(userCtx.positioningSummary, 2_000) || "(none)"}
+global_writer: ${truncateForCoach(globalWriter, 2_000) || "(none)"}
+doctrine: ${truncateForCoach(brandCtx.contentDoctrine, 2_000) || "(none)"}
+expertise: ${truncateForCoach(brandCtx.expertiseSummary, 2_000) || "(none)"}
+stance: ${truncateForCoach(brandCtx.stanceNotes, 2_000) || "(none)"}
+${brandCtx.mentionRoster?.trim() ? `${LINKEDIN_MENTION_COACH_HINT}${truncateForCoach(brandCtx.mentionRoster, 3_000)}` : "mention_roster: (none — add people/companies on /me)"}
 content_language_default: ${brandCtx.contentLanguage ?? "auto"}
 language_for_this_turn: ${resolvedLanguage.language} (${languageResolutionHint(resolvedLanguage)})
 publishing_rhythm: ${rhythm}
@@ -287,11 +317,16 @@ ${postBlock}`;
       input.postId ? "Post coach" : scope === "home" ? "Home" : "Brand studio",
   });
 
-  const history = await listThreadMessages(threadId, 30);
+  const history = await listThreadMessages(
+    threadId,
+    COACH_LIMITS.historyMessages,
+  );
   const historyLines: string[] = [];
   for (const m of history) {
     if (m.role === "user" || m.role === "assistant") {
-      historyLines.push(`${m.role.toUpperCase()}: ${m.content}`);
+      historyLines.push(
+        `${m.role.toUpperCase()}: ${truncateForCoach(m.content, COACH_LIMITS.historyMessage)}`,
+      );
     }
   }
 
@@ -304,16 +339,7 @@ USER: ${trimmed}`;
 
   await appendThreadMessage(threadId, "user", trimmed);
 
-  let llm;
-  try {
-    llm = await getLlmConfig();
-  } catch (e) {
-    return {
-      ok: false,
-      error: e instanceof Error ? e.message : "LLM not configured.",
-    };
-  }
-
+  phase = "llm";
   let raw: string;
   try {
     raw = await completeChat({
@@ -322,6 +348,7 @@ USER: ${trimmed}`;
       user: userBlock,
       temperature: 0.55,
       feature: "brand_coach",
+      numCtx: 12_288,
       meta: {
         threadId,
         postId: input.postId ?? null,
@@ -330,21 +357,95 @@ USER: ${trimmed}`;
       },
     });
   } catch (e) {
+    const msg = e instanceof Error ? e.message : "LLM request failed.";
+    await appendLlmCallLog({
+      feature: "brand_coach",
+      provider: llm.provider,
+      model: llm.model,
+      durationMs: 0,
+      ok: false,
+      error: msg,
+      systemChars: buildBrandCoachSystemPrompt(resolvedLanguage, scope).length,
+      userChars: userBlock.length,
+      responseChars: 0,
+      responseText: msg,
+      meta: { phase, threadId, postId: input.postId ?? null, scope },
+    });
     return {
       ok: false,
-      error: e instanceof Error ? e.message : "LLM request failed.",
+      error: msg,
+      debug: {
+        provider: llm.provider,
+        model: llm.model,
+        replyPreview: "",
+        contextChars: userBlock.length,
+        parse: {
+          hasCoachActionsBlock: false,
+          jsonExtracted: false,
+          schemaValid: false,
+          schemaError: null,
+          actionsCount: 0,
+          rawLength: 0,
+          rawTailPreview: "",
+        },
+      },
     };
   }
 
-  const { reply, actions, parse } = parseCoachActionsFromLlm(raw);
+  const { reply, actions: parsedActions, parse } = parseCoachActionsFromLlm(raw);
+  const actions = coercePostCoachActions(parsedActions, input.postId);
   await appendThreadMessage(threadId, "assistant", reply, actions);
+
+  const clientReply = summarizeCoachReplyForChat(reply, actions);
 
   const debug: import("@/lib/coachDebug").BrandCoachTurnDebug = {
     provider: llm.provider,
     model: llm.model,
-    replyPreview: reply.slice(0, 600),
-    parse,
+    replyPreview: clientReply.slice(0, 600),
+    contextChars: userBlock.length,
+    parse: { ...parse, actionsCount: actions.length },
   };
 
-  return { ok: true, threadId, reply, actions, resolvedLanguage, debug };
+  return {
+    ok: true,
+    threadId,
+    reply: clientReply,
+    actions,
+    resolvedLanguage,
+    debug,
+  };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Coach turn failed.";
+    await appendLlmCallLog({
+      feature: "brand_coach",
+      provider: llm.provider,
+      model: llm.model,
+      durationMs: 0,
+      ok: false,
+      error: `${phase}: ${msg}`,
+      systemChars: 0,
+      userChars: 0,
+      responseChars: 0,
+      responseText: msg,
+      meta: { phase, postId: input.postId ?? null },
+    }).catch(() => undefined);
+    return {
+      ok: false,
+      error: msg,
+      debug: {
+        provider: llm.provider,
+        model: llm.model,
+        replyPreview: "",
+        parse: {
+          hasCoachActionsBlock: false,
+          jsonExtracted: false,
+          schemaValid: false,
+          schemaError: null,
+          actionsCount: 0,
+          rawLength: 0,
+          rawTailPreview: "",
+        },
+      },
+    };
+  }
 }

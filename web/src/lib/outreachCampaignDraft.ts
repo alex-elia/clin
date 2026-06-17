@@ -58,6 +58,17 @@ export async function generateOutreachDraftForMember(
     where: eq(outreachCampaignMembers.id, memberId),
   });
   if (!member) return { ok: false, error: "Member not found", stage: "load" };
+  if (
+    member.status === "skipped" ||
+    member.status === "sent" ||
+    member.status === "closed"
+  ) {
+    return {
+      ok: false,
+      error: `Member status is "${member.status}" — cannot draft outreach.`,
+      stage: "status",
+    };
+  }
   const campaign = await db.query.outreachCampaigns.findFirst({
     where: eq(outreachCampaigns.id, member.campaignId),
   });

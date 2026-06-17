@@ -1,5 +1,52 @@
 import type { CoachAction } from "@/lib/brandCoachTypes";
 import type { PostFormPatch } from "@/components/ContentPostWorkspace";
+import {
+  COACH_LIMITS,
+  truncateForCoach,
+} from "@/lib/coachContextLimits";
+
+/** Fix wrong/missing postId when coaching a single post page. */
+export function coercePostCoachActions(
+  actions: CoachAction[],
+  postId: string | undefined,
+): CoachAction[] {
+  if (!postId) return actions;
+  return actions.map((action) => {
+    if (action.type !== "update_post") return action;
+    if (action.postId === postId) return action;
+    return { ...action, postId };
+  });
+}
+
+/** Avoid duplicating a full article in chat + JSON (prevents tab OOM). */
+export function summarizeCoachReplyForChat(
+  reply: string,
+  actions: CoachAction[],
+): string {
+  const hasDraftPatch = actions.some(
+    (a) =>
+      a.type === "update_post" &&
+      Boolean(
+        a.patch?.body?.trim() ||
+          a.patch?.articleBody?.trim() ||
+          a.patch?.hook?.trim(),
+      ),
+  );
+  if (!hasDraftPatch) {
+    return truncateForCoach(reply, COACH_LIMITS.replyDisplay);
+  }
+  const trimmed = reply.trim();
+  if (!trimmed) {
+    return "Draft ready — use Apply to save, or review the form below.";
+  }
+  if (trimmed.length <= COACH_LIMITS.replyWithActions) return trimmed;
+  const preview = truncateForCoach(
+    trimmed,
+    COACH_LIMITS.replyWithActions - 80,
+    "preview",
+  );
+  return `${preview}\n\n— Full draft is in the form fields below. Click **Apply** to save it.`;
+}
 
 export function patchFromCoachAction(action: CoachAction): PostFormPatch | null {
   if (action.type !== "update_post" || !action.patch) return null;

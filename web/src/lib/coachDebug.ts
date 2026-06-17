@@ -15,6 +15,8 @@ export type BrandCoachTurnDebug = {
   provider: string;
   model: string;
   replyPreview: string;
+  /** Prompt size sent to the model (user block chars). */
+  contextChars?: number;
   parse: CoachActionsParseDebug;
 };
 

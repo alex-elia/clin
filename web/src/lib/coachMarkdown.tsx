@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { COACH_LIMITS, truncateForCoach } from "@/lib/coachContextLimits";
 
 type Block =
   | { type: "h"; level: 2 | 3; text: string }
@@ -87,7 +88,11 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
 }
 
 export function CoachMessageBody({ content }: { content: string }) {
-  const trimmed = content.trim();
+  const trimmed = truncateForCoach(
+    content.trim(),
+    COACH_LIMITS.replyDisplay,
+    "display",
+  );
   if (!trimmed) return null;
 
   const blocks = parseBlocks(trimmed);

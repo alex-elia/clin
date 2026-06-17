@@ -263,7 +263,7 @@ export const outreachCampaigns = sqliteTable("outreach_campaigns", {
 });
 
 /**
- * Member of a campaign. status: draft → ready → sent | skipped | closed (campaign ended).
+ * Member of a campaign. status: draft → ready | engage → sent | skipped | closed (campaign ended).
  */
 export const outreachCampaignMembers = sqliteTable(
   "outreach_campaign_members",

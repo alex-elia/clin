@@ -217,6 +217,7 @@ export async function listCampaignMembersForExtension(
     : and(
         ne(outreachCampaignMembers.status, "sent"),
         ne(outreachCampaignMembers.status, "skipped"),
+        ne(outreachCampaignMembers.status, "engage"),
       );
 
   const rows = await db
@@ -248,7 +249,7 @@ export async function listCampaignMembersForExtension(
 
 export async function updateMemberStatus(
   memberId: string,
-  status: "draft" | "ready" | "sent" | "skipped" | "closed",
+  status: "draft" | "ready" | "engage" | "sent" | "skipped" | "closed",
 ) {
   const db = getDb();
   const now = new Date();

@@ -26,6 +26,17 @@ export function normalizeCoachScheduledAt(
 function normalizeActionPatch(patch: unknown): unknown {
   if (!patch || typeof patch !== "object") return patch;
   const p = { ...(patch as Record<string, unknown>) };
+  const aliases: Record<string, string> = {
+    article_body: "articleBody",
+    idea_notes: "ideaNotes",
+    style_notes: "styleNotes",
+  };
+  for (const [from, to] of Object.entries(aliases)) {
+    if (p[to] === undefined && p[from] !== undefined) {
+      p[to] = p[from];
+      delete p[from];
+    }
+  }
   if ("scheduledAt" in p) {
     p.scheduledAt = normalizeCoachScheduledAt(p.scheduledAt);
   }
@@ -34,6 +45,12 @@ function normalizeActionPatch(patch: unknown): unknown {
   }
   if (typeof p.hook === "string") {
     p.hook = p.hook.replace(/\\n/g, "\n");
+  }
+  if (typeof p.articleBody === "string") {
+    p.articleBody = p.articleBody.replace(/\\n/g, "\n");
+  }
+  if (typeof p.ideaNotes === "string") {
+    p.ideaNotes = p.ideaNotes.replace(/\\n/g, "\n");
   }
   return p;
 }

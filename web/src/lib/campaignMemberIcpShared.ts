@@ -5,6 +5,7 @@ export type CampaignMemberIcpMatch = "strong" | "partial" | "weak" | "unknown";
 export type CampaignMemberIcpRecommendedAction =
   | "keep_and_draft"
   | "keep"
+  | "engage_comment"
   | "review_remove"
   | "skip";
 
@@ -19,6 +20,7 @@ export const ICP_ACTION_LABELS: Record<CampaignMemberIcpRecommendedAction, strin
   {
     keep_and_draft: "Draft outreach",
     keep: "Keep",
+    engage_comment: "Engage via comment",
     review_remove: "Review removal",
     skip: "Skip outreach",
   };

@@ -7,11 +7,18 @@ import type { ChatCompletionResult, CompleteChatParams } from "@/lib/llm/types";
 export async function completeChatOllama(
   params: CompleteChatParams,
 ): Promise<ChatCompletionResult> {
-  const { config, system, user, jsonMode, temperature, timeoutMs } = params;
+  const { config, system, user, jsonMode, temperature, timeoutMs, numCtx } =
+    params;
   const timeout = timeoutMs ?? (jsonMode ? 120_000 : 90_000);
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeout);
   try {
+    const options: Record<string, unknown> = {
+      temperature: temperature ?? (jsonMode ? 0.35 : 0.55),
+    };
+    if (numCtx != null && numCtx > 0) {
+      options.num_ctx = numCtx;
+    }
     const body: Record<string, unknown> = {
       model: config.model,
       messages: [
@@ -19,7 +26,7 @@ export async function completeChatOllama(
         { role: "user", content: user },
       ],
       stream: false,
-      options: { temperature: temperature ?? (jsonMode ? 0.35 : 0.55) },
+      options,
     };
     if (jsonMode) body.format = "json";
 

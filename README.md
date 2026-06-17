@@ -12,13 +12,13 @@ Clin is **open source and community-friendly**: inspect the code, fork it, and a
 
 | Area | Capabilities |
 |------|----------------|
-| **Capture** | Save visible profile and list data from LinkedIn into a local SQLite database (manual capture, connections list sprint, hygiene batches). |
-| **Understand** | Score contacts, review queues, analytics, and an auditable capture log. |
-| **Prepare** | Outreach campaigns, Ollama-powered drafts (local LLM), decisions workflow, inbox snapshots. |
-| **Automate (optional)** | Extension runners for list import, hygiene visits, and paced outreach — enabled in **Settings**, with shared caps between server and extension. |
+| **Capture** | Save visible profile, posts, messaging, and list data from LinkedIn into a local SQLite database (manual capture, connections list sprint, resilient step-based autopilot pipeline). |
+| **Understand** | Score contacts, cleaning board with AI buckets, exec queues (engage + removal), analytics, and an auditable capture log. |
+| **Prepare** | Outreach campaigns with ICP checks, engage-via-comment **or** DM drafts (parallel), Ollama/cloud LLM drafts, decisions workflow. |
+| **Automate (optional)** | Extension runners for list import, hygiene visits, cleaning engage/removal, and paced outreach — enabled in **Settings**, with shared caps between server and extension. |
 | **Own your data** | Backup, export, import, and configurable DB path under **Settings → Data**. |
 
-Typical flow: **capture → review → draft → approve → hand off to the extension** (copy, open profile, or paced runner — your choice).
+Typical flow: **capture → analyze → clean or campaign prep → engage comment and/or draft DM → approve → hand off to the extension** (copy, open profile, or paced runner — your choice).
 
 ## Quick start
 
@@ -100,7 +100,7 @@ Cloud sync to the project backend is **not enabled in current releases** (placeh
 |------|-------------|
 | [`web/`](./web/) | Next.js app — dashboard, REST API, SQLite (Drizzle) |
 | [`extension/`](./extension/) | Chrome MV3 — capture, campaigns, optional automation runners |
-| [`docs/`](./docs/) | [DESIGN](./docs/DESIGN.md), [SPEC-0001](./docs/specifications/SPEC-0001-clin-system-specification.md), [ADRs](./docs/adr/README.md) |
+| [`docs/`](./docs/) | [DESIGN](./docs/DESIGN.md), [SPEC-0001](./docs/specifications/SPEC-0001-clin-system-specification.md), [SPEC-0006](./docs/specifications/SPEC-0006-cleaning-exec-campaign-engage.md), [ADRs](./docs/adr/README.md) |
 
 ## How Clin is built
 
@@ -109,7 +109,7 @@ Cloud sync to the project backend is **not enabled in current releases** (placeh
 - **Conservative defaults:** automation features are opt-in; start slow and raise limits only when you understand the tradeoffs.
 - **Transparent:** captures and snapshots are logged so you can see what was read and when.
 
-Architecture and product boundaries: [`docs/DESIGN.md`](./docs/DESIGN.md). Current behavior: [`docs/specifications/SPEC-0001-clin-system-specification.md`](./docs/specifications/SPEC-0001-clin-system-specification.md).
+Architecture and product boundaries: [`docs/DESIGN.md`](./docs/DESIGN.md). Current behavior: [`docs/specifications/SPEC-0001-clin-system-specification.md`](./docs/specifications/SPEC-0001-clin-system-specification.md). Release features (cleaning exec, campaign engage, post signals): [`docs/specifications/SPEC-0006-cleaning-exec-campaign-engage.md`](./docs/specifications/SPEC-0006-cleaning-exec-campaign-engage.md).
 
 ## API (local)
 

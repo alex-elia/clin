@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { useRouter } from "next/navigation";
 import { CoachChatComposer } from "@/components/CoachChatComposer";
 import { CoachChatThread } from "@/components/CoachChatThread";
 import { CoachDebugPanel } from "@/components/CoachDebugPanel";
@@ -9,6 +10,11 @@ import {
   type BrandCoachTurnDebug,
 } from "@/lib/coachDebug";
 import { applyCoachPatchesToForm } from "@/lib/brandCoachClient";
+import {
+  COACH_LIMITS,
+  truncateForCoach,
+  trimCoachDraft,
+} from "@/lib/coachContextLimits";
 import {
   POST_WRITING_QUICK_PROMPTS_POST,
   POST_WRITING_QUICK_PROMPTS_STUDIO,
@@ -29,6 +35,8 @@ export type CoachDraftPayload = {
 type PostWritingAssistantProps = {
   postId?: string;
   coachDraft?: CoachDraftPayload;
+  /** Prefer this over `coachDraft` — draft is read only when sending (avoids re-trim on every keystroke). */
+  getCoachDraft?: () => CoachDraftPayload;
   /** `fr` | `en` | `auto` for speech recognition language */
   speechLanguage?: string | null;
   onApplyPatch: (patch: PostFormPatch) => void;
@@ -41,11 +49,13 @@ type PostWritingAssistantProps = {
 export function PostWritingAssistant({
   postId,
   coachDraft,
+  getCoachDraft,
   speechLanguage,
   onApplyPatch,
   planningOnly = false,
   brandLanguage,
 }: PostWritingAssistantProps) {
+  const router = useRouter();
   const [threadId, setThreadId] = useState<string | undefined>();
   const [messages, setMessages] = useState<
     { role: "user" | "assistant"; content: string }[]
@@ -57,6 +67,7 @@ export function PostWritingAssistant({
   const [statusLine, setStatusLine] = useState<string | null>(null);
   const [languageHint, setLanguageHint] = useState<string | null>(null);
   const [coachDebug, setCoachDebug] = useState<BrandCoachTurnDebug | null>(null);
+  const [lastLlmRoute, setLastLlmRoute] = useState<string | null>(null);
 
   const send = useCallback(async () => {
     const trimmed = input.trim();
@@ -67,6 +78,10 @@ export function PostWritingAssistant({
     setStatusLine(null);
     setMessages((m) => [...m, { role: "user", content: trimmed }]);
     setInput("");
+    const draftSource = getCoachDraft?.() ?? coachDraft;
+    const draftPayload = draftSource
+      ? trimCoachDraft({ ...draftSource })
+      : undefined;
     try {
       const res = await fetch("/api/branding/coach", {
         method: "POST",
@@ -76,13 +91,17 @@ export function PostWritingAssistant({
           threadId,
           postId: planningOnly ? undefined : postId,
           scope: planningOnly ? "studio" : undefined,
-          draft: coachDraft,
+          draft: draftPayload,
         }),
       });
       const data = (await res.json()) as {
         threadId?: string;
         reply?: string;
         actions?: CoachAction[];
+        savedToDb?: boolean;
+        appliedCount?: number;
+        appliedFields?: string[];
+        applyErrors?: string[];
         resolvedLanguage?: string;
         languageHint?: string;
         error?: string;
@@ -90,15 +109,61 @@ export function PostWritingAssistant({
       };
       if (!res.ok) {
         setError(data.error ?? `Failed (${res.status})`);
-        if (data.debug) setCoachDebug(data.debug);
+        if (data.debug) {
+          setCoachDebug(data.debug);
+          setLastLlmRoute(
+            `${data.debug.provider} / ${data.debug.model}${data.debug.contextChars != null ? ` · ${data.debug.contextChars} chars` : ""}`,
+          );
+        }
         return;
       }
       if (data.threadId) setThreadId(data.threadId);
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", content: data.reply ?? "" },
-      ]);
-      if (data.actions?.length) {
+      if (data.debug) {
+        setLastLlmRoute(
+          `${data.debug.provider} / ${data.debug.model}${data.debug.contextChars != null ? ` · ${data.debug.contextChars} chars` : ""}`,
+        );
+      }
+      const reply = truncateForCoach(
+        data.reply ?? "",
+        COACH_LIMITS.replyDisplay,
+        "reply",
+      );
+
+      if (data.savedToDb) {
+        router.refresh();
+        const fields =
+          data.appliedFields?.length ? ` (${data.appliedFields.join(", ")})` : "";
+        setPendingActions([]);
+        setCoachDebug(
+          data.debug?.parse.schemaValid === false ? data.debug : null,
+        );
+        setStatusLine(
+          `Saved ${data.appliedCount ?? 0} update(s) to this post${fields}. The form below is refreshed.`,
+        );
+        if (data.applyErrors?.length) {
+          setError(data.applyErrors.join(" "));
+        }
+      } else if (!planningOnly && postId && data.actions?.length) {
+        const filled = applyCoachPatchesToForm(
+          data.actions,
+          postId,
+          onApplyPatch,
+        );
+        setPendingActions(data.actions);
+        if (filled > 0) {
+          setCoachDebug(
+            data.debug?.parse.schemaValid === false ? data.debug : null,
+          );
+          setStatusLine(
+            `Prefilled ${filled} field(s) in the form below. Click Apply to save to the database, or edit then Save.`,
+          );
+        } else {
+          setCoachDebug(data.debug ?? null);
+          setError(
+            "Coach sent updates but they did not match this post. See debug below.",
+          );
+        }
+      } else if (data.actions?.length) {
         setPendingActions(data.actions);
         setCoachDebug(null);
       } else if (planningOnly && isAdvisoryCoachReply(data.debug)) {
@@ -115,14 +180,26 @@ export function PostWritingAssistant({
         setStatusLine(
           "Reply above. When you want calendar changes, ask to add or reschedule posts — the coach will send Apply-able actions.",
         );
+      } else if (data.debug?.parse.hasCoachActionsBlock) {
+        setCoachDebug(data.debug ?? null);
+        setError(
+          planningOnly
+            ? "Could not read calendar actions from the reply. See debug below."
+            : "Coach wrote a reply but form updates could not be parsed. See debug below.",
+        );
       } else if (data.debug && !isAdvisoryCoachReply(data.debug)) {
         setCoachDebug(data.debug);
         setError(
           planningOnly
             ? "Could not apply calendar changes. Try asking to add calendar slots with create_post."
-            : "Coach replied but sent no form updates. See debug below or Settings → AI call logs.",
+            : "Coach replied but sent no form updates. See debug below.",
         );
       }
+
+      setMessages((m) => {
+        const next = [...m, { role: "assistant" as const, content: reply }];
+        return next.length > 24 ? next.slice(-24) : next;
+      });
       if (data.resolvedLanguage) {
         setLanguageHint(
           data.languageHint
@@ -131,11 +208,16 @@ export function PostWritingAssistant({
         );
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Request failed.");
+      const msg = e instanceof Error ? e.message : "Request failed.";
+      setError(
+        msg.includes("fetch") || msg === "Failed to fetch"
+          ? "Request failed — the tab may have run out of memory or the server restarted. Check Settings → AI call logs for brand_coach."
+          : msg,
+      );
     } finally {
       setLoading(false);
     }
-  }, [input, loading, threadId, postId, planningOnly, coachDraft]);
+  }, [input, loading, threadId, postId, planningOnly, coachDraft, getCoachDraft, onApplyPatch, router]);
 
   const applyAll = useCallback(async () => {
     if (!pendingActions.length || loading) return;
@@ -212,6 +294,11 @@ export function PostWritingAssistant({
       {languageHint ? (
         <p className="mt-2 text-xs text-[var(--clin-muted)]">
           Language: {languageHint}
+        </p>
+      ) : null}
+      {lastLlmRoute ? (
+        <p className="mt-1 text-xs text-[var(--clin-muted)]">
+          LLM route: {lastLlmRoute}
         </p>
       ) : null}
 

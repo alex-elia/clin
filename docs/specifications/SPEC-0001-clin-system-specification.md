@@ -1,8 +1,8 @@
 # SPEC-0001: Clin — system specification (as-built)
 
-**Status:** current as of repository `main` / active development branch.  
+**Status:** current as of extension **0.2.58+** / active development branch.  
 **Scope:** `web/` (Next.js App Router + SQLite) and `extension/` (Chrome MV3).  
-**Related:** [DESIGN.md](../DESIGN.md) (product vision and boundaries), [ADR index](../adr/README.md), [SPEC-0005](./SPEC-0005-unified-contact-analysis.md) (unified contact analysis — target), [ADR-0010](../adr/0010-unified-contact-analysis-playbook.md).
+**Related:** [DESIGN.md](../DESIGN.md) (product vision and boundaries), [ADR index](../adr/README.md), [SPEC-0005](./SPEC-0005-unified-contact-analysis.md) (unified contact analysis), [SPEC-0006](./SPEC-0006-cleaning-exec-campaign-engage.md) (cleaning exec + campaign engage), [ADR-0010](../adr/0010-unified-contact-analysis-playbook.md), [ADR-0011](../adr/0011-campaign-engage-shared-exec-queue.md).
 
 ---
 
@@ -71,9 +71,10 @@ flowchart LR
 ### 4.2 Outreach campaigns
 
 - **Campaign** (`outreach_campaigns`): named context (`context_text`), optional `writer_instructions`, optional `system_prompt_override` for Ollama.
-- **Member** (`outreach_campaign_members`): links `contact_id` to campaign; holds `draft_outreach`, `status`: `draft` → `ready` → `sent` | `skipped`, and optional **ICP check** fields (`icp_match`, `icp_rationale`, `icp_recommended_action`, `icp_checked_at`).
-- **Capture target** (`app_settings` key `extension.capture_target_campaign_id`): extension polls `GET /api/extension/campaign-context`; ingests with this campaign id add new members to the campaign.
+- **Member** (`outreach_campaign_members`): links `contact_id` to campaign; holds `draft_outreach`, `status`: `draft` → `ready` | `engage` → `sent` | `skipped` | `closed`, and optional **ICP check** fields (`icp_match`, `icp_rationale`, `icp_recommended_action`, `icp_checked_at`). `icp_recommended_action` includes `engage_comment` (queue public comment via shared cleaning exec queue — see [SPEC-0006](./SPEC-0006-cleaning-exec-campaign-engage.md)).
+- **Capture target** (`app_settings` key `extension.capture_target_campaign_id`): extension polls `GET /api/extension/campaign-context`; ingests with this campaign id add new members to the campaign (re-attach only if membership was removed — manual **Remove from campaign** drops the row).
 - **Active extension campaign** (`extension.active_outreach_campaign_id`): extension **Outreach** tab and related APIs use this campaign for ready-queue style handoff.
+- **Orchestrate campaign** (Exec tab): batch ICP check + auto **draft** or **engage queue** for eligible open members; see §4.8.
 
 ### 4.3 Profile readiness (campaign UI)
 
@@ -85,12 +86,13 @@ Readiness is derived (not a stored enum on the member row):
 | **Profile: thin** | Latest profile capture exists; stored `extracted_json` lacks “detailed” signals (see section 6.3) **or** capture exists but JSON is sparse (still counts as at least thin). |
 | **Profile: detailed** | Latest profile JSON includes substantial About (≥ ~40 chars) and/or experience/education bullets. |
 
-The dashboard exposes **filters** (e.g. need profile, thin, detailed, need draft, **review draft**, **ready for extension**, sent/skipped, ICP strong/partial/weak, awaiting reply) and a **capture queue summary** (counts + “open next profile” URL). The extension receives **`captureTargetQueue`** from `campaign-context` (counts + `nextProfileUrl`).
+The dashboard exposes **filters** (e.g. need profile, thin, detailed, need draft, **review draft**, **ready for extension**, **engage queued**, sent/skipped, ICP strong/partial/weak, awaiting reply) and a **capture queue summary** (counts + “open next profile” URL). The extension receives **`captureTargetQueue`** from `campaign-context` (counts + `nextProfileUrl`).
 
 | Filter | Meaning |
 |--------|---------|
 | **review draft** | Open member with draft text, not yet marked `ready` |
 | **ready for extension** | Member `status = ready` (approved for extension handoff) |
+| **engage queued** | Member `status = engage` or pending engage row in `cleaning_exec_queue` |
 
 ### 4.4 Draft generation (Ollama)
 
@@ -103,14 +105,21 @@ The dashboard exposes **filters** (e.g. need profile, thin, detailed, need draft
 - Extension loads ready items from campaign-scoped endpoints (e.g. `GET /api/extension/outreach-queue`, `GET /api/outreach/ready` where applicable).
 - User copies draft, sends manually on LinkedIn, acknowledges in extension (e.g. mark sent).
 
-### 4.6 Cleaning and contact analysis
+### 4.6 Cleaning, exec queues, and contact analysis
 
-- **Cleaning board** (`/cleaning`): buckets derived from contact LLM analysis (`contact_analyze`) — `cleaning_plan`, `outreach_fit`, stewardship — plus extraction readiness (profile/messaging depth).
-- **Storage:** optional `llm_provisional_json` / `llm_refined_json` on contacts (via `contactSqlExtras`).
-- **Side effect:** actionable buckets sync to `action_queue` (`cleaningQueue.ts`).
-- **Campaign overlap:** campaign members use separate **ICP check** (`campaign_icp_check`); post-capture workflow runs ICP → draft, while autopilot may run `contact_analyze` independently. **Target:** unify via contact playbook ([SPEC-0005](./SPEC-0005-unified-contact-analysis.md)).
+- **Cleaning board** (`/cleaning`): buckets derived from contact LLM analysis (`contact_analyze`) — `cleaning_plan`, `outreach_fit`, stewardship — plus extraction readiness (profile/messaging depth). Shared **`RecommendationPanel`** shows contact playbook + ICP rationale on campaign member rows.
+- **Storage:** optional `llm_provisional_json` / `llm_refined_json` on contacts (via `contactSqlExtras`); envelope may embed **`playbook`** ([SPEC-0005](./SPEC-0005-unified-contact-analysis.md)).
+- **Actionable accepts:** `review_remove` → removal exec queue; `engage_comment` → engage exec queue (AI comment). Other buckets may enqueue `action_queue` review rows.
+- **`cleaning_exec_queue`:** paced **engage** (paste comment on post) and **removal** (disconnect) tasks for extension; dashboard **`CleaningExecQueuePanel`** + extension popup todo lists. See [SPEC-0006](./SPEC-0006-cleaning-exec-campaign-engage.md).
+- **Campaign overlap:** campaign members use **ICP check** (`campaign_icp_check`); post-capture workflow runs ICP → draft **or** engage queue. Engage and DM prep can run **in parallel** (member may be `engage` or `ready` while exec item is pending).
 
-### 4.7 Legacy queue path
+### 4.7 Campaign orchestration and engage
+
+- **Orchestrate campaign now** (server action): processes open members (profile detailed, or engage-eligible without profile gate); runs `runCampaignPostCaptureWorkflow` per contact.
+- **ICP branch:** `keep_and_draft` / partial fit → `generateOutreachDraftForMember`; `engage_comment` → `enqueueCampaignEngage` (requires recent post for auto path).
+- **Manual Queue engage** on member row: same enqueue helper; DM buttons remain available.
+
+### 4.8 Legacy queue path
 
 `action_queue` rows may still carry `draft_outreach` and `outreach_decision` (`pending` / `approved` / …) for the **Decisions** workflow. Campaign-based outreach is the **primary** model for multi-contact, context-aware drafts; both may coexist in the DB.
 
@@ -126,7 +135,8 @@ Key tables (see `web/src/db/schema.ts` for truth):
 | `capture_sessions` | `contact_id`, `page_type` (`profile` \| `posts` \| `messaging` \| `connections` \| …; **target:** `company`, `company_jobs`, `web_page`), `source_url`, `extracted_json`, `captured_at`, `confidence`. |
 | `contact_snapshots` | Point-in-time JSON including scores after capture. |
 | `outreach_campaigns` | Campaign metadata and LLM prompt fields. |
-| `outreach_campaign_members` | Per-contact draft, status, and ICP check fields within a campaign. |
+| `outreach_campaign_members` | Per-contact draft, status (`draft` \| `ready` \| `engage` \| `sent` \| `skipped` \| `closed`), ICP check fields. |
+| `cleaning_exec_queue` | Paced engage comment and removal disconnect tasks (`kind`, `payload_json`, outcomes). |
 | `action_queue` | Review queue + optional draft/decision fields. |
 | `app_settings` | Key/value: pacing, extension campaign ids, feature flags. |
 | `user_context` | Self-profile link, goals, optional pending self-capture URL. |
@@ -145,7 +155,7 @@ Validated by `capturePayloadSchema` (`web/src/lib/schemas.ts`):
 - `pageType`: `profile` \| `connections` \| `messaging` \| `posts` \| `unknown` (**target:** `company`, `company_jobs`, `web_page`).
 - `sourceUrl`, optional `capturedAt`, `confidence`.
 - `extractedFields` (profile): `fullName`, `headline`, `company`, `location`, `connectionDegree`; optional `about`, `experienceBullets`, `educationBullets`.
-- `extractedFields` (posts): `targetProfileUrl`, `profilePosts[]` (`text`, `ageLabel`, `reactions`, `comments`, `postUrl`).
+- `extractedFields` (posts): `targetProfileUrl`, `profilePosts[]` (`text`, `ageLabel`, `reactions`, `comments`, `postUrl`; optional `postKind`, `userComment`, `sharedTitle`).
 - `extractedFields` (messaging): `messagingParticipantProfileUrl`, `messagingMessages[]`, optional `messagingThreadId`.
 - Optional `outreachCampaignId` (capture target).
 - Optional `fieldPresence`.
@@ -165,6 +175,11 @@ Implemented in `campaignMemberReadiness.ts` / `profileCaptureContext.ts`:
 
 Connection degree text must not assume English-only labels (e.g. French “2e” is valid).
 
+### 6.4 Post recency and origin (server + LLM)
+
+- **Recency:** posts older than **365 days** excluded from prompts and engage targeting (`profilePostRecency.ts`).
+- **Origin:** `postKind` distinguishes **original** vs **reshare** vs **news_share**; reshares are interest signals, not personal content claims (`profilePostKinds.ts`). Applied in contact analysis, outreach/engage draft prompts, and extension activity capture.
+
 ---
 
 ## 7. HTTP API catalog (non-exhaustive)
@@ -179,6 +194,15 @@ Connection degree text must not assume English-only labels (e.g. French “2e”
 | `POST` | `/api/extension/generate-outreach-draft` | Body `{ profileUrl }`: generate draft if contact is in capture-target or active extension campaign. |
 | `GET` | `/api/extension/outreach-queue` | Ready items for extension. |
 | `POST` | `/api/extension/outreach-queue/ack` | Acknowledge send/skip. |
+| `GET` | `/api/cleaning/exec-queue` | Pending cleaning exec items (engage + removal). |
+| `PATCH` | `/api/cleaning/exec-queue/[id]` | Update engage comment, skip, regenerate. |
+| `GET` | `/api/extension/cleaning-engage/ready` | Extension engage handoff list. |
+| `GET` | `/api/extension/cleaning-removal/ready` | Extension removal handoff list. |
+| `GET` | `/api/extension/cleaning-exec-settings` | Engage/removal pace and caps. |
+| `POST` | `/api/extension/engage-queue/ack` | Engage exec outcome (`commented` \| `skipped` \| `failed`). |
+| `POST` | `/api/extension/removal-queue/ack` | Removal exec outcome. |
+| `POST` | `/api/cleaning/batch` | Batch cleaning board actions. |
+| `POST` | `/api/autopilot/campaign-run` | Campaign autopilot analyze + optional actions. |
 | `GET` | `/api/outreach/ready` | Combined ready rows for UI/extension. |
 | `GET` | `/api/contacts`, `PATCH` `/api/contacts/[id]` | Contacts CRUD-side updates. |
 | `GET` | `/api/captures` | Capture log. |
@@ -215,6 +239,7 @@ Connection degree text must not assume English-only labels (e.g. French “2e”
 | **Canonical URL** | Normalized `https://www.linkedin.com/in/{slug}` (NFC slug, decoded). |
 | **Profile capture** | `capture_sessions` row with `page_type = 'profile'`. |
 | **Thin / detailed** | Derived quality of last profile JSON for outreach prep. |
-| **Contact playbook** | Target unified recommendation (clean, nurture, message, etc.) shared by Cleaning and Campaigns; see SPEC-0005. |
-| **Contact context bundle** | Target L1 read-model: profile + posts + company intel for all contact LLM features. |
-| **Capture chain** | Target ordered autopilot captures (profile → posts → company → jobs) before analysis runs. |
+| **Contact playbook** | Unified recommendation (clean, nurture, message, engage_comment, etc.) shared by Cleaning and Campaigns; see SPEC-0005. |
+| **Engage exec queue** | Shared paced queue for public LinkedIn comments (Cleaning accept + campaign ICP `engage_comment`). |
+| **Contact context bundle** | L1 read-model: profile + posts + company intel for all contact LLM features. |
+| **Capture chain** | Ordered autopilot captures (profile → posts → company → jobs) before analysis runs. |

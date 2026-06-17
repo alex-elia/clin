@@ -10,6 +10,21 @@ import { formatPostForLinkedInClipboard } from "@/lib/linkedinPostClipboard";
 
 export type ContentPostRow = typeof contentPosts.$inferSelect;
 
+/** Slim row for coach pipeline context — avoids loading full bodies for every post. */
+export type ContentPostPipelineSummary = {
+  id: string;
+  title: string;
+  status: string;
+  format: string;
+  hook: string | null;
+  scheduledAt: Date | null;
+};
+
+export type ContentPostPublishedSummary = {
+  title: string;
+  publishedAt: Date | null;
+};
+
 function startOfLocalDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
@@ -120,6 +135,41 @@ export async function listRecentPublished(limit = 5) {
     .from(contentPosts)
     .where(eq(contentPosts.status, "published"))
     .orderBy(desc(contentPosts.publishedAt))
+    .limit(limit);
+}
+
+export async function listRecentPublishedSummaries(
+  limit = 5,
+): Promise<ContentPostPublishedSummary[]> {
+  const db = getDb();
+  return db
+    .select({
+      title: contentPosts.title,
+      publishedAt: contentPosts.publishedAt,
+    })
+    .from(contentPosts)
+    .where(eq(contentPosts.status, "published"))
+    .orderBy(desc(contentPosts.publishedAt))
+    .limit(limit);
+}
+
+/** Metadata only — used by brand coach to list the pipeline without OOM. */
+export async function listContentPostsPipelineSummary(
+  limit = 40,
+): Promise<ContentPostPipelineSummary[]> {
+  const db = getDb();
+  return db
+    .select({
+      id: contentPosts.id,
+      title: contentPosts.title,
+      status: contentPosts.status,
+      format: contentPosts.format,
+      hook: contentPosts.hook,
+      scheduledAt: contentPosts.scheduledAt,
+    })
+    .from(contentPosts)
+    .where(ne(contentPosts.status, "archived"))
+    .orderBy(asc(contentPosts.scheduledAt), desc(contentPosts.updatedAt))
     .limit(limit);
 }
 

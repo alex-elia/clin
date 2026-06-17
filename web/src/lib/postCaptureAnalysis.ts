@@ -4,6 +4,7 @@ import {
   executeContactAnalysis,
 } from "@/lib/contactAnalyzeRunner";
 import { runAndPersistMemberIcpCheck } from "@/lib/campaignMemberIcp";
+import { enqueueCampaignEngage } from "@/lib/campaignEngageQueue";
 import { generateOutreachDraftForMember } from "@/lib/outreachCampaignDraft";
 import { getAutopilotSettings } from "@/lib/autopilot";
 import { buildContactContextBundle } from "@/lib/contactContextBundle";
@@ -174,14 +175,25 @@ export async function runPostCaptureAnalysis(opts: {
   }
 
   if (opts.campaignId && memberId && icpResult) {
-    const shouldDraft =
-      icpResult.icp_match === "strong" ||
-      (icpResult.icp_match === "partial" &&
-        (icpResult.recommended_action === "keep_and_draft" ||
-          icpResult.recommended_action === "keep"));
-    if (shouldDraft) {
-      const draftResult = await generateOutreachDraftForMember(memberId);
-      drafted = draftResult.ok;
+    if (icpResult.recommended_action === "engage_comment") {
+      const engage = await enqueueCampaignEngage({
+        campaignId: opts.campaignId,
+        memberId,
+        contactId: opts.contactId,
+      });
+      if (engage.ok) drafted = false;
+    } else {
+      const shouldDraft =
+        icpResult.recommended_action !== "skip" &&
+        icpResult.recommended_action !== "review_remove" &&
+        (icpResult.icp_match === "strong" ||
+          (icpResult.icp_match === "partial" &&
+            (icpResult.recommended_action === "keep_and_draft" ||
+              icpResult.recommended_action === "keep")));
+      if (shouldDraft) {
+        const draftResult = await generateOutreachDraftForMember(memberId);
+        drafted = draftResult.ok;
+      }
     }
   }
 
