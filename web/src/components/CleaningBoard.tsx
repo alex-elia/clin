@@ -17,6 +17,7 @@ import type {
   CleaningContactCard,
 } from "@/lib/cleaningBoardTypes";
 import { RecommendationPanel } from "@/components/RecommendationPanel";
+import { LinkedInActivityBadge } from "@/components/LinkedInActivityBadge";
 
 type BatchResult =
   | {
@@ -34,6 +35,7 @@ export function CleaningBoard({ data }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const paramBucket = searchParams.get("bucket");
+  const lowActivityFilter = searchParams.get("filter") === "low_activity";
   const defaultBucket =
     CLEANING_BUCKET_META.find((m) => (data.summary.bucketCounts[m.id] ?? 0) > 0)
       ?.id ?? "needs_review";
@@ -51,6 +53,13 @@ export function CleaningBoard({ data }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [lastResults, setLastResults] = useState<BatchResult[] | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+
+  function toggleLowActivityFilter() {
+    const params = new URLSearchParams(searchParams.toString());
+    if (lowActivityFilter) params.delete("filter");
+    else params.set("filter", "low_activity");
+    router.push(`/cleaning?${params.toString()}`);
+  }
 
   function selectBucket(id: CleaningBucket) {
     setSelected(new Set());
@@ -245,6 +254,20 @@ export function CleaningBoard({ data }: Props) {
               </button>
             );
           })}
+        </div>
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={toggleLowActivityFilter}
+            className={`rounded-lg border px-3 py-1.5 text-sm transition-colors ${
+              lowActivityFilter
+                ? "border-amber-500 bg-amber-50 text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100"
+                : "border-[var(--clin-border)] text-[var(--clin-muted)] hover:bg-[var(--clin-surface-muted)]"
+            }`}
+          >
+            Low LinkedIn activity
+            {lowActivityFilter ? " (on)" : ""}
+          </button>
         </div>
       </section>
 
@@ -478,6 +501,9 @@ function ContactBucketCard({
     plan?.playbook?.trim() ||
     plan?.rationale?.trim() ||
     card.analysis?.stewardship?.rationale;
+  const preferLinkedIn =
+    activeBucket === "review_remove" || card.bucket === "review_remove";
+  const linkedInHref = card.linkedinUrl?.trim() || null;
 
   return (
     <li className="clin-card p-4">
@@ -492,12 +518,23 @@ function ContactBucketCard({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <Link
-                href={`/contacts/${card.contactId}`}
-                className="font-medium text-[var(--clin-accent)] hover:underline"
-              >
-                {card.fullName ?? "Unknown"}
-              </Link>
+              {preferLinkedIn && linkedInHref ? (
+                <a
+                  href={linkedInHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-[var(--clin-accent)] hover:underline"
+                >
+                  {card.fullName ?? "Unknown"}
+                </a>
+              ) : (
+                <Link
+                  href={`/contacts/${card.contactId}`}
+                  className="font-medium text-[var(--clin-accent)] hover:underline"
+                >
+                  {card.fullName ?? "Unknown"}
+                </Link>
+              )}
               {card.headline ? (
                 <p className="mt-0.5 text-sm text-[var(--clin-muted)]">
                   {card.headline}
@@ -531,6 +568,12 @@ function ContactBucketCard({
                   Score {card.compositeScore}
                 </span>
               ) : null}
+              <LinkedInActivityBadge
+                tier={card.activityTier}
+                score={card.activityScore}
+                newestPostAgeLabel={card.newestPostAgeLabel}
+                compact
+              />
             </div>
           </div>
           {card.userOverrideBucket &&
@@ -569,8 +612,21 @@ function ContactBucketCard({
             </p>
           ) : null}
           <div className="mt-3 flex flex-wrap gap-2 text-sm">
-            <Link href={`/contacts/${card.contactId}`} className="clin-link">
-              Open contact
+            {linkedInHref ? (
+              <a
+                href={linkedInHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="clin-btn-secondary text-xs px-2 py-1"
+              >
+                LinkedIn
+              </a>
+            ) : null}
+            <Link
+              href={`/contacts/${card.contactId}`}
+              className="clin-btn-secondary text-xs px-2 py-1"
+            >
+              In Clin
             </Link>
             {card.bucket === "reach_out_dm" ? (
               <Link href="/decisions" className="clin-link">

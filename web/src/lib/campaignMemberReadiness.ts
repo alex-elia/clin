@@ -7,6 +7,8 @@ import type {
   CampaignMemberIcpMatch,
   CampaignMemberIcpRecommendedAction,
 } from "@/lib/campaignMemberIcpShared";
+import { listContactActivityExtensionsMap } from "@/lib/contactActivitySqlExtras";
+import type { LinkedInActivityTier } from "@/lib/linkedinActivity";
 
 /** Same shape as `CampaignMemberRow` in outreachCampaigns (avoid import cycle). */
 export type CampaignMemberRowLite = {
@@ -120,6 +122,9 @@ export type EnrichedCampaignMember = CampaignMemberRowLite & {
   icpRationale: string | null;
   icpRecommendedAction: CampaignMemberIcpRecommendedAction | null;
   icpCheckedAt: Date | null;
+  activityTier: LinkedInActivityTier | null;
+  activityScore: number | null;
+  newestPostAgeLabel: string | null;
 };
 
 /** Still in the DM outreach pipeline (not sent, skipped, or closed). Engage-queued members can still draft. */
@@ -134,6 +139,9 @@ export async function enrichCampaignMembers(
   const caps = await loadLatestProfileCapturesByContactId(
     rows.map((r) => r.contact.id),
   );
+  const activityMap = listContactActivityExtensionsMap(
+    rows.map((r) => r.contact.id),
+  );
   return rows.map((row) => {
     const cap = caps.get(row.contact.id);
     let depth: ProfileDepth = cap
@@ -143,10 +151,14 @@ export async function enrichCampaignMembers(
     // should still count as at least "thin" (not "missing").
     if (cap && depth === "missing") depth = "thin";
     const icp = readMemberIcpFromRow(row.member);
+    const activity = activityMap.get(row.contact.id);
     return {
       ...row,
       profileDepth: depth,
       lastProfileCapturedAt: cap?.capturedAt ?? null,
+      activityTier: activity?.activityTier ?? null,
+      activityScore: activity?.activityScore ?? null,
+      newestPostAgeLabel: activity?.newestPostAgeLabel ?? null,
       ...icp,
     };
   });
@@ -295,7 +307,9 @@ export function enrichedMemberMatchesFilter(
 /** Next profile to open for capture (missing first, then thin). */
 export function pickNextProfileCaptureTarget(
   rows: EnrichedCampaignMember[],
-): { profileUrl: string; fullName: string | null; memberId: string } | null {
+  opts?: { skipMemberIds?: Iterable<string> },
+): { profileUrl: string; fullName: string | null; memberId: string; profileDepth: ProfileDepth } | null {
+  const skip = new Set(opts?.skipMemberIds ?? []);
   const sorted = [...rows].sort((a, b) => {
     if (a.profileDepth !== b.profileDepth) {
       return DEPTH_ORDER[a.profileDepth] - DEPTH_ORDER[b.profileDepth];
@@ -305,12 +319,14 @@ export function pickNextProfileCaptureTarget(
   for (const m of sorted) {
     if (!memberPipelineOpen(m)) continue;
     if (m.profileDepth === "ok") continue;
+    if (skip.has(m.member.id)) continue;
     const profileUrl = m.contact.linkedinUrlCanonical?.trim();
     if (!profileUrl) continue;
     return {
       profileUrl,
       fullName: m.contact.fullName,
       memberId: m.member.id,
+      profileDepth: m.profileDepth,
     };
   }
   return null;

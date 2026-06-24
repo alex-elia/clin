@@ -54,6 +54,70 @@ function assertApiKey(config: LlmConfig): string {
   return key;
 }
 
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableCloudStatus(status: number): boolean {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+type ChatResponse = {
+  choices?: { message?: Record<string, unknown> }[];
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
+  error?: { message?: string };
+};
+
+async function postChatCompletionOnce(
+  url: string,
+  apiKey: string,
+  body: Record<string, unknown>,
+  signal: AbortSignal,
+  config: LlmConfig,
+): Promise<ChatCompletionResult> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    signal,
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    const err = new Error(formatLlmChatError(config, res.status, errText));
+    (err as Error & { httpStatus?: number }).httpStatus = res.status;
+    throw err;
+  }
+  const data = (await res.json()) as ChatResponse;
+  if (data.error?.message) {
+    throw new Error(
+      `LLM (${config.provider}): ${parseHttpErrorBody(JSON.stringify(data.error))}`,
+    );
+  }
+  const msg = data.choices?.[0]?.message;
+  if (!msg) {
+    throw new Error(emptyResponseError(config));
+  }
+  const content = extractMessageContent(msg);
+  if (!content.trim()) {
+    throw new Error(emptyResponseError(config));
+  }
+  const usage = data.usage
+    ? {
+        inputTokens: data.usage.prompt_tokens,
+        outputTokens: data.usage.completion_tokens,
+        totalTokens: data.usage.total_tokens,
+      }
+    : undefined;
+  return { text: content, usage };
+}
+
 export async function completeChatOpenAiCompatible(
   params: CompleteChatParams,
 ): Promise<ChatCompletionResult> {
@@ -64,71 +128,63 @@ export async function completeChatOpenAiCompatible(
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeout);
 
-  const body: Record<string, unknown> = {
-    model: config.model,
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-    temperature: temperature ?? (jsonMode ? 0.35 : 0.55),
-    max_tokens: jsonMode ? 4096 : 2048,
+  const buildBody = (useJsonMode: boolean): Record<string, unknown> => {
+    const body: Record<string, unknown> = {
+      model: config.model,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      temperature: temperature ?? (useJsonMode ? 0.35 : 0.55),
+      max_tokens: useJsonMode ? 4096 : 2048,
+    };
+    if (useJsonMode) {
+      body.response_format = { type: "json_object" };
+    }
+    return body;
   };
-  if (jsonMode) {
-    body.response_format = { type: "json_object" };
-  }
+
+  const attempts: { useJsonMode: boolean }[] = jsonMode
+    ? [{ useJsonMode: true }, { useJsonMode: false }]
+    : [{ useJsonMode: false }];
+
+  let lastError: Error | null = null;
 
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      signal: controller.signal,
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      throw new Error(formatLlmChatError(config, res.status, errText));
-    }
-    const data = (await res.json()) as {
-      choices?: { message?: Record<string, unknown> }[];
-      usage?: {
-        prompt_tokens?: number;
-        completion_tokens?: number;
-        total_tokens?: number;
-      };
-      error?: { message?: string };
-    };
-    if (data.error?.message) {
-      throw new Error(
-        `LLM (${config.provider}): ${parseHttpErrorBody(JSON.stringify(data.error))}`,
-      );
-    }
-    const msg = data.choices?.[0]?.message;
-    if (!msg) {
-      throw new Error(emptyResponseError(config));
-    }
-    const content = extractMessageContent(msg);
-    if (!content.trim()) {
-      throw new Error(emptyResponseError(config));
-    }
-    const text = jsonMode ? content : content.trim();
-    const usage = data.usage
-      ? {
-          inputTokens: data.usage.prompt_tokens,
-          outputTokens: data.usage.completion_tokens,
-          totalTokens: data.usage.total_tokens,
+    for (const attempt of attempts) {
+      for (let retry = 0; retry < 3; retry += 1) {
+        try {
+          const result = await postChatCompletionOnce(
+            url,
+            apiKey,
+            buildBody(attempt.useJsonMode),
+            controller.signal,
+            config,
+          );
+          const text = attempt.useJsonMode ? result.text : result.text.trim();
+          return { text, usage: result.usage };
+        } catch (e) {
+          if (e instanceof Error && e.name === "AbortError") {
+            throw new Error(
+              `LLM (${config.provider}) timed out after ${Math.round(timeout / 1000)}s.`,
+            );
+          }
+          const err = e instanceof Error ? e : new Error(String(e));
+          lastError = err;
+          const status = (err as Error & { httpStatus?: number }).httpStatus;
+          if (
+            typeof status === "number" &&
+            isRetryableCloudStatus(status) &&
+            retry < 2
+          ) {
+            await sleepMs(600 * (retry + 1) * (retry + 1));
+            continue;
+          }
+          break;
         }
-      : undefined;
-    return { text, usage };
-  } catch (e) {
-    if (e instanceof Error && e.name === "AbortError") {
-      throw new Error(
-        `LLM (${config.provider}) timed out after ${Math.round(timeout / 1000)}s.`,
-      );
+      }
     }
-    throw e;
+    throw lastError ?? new Error("Cloud inference failed.");
   } finally {
     clearTimeout(t);
   }

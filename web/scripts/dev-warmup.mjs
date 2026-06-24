@@ -6,19 +6,10 @@ import { fetchClinHealth } from "./lib/dev-runtime.mjs";
 
 const GET_ROUTES = [
   "/",
-  "/campaigns",
   "/contacts",
+  "/cleaning",
+  "/campaigns",
   "/api/health",
-  "/api/automation/status",
-  "/api/extension/brand",
-  "/api/extension/campaign-context",
-  "/api/extension/outreach-campaigns",
-  "/api/extension/outreach-send-settings",
-  "/api/extension/pending-self-capture",
-  "/api/outreach/ready",
-  "/api/branding/posts/ready",
-  "/api/tasks/summary",
-  "/api/telemetry/needs-consent",
 ];
 
 function sleep(ms) {
@@ -97,24 +88,46 @@ export async function warmClinDevServer(port, opts = {}) {
     if (await warmRoute(base, route, opts)) ok += 1;
   }
 
-  try {
-    const tick = await fetch(`${base}/api/branding/jobs/tick`, {
-      method: "POST",
-      signal: AbortSignal.timeout(60_000),
-    });
-    if (tick.status !== 404) ok += 1;
-  } catch {
-    /* ignore */
+  if (process.env.CLIN_DEV_FULL_WARMUP === "1") {
+    const extensionRoutes = [
+      "/api/automation/status",
+      "/api/extension/brand",
+      "/api/extension/campaign-context",
+      "/api/extension/outreach-campaigns",
+      "/api/extension/outreach-send-settings",
+      "/api/extension/pending-self-capture",
+      "/api/outreach/ready",
+      "/api/branding/posts/ready",
+      "/api/tasks/summary",
+      "/api/telemetry/needs-consent",
+    ];
+    for (const route of extensionRoutes) {
+      if (await warmRoute(base, route, opts)) ok += 1;
+    }
+
+    try {
+      const tick = await fetch(`${base}/api/branding/jobs/tick`, {
+        method: "POST",
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (tick.status !== 404) ok += 1;
+    } catch {
+      /* ignore */
+    }
+
+    const campaignPages = await warmCampaignDetails(base, opts);
+    ok += campaignPages;
+    console.log(
+      `[clin] Dev warmup done — ${ok} route(s) compiled (${campaignPages} campaign detail page(s)).`,
+    );
+  } else {
+    console.log(
+      `[clin] Dev warmup done — ${ok}/${GET_ROUTES.length} core route(s) compiled. Set CLIN_DEV_FULL_WARMUP=1 to pre-compile extension API routes.`,
+    );
   }
 
-  const campaignPages = await warmCampaignDetails(base, opts);
-  ok += campaignPages;
-
-  const expected = GET_ROUTES.length + 1;
-  console.log(
-    `[clin] Dev warmup done — ${ok}/${expected}+ route(s) compiled (${campaignPages} campaign detail page(s)).`,
-  );
-  if (ok < expected) {
+  const expected = GET_ROUTES.length;
+  if (process.env.CLIN_DEV_FULL_WARMUP !== "1" && ok < expected) {
     console.warn(
       "[clin] Some routes were still 404 — wait a few seconds and refresh, or run: npm run dev:clean",
     );

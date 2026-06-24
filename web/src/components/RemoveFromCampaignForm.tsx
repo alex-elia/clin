@@ -1,6 +1,7 @@
 "use client";
 
 import { removeMemberFromCampaignAction } from "@/app/actions";
+import { preserveCampaignExecScroll } from "@/lib/campaignExecScroll";
 
 export function RemoveFromCampaignForm({
   campaignId,
@@ -19,7 +20,9 @@ export function RemoveFromCampaignForm({
           )
         ) {
           e.preventDefault();
+          return;
         }
+        preserveCampaignExecScroll(campaignId);
       }}
     >
       <input type="hidden" name="campaignId" value={campaignId} />

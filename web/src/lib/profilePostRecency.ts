@@ -139,6 +139,62 @@ export function isStaleLinkedInPostAge(
   return false;
 }
 
+/**
+ * Estimated days since post (lower = newer). null when ageLabel is missing or unparseable.
+ */
+export function estimatePostAgeDays(
+  ageLabel: string | null | undefined,
+  now: Date = new Date(),
+): number | null {
+  const raw = ageLabel?.trim();
+  if (!raw) return null;
+
+  const s = raw.toLowerCase().replace(/\s+/g, " ").trim();
+  if (/^(today|yesterday|hier|aujourd)/i.test(s)) return 0;
+
+  const years = s.match(/(\d+)\s*(?:y|yr|yrs|year|years|ans|an)\b/);
+  if (years) return parseInt(years[1], 10) * 365;
+
+  const months = s.match(/(\d+)\s*(?:mo|mos|month|months|mois)\b/);
+  if (months) return parseInt(months[1], 10) * 30;
+
+  const weeks = s.match(
+    /(\d+)\s*(?:w|wk|wks|week|weeks|sem|semaine|semaines)\b/,
+  );
+  if (weeks) return parseInt(weeks[1], 10) * 7;
+
+  const days = s.match(/(\d+)\s*(?:d|day|days|j|jour|jours)\b/);
+  if (days) return parseInt(days[1], 10);
+
+  if (
+    /(\d+)\s*(?:h|hr|hour|hours|heure|heures|min|mins|minute|minutes)\b/.test(
+      s,
+    )
+  ) {
+    return 0;
+  }
+
+  const abs = parseAbsoluteDate(s, now);
+  if (abs) return daysBetween(now, abs);
+
+  return null;
+}
+
+export function sortPostsByEstimatedAge<T extends ProfilePostLike>(
+  posts: T[] | null | undefined,
+  now: Date = new Date(),
+): T[] {
+  if (!Array.isArray(posts)) return [];
+  return [...posts].sort((a, b) => {
+    const da = estimatePostAgeDays(a.ageLabel, now);
+    const db = estimatePostAgeDays(b.ageLabel, now);
+    if (da == null && db == null) return 0;
+    if (da == null) return 1;
+    if (db == null) return -1;
+    return da - db;
+  });
+}
+
 export function filterRecentProfilePosts<T extends ProfilePostLike>(
   posts: T[] | null | undefined,
   now: Date = new Date(),
@@ -157,7 +213,8 @@ export function pickFirstRecentPost<T extends ProfilePostLike>(
   posts: T[] | null | undefined,
   now: Date = new Date(),
 ): T | null {
-  const recent = filterRecentProfilePosts(posts, now);
+  const sorted = sortPostsByEstimatedAge(posts, now);
+  const recent = filterRecentProfilePosts(sorted, now);
   return recent[0] ?? null;
 }
 

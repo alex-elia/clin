@@ -46,7 +46,15 @@ export function formatLlmChatError(
     return formatOllamaModelError(status, bodyText, config.model);
   }
   const detail = parseHttpErrorBody(bodyText) || `HTTP ${status}`;
-  return `Cloud inference HTTP ${status}: ${detail}`;
+  let out = `Cloud inference HTTP ${status}: ${detail}`;
+  if (status === 500 && /unexpected error/i.test(detail)) {
+    out +=
+      "\n\nOVH AI Endpoints returned a transient server error. Retry in a minute, check https://console.ai.cloud.ovh.net/ for quota/status, or switch model (e.g. gpt-oss-20b) in Settings → Inference.";
+  } else if (status === 429) {
+    out +=
+      "\n\nRate limited by the cloud provider — wait a moment or reduce parallel LLM jobs.";
+  }
+  return out;
 }
 
 export function emptyResponseError(config: LlmConfig): string {

@@ -5,7 +5,7 @@
   "main": "electron/main.cjs",
   "scripts": {
     "prepare": "husky",
-    "check": "npm run typecheck --prefix web && npm run lint --prefix web",
+    "check": "npm run typecheck --prefix web && npm run lint --prefix web && npm run test --prefix web",
     "dev": "npm --prefix web run dev",
     "dev:stop": "npm --prefix web run dev:stop",
     "dev:clean": "npm --prefix web run dev:clean",

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { VoiceInputButton } from "@/components/VoiceInputButton";
+import { LinkedInActivityBadge } from "@/components/LinkedInActivityBadge";
 import {
   CLEANING_BUCKET_LABELS,
   outreachFitHeadline,
@@ -11,6 +12,8 @@ import {
   SUGGESTED_ACTION_LABELS,
 } from "@/lib/contactLlmDisplay";
 import { appendTranscriptToText } from "@/lib/speechRecognition";
+
+import type { LinkedInActivityTier } from "@/lib/linkedinActivity";
 
 type Props = {
   contactId: string;
@@ -23,6 +26,9 @@ type Props = {
   } | null;
   initialProvisional: string | null;
   initialRefined: string | null;
+  activityTier?: LinkedInActivityTier | null;
+  activityScore?: number | null;
+  newestPostAgeLabel?: string | null;
 };
 
 function fitPanelClass(
@@ -59,6 +65,9 @@ export function ContactLlmPanel({
   messagingCaptureMeta,
   initialProvisional,
   initialRefined,
+  activityTier,
+  activityScore,
+  newestPostAgeLabel,
 }: Props) {
   const [message, setMessage] = useState(initialMessage);
   const [tier, setTier] = useState<"auto" | "provisional" | "refined">("auto");
@@ -143,6 +152,24 @@ export function ContactLlmPanel({
           <p className="mt-3 whitespace-pre-wrap text-sm text-red-600 dark:text-red-400">
             {error}
           </p>
+        ) : null}
+
+        {activityTier ? (
+          <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-clin-border bg-clin-surface-muted/50 px-3 py-2">
+            <span className="text-xs font-medium text-clin-muted">
+              LinkedIn activity
+            </span>
+            <LinkedInActivityBadge
+              tier={activityTier}
+              score={activityScore}
+              newestPostAgeLabel={newestPostAgeLabel}
+            />
+            {newestPostAgeLabel ? (
+              <span className="text-xs text-clin-muted">
+                Newest post: {newestPostAgeLabel}
+              </span>
+            ) : null}
+          </div>
         ) : null}
 
         {!hasAnalysis && !loading ? (

@@ -22,7 +22,7 @@ export function devPort() {
 }
 
 export function lockFilePath() {
-  return path.join(webRoot, "data", ".clin-dev.lock");
+  return path.join(webRoot, ".clin-dev.lock");
 }
 
 export function readLock() {

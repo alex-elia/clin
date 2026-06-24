@@ -2,8 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ContactActionBar } from "@/components/ContactActionBar";
 import { ContactLlmPanel } from "@/components/ContactLlmPanel";
+import { LinkedInActivityBadge } from "@/components/LinkedInActivityBadge";
 import { ContactProfileCaptureSummary } from "@/components/ContactProfileCaptureSummary";
 import { selectContactLlmExtension } from "@/lib/contactSqlExtras";
+import { selectContactActivityExtension } from "@/lib/contactActivitySqlExtras";
 import { contactPickerLabel } from "@/lib/contactDisplay";
 import { getContactById } from "@/lib/queries";
 import {
@@ -26,11 +28,13 @@ export default async function ContactDetailPage({
   const contact = await getContactById(id);
   if (!contact) notFound();
 
-  const [llm, messagingCapture, campaigns, memberships] = await Promise.all([
+  const [llm, messagingCapture, campaigns, memberships, activity] =
+    await Promise.all([
     Promise.resolve(selectContactLlmExtension(contact.id)),
     getLatestMessagingCaptureForContact(contact.id),
     listOutreachCampaigns(),
     listCampaignMembershipsForContact(contact.id),
+    Promise.resolve(selectContactActivityExtension(contact.id)),
   ]);
 
   const initialMessage = resolveMessageContextForAnalysis(
@@ -56,6 +60,11 @@ export default async function ContactDetailPage({
         </p>
         <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-clin-muted">
           <span className="clin-pill">{contact.segment}</span>
+          <LinkedInActivityBadge
+            tier={activity?.activityTier}
+            score={activity?.activityScore}
+            newestPostAgeLabel={activity?.newestPostAgeLabel}
+          />
           <span className="font-mono" title="Recency · Business keywords · Cleanup">
             R{contact.relationshipScore} B{contact.businessScore} C
             {contact.cleanupScore}
@@ -96,6 +105,9 @@ export default async function ContactDetailPage({
         }
         initialProvisional={llm?.llmProvisionalJson ?? null}
         initialRefined={llm?.llmRefinedJson ?? null}
+        activityTier={activity?.activityTier ?? null}
+        activityScore={activity?.activityScore ?? null}
+        newestPostAgeLabel={activity?.newestPostAgeLabel ?? null}
       />
     </div>
   );

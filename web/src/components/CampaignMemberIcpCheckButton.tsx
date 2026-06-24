@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { preserveCampaignExecScroll } from "@/lib/campaignExecScroll";
 
 type Props = {
   campaignId: string;
@@ -26,6 +27,7 @@ export function CampaignMemberIcpCheckButton({ campaignId, memberId }: Props) {
         setError(data.error ?? "Check failed.");
         return;
       }
+      preserveCampaignExecScroll(campaignId);
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Check failed.");

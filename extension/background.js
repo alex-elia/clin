@@ -421,11 +421,24 @@ function isMessagingPageUrl(url) {
   }
 }
 
+function isLinkedInFeedUpdateUrl(url) {
+  try {
+    const u = new URL(url);
+    return (
+      u.hostname.endsWith("linkedin.com") &&
+      /\/feed\/update\//i.test(u.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isProfilePostsContextUrl(url) {
   try {
     const u = new URL(url);
     if (!u.hostname.endsWith("linkedin.com")) return false;
     if (/\/recent-activity\//i.test(u.pathname)) return true;
+    if (isLinkedInFeedUpdateUrl(url)) return true;
     if (isLinkedInProfilePageUrl(url)) return true;
     return false;
   } catch {
@@ -1601,6 +1614,26 @@ async function fetchPostsViaVoyagerPage() {
     return null;
   }
 
+  function vanityFromActorLinks() {
+    const selectors = [
+      ".update-components-actor__meta-link",
+      ".feed-shared-actor__container-link",
+      'a[href*="/in/"][class*="actor"]',
+      'a[href*="/in/"]',
+    ];
+    for (const sel of selectors) {
+      for (const el of document.querySelectorAll(sel)) {
+        if (!(el instanceof HTMLAnchorElement) || !el.pathname) continue;
+        const m = el.pathname.match(/\/in\/([^/]+)/i);
+        if (!m?.[1]) continue;
+        const slug = decodeURIComponent(m[1]).toLowerCase();
+        if (slug === "feed" || slug === "company" || slug === "school") continue;
+        return decodeURIComponent(m[1]);
+      }
+    }
+    return null;
+  }
+
   function parsePosts(json) {
     const included = Array.isArray(json?.included) ? json.included : [];
     const posts = [];
@@ -1647,7 +1680,7 @@ async function fetchPostsViaVoyagerPage() {
     return null;
   }
 
-  const vanity = vanityFromUrl();
+  const vanity = vanityFromUrl() || vanityFromActorLinks();
   if (!vanity) return null;
   const headers = voyagerHeaders();
   if (!headers["csrf-token"]) return null;
@@ -1767,6 +1800,19 @@ function scrapeVisibleProfilePosts() {
     if (parts[0] === "in" && parts[1]) vanity = decodeURIComponent(parts[1]);
   } catch {
     /* ignore */
+  }
+  if (!vanity) {
+    for (const el of document.querySelectorAll(
+      ".update-components-actor__meta-link, .feed-shared-actor__container-link, a[href*='/in/']",
+    )) {
+      if (!(el instanceof HTMLAnchorElement) || !el.pathname) continue;
+      const m = el.pathname.match(/\/in\/([^/]+)/i);
+      if (!m?.[1]) continue;
+      const slug = decodeURIComponent(m[1]).toLowerCase();
+      if (slug === "feed" || slug === "company" || slug === "school") continue;
+      vanity = decodeURIComponent(m[1]);
+      break;
+    }
   }
   const targetProfileUrl = vanity
     ? `https://www.linkedin.com/in/${vanity}/`
@@ -4320,6 +4366,44 @@ async function waitForLinkedInProfileTab(tabId, timeoutMs = 90000) {
   );
 }
 
+/** After opening recent activity — LinkedIn may land on /feed/update/… permalink. */
+async function waitForProfilePostsContextTab(tabId, timeoutMs = 25000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    let tab;
+    try {
+      tab = await chrome.tabs.get(tabId);
+    } catch {
+      throw new Error("The LinkedIn tab was closed.");
+    }
+    const url = tab?.url || "";
+    if (url && isProfilePostsContextUrl(url)) {
+      await sleep(700);
+      return url;
+    }
+    await sleep(400);
+  }
+  throw new Error(
+    "Timed out waiting for activity feed. Scroll their Recent activity and try again.",
+  );
+}
+
+async function returnTabToProfileAfterPostsCapture(tabId, profileUrl, timeoutMs = 20000) {
+  if (typeof profileUrl !== "string" || !profileUrl.trim()) return;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (isLinkedInProfilePageUrl(tab?.url || "")) return;
+    await chrome.tabs.update(tabId, { url: profileUrl });
+    try {
+      await waitForLinkedInProfileTab(tabId, timeoutMs);
+    } catch {
+      /* best-effort — pipeline will navigate on next step */
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Navigate to a profile and wait — retries help when the tab is in the background. */
 async function navigateToProfileForAutomation(tabId, profileUrl, opts = {}) {
   const timeoutMs = opts.suppressFocus ? 180000 : 90000;
@@ -4768,8 +4852,20 @@ async function tryCapturePostsAfterProfile(tabId, root, profileUrl) {
   if (!activityUrl) return { captured: false, reason: "no_profile_url" };
 
   try {
+    await setExtensionLiveStatus({
+      phase: "running",
+      scope: "pipeline",
+      title: "Automated capture",
+      detail: "Loading recent posts…",
+      confirmMemberId: null,
+    });
     await chrome.tabs.update(tabId, { url: activityUrl });
-    await sleep(2000 + Math.floor(Math.random() * 2000));
+    try {
+      await waitForProfilePostsContextTab(tabId, 25000);
+    } catch {
+      /* LinkedIn may still hydrate on activity or feed/update permalink */
+    }
+    await sleep(1500 + Math.floor(Math.random() * 1500));
   } catch (e) {
     return {
       captured: false,
@@ -4777,48 +4873,47 @@ async function tryCapturePostsAfterProfile(tabId, root, profileUrl) {
     };
   }
 
-  const postsPayload = await scrapePostsFromTab(tabId);
-  if (!postsPayload?.extractedFields?.profilePosts?.length) {
-    if (profileUrl) {
-      try {
-        await chrome.tabs.update(tabId, { url: profileUrl });
-      } catch {
-        /* ignore */
-      }
-    }
-    return { captured: false, reason: "no_posts" };
-  }
-
-  if (!postsPayload.extractedFields.targetProfileUrl && profileUrl) {
-    postsPayload.extractedFields.targetProfileUrl = profileUrl;
-  }
-
-  let pruned;
+  let result = { captured: false, reason: "no_posts" };
   try {
-    pruned = await waitForProfileCaptureGap(root);
-  } catch (e) {
-    return { captured: false, error: e instanceof Error ? e.message : String(e) };
-  }
-
-  const out = await postPostsCapturePayload(root, pruned, postsPayload, {
-    captureChainStep: "posts",
-    captureChainComplete: true,
-  });
-
-  if (profileUrl) {
-    try {
-      await chrome.tabs.update(tabId, { url: profileUrl });
-    } catch {
-      /* ignore */
-    }
-  }
-
-  return out.ok
-    ? {
-        captured: true,
-        postCount: postsPayload.extractedFields.profilePosts.length,
+    const postsPayload = await scrapePostsFromTab(tabId);
+    if (!postsPayload?.extractedFields?.profilePosts?.length) {
+      result = { captured: false, reason: "no_posts" };
+    } else {
+      if (!postsPayload.extractedFields.targetProfileUrl && profileUrl) {
+        postsPayload.extractedFields.targetProfileUrl = profileUrl;
       }
-    : { captured: false, error: out.error };
+
+      let pruned;
+      try {
+        await setExtensionLiveStatus({
+          phase: "waiting",
+          scope: "pipeline",
+          title: "Automated capture",
+          detail: "Pace wait before saving posts…",
+          confirmMemberId: null,
+        });
+        pruned = await waitForProfileCaptureGap(root);
+      } catch (e) {
+        return { captured: false, error: e instanceof Error ? e.message : String(e) };
+      }
+
+      const out = await postPostsCapturePayload(root, pruned, postsPayload, {
+        captureChainStep: "posts",
+        captureChainComplete: true,
+      });
+
+      result = out.ok
+        ? {
+            captured: true,
+            postCount: postsPayload.extractedFields.profilePosts.length,
+          }
+        : { captured: false, error: out.error };
+    }
+  } finally {
+    await returnTabToProfileAfterPostsCapture(tabId, profileUrl);
+  }
+
+  return result;
 }
 
 async function postProfileCaptureForTab(tabId, root, pruned, chainOpts = {}) {
@@ -5266,12 +5361,52 @@ async function runClinPipeline(opts) {
   return { ok: true, summary };
 }
 
+async function skipCaptureQueueMemberRemote(root, campaignId, memberId) {
+  const res = await fetch(`${root.replace(/\/$/, "")}/api/extension/capture-queue/skip`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      campaignId,
+      ...(memberId ? { memberId } : {}),
+    }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return { ok: false, error: json?.error || `HTTP ${res.status}` };
+  }
+  campaignContextFetchedAt = 0;
+  campaignContextPayload = null;
+  campaignContextKey = "";
+  return { ok: true, json };
+}
+
+async function clearCaptureQueueSkipsRemote(root, campaignId) {
+  const res = await fetch(`${root.replace(/\/$/, "")}/api/extension/capture-queue/skip`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ campaignId, clearAll: true }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return { ok: false, error: json?.error || `HTTP ${res.status}` };
+  }
+  campaignContextFetchedAt = 0;
+  campaignContextPayload = null;
+  campaignContextKey = "";
+  return { ok: true, json };
+}
+
 async function captureOneCampaignMemberProfileStep(tabId, base, opts = {}) {
+  const state = await loadPipelineState();
+  const attempted = Array.isArray(state?.capturedMemberIdsThisRun)
+    ? state.capturedMemberIdsThisRun
+    : [];
   const root = base.replace(/\/$/, "");
   const campaignId = await resolveExtensionImportCampaignId();
   const ctx = await getExtensionCampaignContext(root, campaignId);
   const campaignName = ctx?.captureTargetCampaignName || null;
   const nextProfileUrl = ctx?.captureTargetQueue?.nextProfileUrl || null;
+  const nextMemberId = ctx?.captureTargetQueue?.nextMemberId || null;
   if (!nextProfileUrl) {
     return {
       ok: true,
@@ -5280,6 +5415,12 @@ async function captureOneCampaignMemberProfileStep(tabId, base, opts = {}) {
         ? `campaign_queue_complete:${campaignName}`
         : "campaign_queue_complete",
     };
+  }
+  if (nextMemberId && attempted.includes(nextMemberId)) {
+    if (campaignId) {
+      await skipCaptureQueueMemberRemote(root, campaignId, nextMemberId);
+    }
+    return { ok: true, done: false, skipped: true, reason: "already_captured_this_run" };
   }
   try {
     await focusAutomationTab(tabId, opts);
@@ -5340,6 +5481,11 @@ async function captureOneCampaignMemberProfileStep(tabId, base, opts = {}) {
     );
   } catch {
     /* messaging is optional */
+  }
+
+  if (state && nextMemberId) {
+    state.capturedMemberIdsThisRun = [...attempted, nextMemberId];
+    await savePipelineState(state);
   }
 
   return {
@@ -5456,7 +5602,19 @@ async function computeProfileStepsTotal(state, base, automation) {
   const runCampaignQueueCapture = state.fullRun && Boolean(extensionCampaignId);
   state.campaignCaptureMode = runCampaignQueueCapture;
   if (runCampaignQueueCapture) {
-    return Math.max(40, state.enrichSteps > 0 ? state.enrichSteps : 250);
+    const ctx = await getExtensionCampaignContext(
+      base.replace(/\/$/, ""),
+      extensionCampaignId,
+    );
+    const q = ctx?.captureTargetQueue;
+    const remaining = Math.max(
+      0,
+      (q?.profileMissing ?? 0) + (q?.profileThin ?? 0) - (q?.skippedCount ?? 0),
+    );
+    if (state.enrichSteps > 0) {
+      return Math.min(state.enrichSteps, Math.max(1, remaining || 1));
+    }
+    return Math.max(1, Math.min(50, remaining || 1));
   }
   if (state.fullRun) {
     return Math.max(
@@ -5637,6 +5795,11 @@ async function runPipelineTick() {
         await finishPipelineRun(state, { ok: true });
         return;
       }
+      if (step.skipped) {
+        await savePipelineState(state);
+        await schedulePipelineTick(600);
+        return;
+      }
       summary.profilesCaptured += 1;
       if (step.messagingCaptured) summary.messagingCaptured += 1;
     }
@@ -5724,6 +5887,7 @@ async function startClinPipeline(opts) {
     transientErrors: 0,
     pauseUntil: 0,
     campaignCaptureMode: false,
+    capturedMemberIdsThisRun: [],
     summary,
     base,
   };
@@ -6037,7 +6201,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse({
             ok: false,
             error:
-              "Open their profile (/in/…) or Recent activity, scroll posts into view, then Capture posts.",
+              "Open their profile (/in/…), Recent activity, or a post permalink (/feed/update/…), scroll posts into view, then Capture posts.",
           });
           return;
         }
@@ -6511,6 +6675,58 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === "CLIN_CAPTURE_QUEUE_SKIP") {
+    void (async () => {
+      const base = await getApiBase();
+      const root = base.replace(/\/$/, "");
+      const campaignId =
+        typeof msg.campaignId === "string" && msg.campaignId.trim()
+          ? msg.campaignId.trim()
+          : await resolveExtensionImportCampaignId();
+      if (!campaignId) {
+        sendResponse({ ok: false, error: "Choose a campaign first." });
+        return;
+      }
+      const memberId =
+        typeof msg.memberId === "string" && msg.memberId.trim()
+          ? msg.memberId.trim()
+          : undefined;
+      const out = await skipCaptureQueueMemberRemote(root, campaignId, memberId);
+      if (!out.ok) {
+        sendResponse(out);
+        return;
+      }
+      if (msg.stopPipeline) {
+        const state = await loadPipelineState();
+        if (state) {
+          state.active = false;
+          await savePipelineState(state);
+        }
+        await chrome.alarms.clear(PIPELINE_ALARM);
+        await chrome.storage.local.set({ [PIPELINE_RUN_KEY]: false });
+        await chrome.storage.local.remove([PIPELINE_STATE_KEY]);
+      }
+      sendResponse({ ok: true, ...out.json, stopped: Boolean(msg.stopPipeline) });
+    })();
+    return true;
+  }
+  if (msg?.type === "CLIN_CAPTURE_QUEUE_CLEAR") {
+    void (async () => {
+      const base = await getApiBase();
+      const root = base.replace(/\/$/, "");
+      const campaignId =
+        typeof msg.campaignId === "string" && msg.campaignId.trim()
+          ? msg.campaignId.trim()
+          : await resolveExtensionImportCampaignId();
+      if (!campaignId) {
+        sendResponse({ ok: false, error: "Choose a campaign first." });
+        return;
+      }
+      const out = await clearCaptureQueueSkipsRemote(root, campaignId);
+      sendResponse(out.ok ? { ok: true, cleared: true } : out);
+    })();
+    return true;
+  }
   if (msg?.type === "CLIN_RUN_PIPELINE_STOP") {
     void (async () => {
       const state = await loadPipelineState();
@@ -6522,6 +6738,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       await chrome.storage.local.set({ [PIPELINE_RUN_KEY]: false });
       if (state?.tabId) await unpinPipelineTab(state.tabId);
       await chrome.storage.local.remove([PIPELINE_STATE_KEY]);
+      if (state?.tabId) {
+        try {
+          const tab = await chrome.tabs.get(state.tabId);
+          const url = tab?.url || "";
+          if (isLinkedInFeedUpdateUrl(url) || /\/recent-activity\//i.test(url)) {
+            await chrome.tabs.update(state.tabId, { url: "https://www.linkedin.com/feed/" });
+          }
+        } catch {
+          /* ignore */
+        }
+      }
       await setExtensionLiveStatus({
         phase: "success",
         scope: "pipeline",

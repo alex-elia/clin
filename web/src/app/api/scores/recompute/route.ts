@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
+import { recomputeContactActivityFromCaptures } from "@/lib/contactActivitySqlExtras";
 import { SCORE_RULE_VERSION, scoreContact } from "@/lib/scoring";
 
 export const runtime = "nodejs";
@@ -11,9 +12,12 @@ export async function POST() {
   const db = getDb();
   const all = await db.select().from(contacts);
   let updated = 0;
+  let activityUpdated = 0;
 
   for (const row of all) {
-    const scores = scoreContact(row);
+    const assessment = await recomputeContactActivityFromCaptures(row.id);
+    activityUpdated += 1;
+    const scores = scoreContact(row, { activityAssessment: assessment });
     await db
       .update(contacts)
       .set({
@@ -31,5 +35,9 @@ export async function POST() {
     updated += 1;
   }
 
-  return NextResponse.json({ updated, ruleVersion: SCORE_RULE_VERSION });
+  return NextResponse.json({
+    updated,
+    activityUpdated,
+    ruleVersion: SCORE_RULE_VERSION,
+  });
 }

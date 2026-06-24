@@ -64,8 +64,25 @@ Re-analysis: user **Re-analyze** button, or new capture with `captureChainComple
 | Column | Type | Notes |
 |--------|------|-------|
 | `company_linkedin_url` | text, nullable | Canonical `/company/…` from profile Voyager; set on profile ingest |
+| `activity_tier` | text, nullable | `active` \| `occasional` \| `lurker` \| `dormant` \| `unknown` — from posts capture (ADR-0012) |
+| `activity_score` | integer, nullable | 0–100 LinkedIn reachability; null when tier is `unknown` |
+| `activity_computed_at` | integer, nullable | Last activity recompute (epoch ms) |
+| `newest_post_age_label` | text, nullable | Display label from newest captured post (e.g. `8 mois`, `2 yr`) |
 
 Existing LLM columns (`llm_provisional_json`, `llm_refined_json` via `contactSqlExtras`) gain embedded **`playbook`** object (see §5).
+
+### 3.3 LinkedIn activity scoring
+
+Deterministic helper `computeLinkedInActivity()` in `web/src/lib/linkedinActivity.ts`:
+
+- **Input:** latest `capture_sessions` row with `page_type: posts` (`profilePosts[]`, `captured_at`).
+- **Output:** tier, score, recent/stale counts, newest post age, reasons.
+- **Persist:** optional columns above via `contactActivitySqlExtras.ts`; repaired on app start / `npm run db:repair`.
+- **Consumers:** `scoreContact` (rule v2), `buildContactContextBundle`, Cleaning board sort/filters, campaign ICP + engage queue.
+
+**Unknown tier:** no posts page captured yet — neutral score (null); do not treat as lurker.
+
+See [ADR-0012](../adr/0012-linkedin-activity-scoring.md).
 
 ### 3.2 `capture_sessions.page_type` (extended)
 

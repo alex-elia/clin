@@ -4,6 +4,7 @@ import { cleaningExecQueue, outreachCampaignMembers, outreachCampaigns } from "@
 import { buildContactPlaybookFromAnalysis } from "@/lib/contactPlaybook";
 import { pickLatestAnalysisView } from "@/lib/contactLlmDisplay";
 import { selectContactLlmExtension } from "@/lib/contactSqlExtras";
+import { selectContactActivityExtension } from "@/lib/contactActivitySqlExtras";
 import { enqueueCleaningExec } from "@/lib/cleaningExecQueue";
 import { generateEngageCommentForContact } from "@/lib/cleaningEngageComment";
 import { readMemberIcpFromRow } from "@/lib/campaignMemberIcp";
@@ -11,6 +12,10 @@ import type { CampaignMemberIcpMatch } from "@/lib/campaignMemberIcpShared";
 import { getLatestThreadAnalysisForContact } from "@/lib/inboxThreadAnalysisStore";
 import { updateMemberStatus } from "@/lib/outreachCampaigns";
 import { getLatestPostsCaptureJson } from "@/lib/profileCaptureContext";
+import {
+  MIN_ACTIVITY_SCORE_FOR_ENGAGE,
+  activityTierAllowsEngage,
+} from "@/lib/linkedinActivity";
 import { pickFirstRecentPost } from "@/lib/profilePostRecency";
 
 export type EnqueueCampaignEngageResult =
@@ -26,10 +31,27 @@ function parseEnvelope(raw: string | null | undefined): unknown {
   }
 }
 
-/** True when a posts capture has at least one post within the recency window. */
+/** True when posts capture supports engage (recent post + activity score threshold). */
 export async function contactHasRecentPostForEngage(
   contactId: string,
 ): Promise<boolean> {
+  const activity = selectContactActivityExtension(contactId);
+  if (activity?.activityTier != null) {
+    if (activity.activityTier === "unknown") {
+      const raw = await getLatestPostsCaptureJson(contactId);
+      if (!raw?.profilePosts || !Array.isArray(raw.profilePosts)) return false;
+      return (
+        pickFirstRecentPost(
+          raw.profilePosts as { text?: string; ageLabel?: string }[],
+        ) != null
+      );
+    }
+    if (!activityTierAllowsEngage(activity.activityTier)) return false;
+    if (activity.activityScore != null) {
+      return activity.activityScore >= MIN_ACTIVITY_SCORE_FOR_ENGAGE;
+    }
+  }
+
   const raw = await getLatestPostsCaptureJson(contactId);
   if (!raw?.profilePosts || !Array.isArray(raw.profilePosts)) return false;
   return (

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import {
   loadLatestProfileCapturesByContactId,
   profileDepthAtLeast,
@@ -194,7 +194,7 @@ export async function listCampaignMembers(
     .from(outreachCampaignMembers)
     .innerJoin(contacts, eq(outreachCampaignMembers.contactId, contacts.id))
     .where(eq(outreachCampaignMembers.campaignId, campaignId))
-    .orderBy(desc(outreachCampaignMembers.updatedAt));
+    .orderBy(asc(outreachCampaignMembers.createdAt));
 
   return rows.map((r) => ({
     member: r.outreach_campaign_members,

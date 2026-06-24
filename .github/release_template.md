@@ -36,6 +36,7 @@ Desktop installers and the extension zip are **new and lightly tested**. If you 
 
 ### Capture & analysis
 
+- **LinkedIn activity scoring** (ADR-0012): deterministic tiers (`active`, `occasional`, `lurker`, `dormant`, `unknown`) from posts capture; persisted on contacts, blended into Cleaning sort, campaign ICP/engage guards, UI badges.
 - **Post origin** on activity capture: original vs reshare vs news share (better comment hooks).
 - **Post recency**: prompts and engage skip posts older than 1 year.
 - **Automated capture pipeline**: step-based, alarm-driven; more resilient when switching tabs or using the computer.

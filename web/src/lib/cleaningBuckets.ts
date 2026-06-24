@@ -1,6 +1,10 @@
 import type { ContactReadiness } from "@/lib/contactReadinessShared";
 import type { LlmAnalysisView } from "@/lib/contactLlmDisplay";
 import {
+  activityTierAllowsEngage,
+  type LinkedInActivityTier,
+} from "@/lib/linkedinActivity";
+import {
   cleaningAdviceFromThread,
   threadSuggestsRemoval,
 } from "@/lib/cleaningThreadHelpers";
@@ -89,6 +93,7 @@ export function resolveCleaningBucket(input: {
   threadAnalysis?: InboxThreadAnalysis | null;
   cleaningUserBucket?: CleaningBucket | null;
   cleaningDismissedAt?: number | null;
+  activityTier?: LinkedInActivityTier | null;
 }): CleaningBucket | null {
   if (input.cleaningDismissedAt) return null;
 
@@ -96,77 +101,105 @@ export function resolveCleaningBucket(input: {
     return input.cleaningUserBucket;
   }
 
+  let bucket: CleaningBucket | null = null;
+
   const plan = input.analysis?.cleaningPlan;
   if (plan && isCleaningBucket(plan.bucket)) {
     if (
       plan.bucket !== "enrich_first" ||
       input.readiness.profileDepth === "missing"
     ) {
-      return plan.bucket;
+      bucket = plan.bucket;
     }
   }
 
-  if (!input.readiness.readyForDecisions) {
-    return "enrich_first";
+  if (!bucket) {
+    if (!input.readiness.readyForDecisions) {
+      bucket = "enrich_first";
+    } else if (!input.hasLlmAnalysis) {
+      bucket = "needs_review";
+    } else {
+      const thread = input.threadAnalysis;
+      if (threadSuggestsRemoval(thread)) {
+        bucket = "review_remove";
+      } else if (thread?.thread_stage === "social_only") {
+        bucket = "keep_passive";
+      } else {
+        const stewardship = input.analysis?.stewardship?.recommendation;
+        if (
+          stewardship === "consider_removing" ||
+          input.segment === "remove_candidate" ||
+          input.analysis?.suggestedActions.includes("consider_removing")
+        ) {
+          bucket = "review_remove";
+        } else if (input.segment === "ghost" && thread) {
+          if (
+            thread.thread_stage === "ghosted" ||
+            thread.thread_stage === "cold_no_reply"
+          ) {
+            bucket = "review_remove";
+          } else if (stewardship !== "keep") {
+            bucket = "needs_review";
+          }
+        }
+
+        if (!bucket) {
+          const fit = input.analysis?.outreachFit?.recommendation;
+          if (fit === "reach_out") bucket = "reach_out_dm";
+          else if (fit === "skip") {
+            bucket =
+              stewardship === "keep" ? "keep_passive" : "review_remove";
+          } else if (fit === "nurture") {
+            const r = input.analysis?.modelScores?.r ?? 0;
+            if (r >= 55 && input.readiness.hasMessagingCapture === false) {
+              bucket = "engage_comment";
+            } else {
+              bucket = "nurture_light";
+            }
+          } else if (
+            input.analysis?.suggestedActions.includes("write")
+          ) {
+            bucket = "reach_out_dm";
+          } else if (
+            input.analysis?.suggestedActions.includes("visit_profile")
+          ) {
+            bucket = "enrich_first";
+          } else if (
+            input.analysis?.suggestedActions.includes("stay_connected")
+          ) {
+            bucket = "nurture_light";
+          } else {
+            bucket = "needs_review";
+          }
+        }
+      }
+    }
   }
 
-  if (!input.hasLlmAnalysis) {
-    return "needs_review";
-  }
+  return applyActivityBucketGuards(bucket, input.activityTier);
+}
 
-  const thread = input.threadAnalysis;
-  if (threadSuggestsRemoval(thread)) {
-    return "review_remove";
-  }
-  if (thread?.thread_stage === "social_only") {
-    return "keep_passive";
-  }
+function applyActivityBucketGuards(
+  bucket: CleaningBucket | null,
+  activityTier?: LinkedInActivityTier | null,
+): CleaningBucket | null {
+  if (!bucket || !activityTier || activityTier === "unknown") return bucket;
 
-  const stewardship = input.analysis?.stewardship?.recommendation;
   if (
-    stewardship === "consider_removing" ||
-    input.segment === "remove_candidate" ||
-    input.analysis?.suggestedActions.includes("consider_removing")
+    bucket === "engage_comment" &&
+    !activityTierAllowsEngage(activityTier)
   ) {
-    return "review_remove";
-  }
-
-  if (input.segment === "ghost" && thread) {
-    if (
-      thread.thread_stage === "ghosted" ||
-      thread.thread_stage === "cold_no_reply"
-    ) {
-      return "review_remove";
-    }
-    if (stewardship !== "keep") {
-      return "needs_review";
-    }
-  }
-
-  const fit = input.analysis?.outreachFit?.recommendation;
-  if (fit === "reach_out") return "reach_out_dm";
-  if (fit === "skip") {
-    return stewardship === "keep" ? "keep_passive" : "review_remove";
-  }
-  if (fit === "nurture") {
-    const r = input.analysis?.modelScores?.r ?? 0;
-    if (r >= 55 && input.readiness.hasMessagingCapture === false) {
-      return "engage_comment";
-    }
     return "nurture_light";
   }
 
-  if (input.analysis?.suggestedActions.includes("write")) {
-    return "reach_out_dm";
-  }
-  if (input.analysis?.suggestedActions.includes("visit_profile")) {
-    return "enrich_first";
-  }
-  if (input.analysis?.suggestedActions.includes("stay_connected")) {
+  if (
+    bucket === "reach_out_dm" &&
+    (activityTier === "lurker" || activityTier === "dormant")
+  ) {
     return "nurture_light";
   }
 
-  return "needs_review";
+  return bucket;
 }
 
 export function bucketSuggestedQueueText(

@@ -93,6 +93,13 @@ export const llmAnalysisOutputSchema = z.object({
       playbook: z.string().nullish(),
     })
     .nullish(),
+  /** Optional validation of deterministic rule_activity tier from capture. */
+  activity_validation: z
+    .object({
+      tier: z.enum(["active", "occasional", "lurker", "dormant", "unknown"]),
+      reachability_note: z.string(),
+    })
+    .nullish(),
 });
 
 export type LlmAnalysisOutput = z.infer<typeof llmAnalysisOutputSchema>;
@@ -191,7 +198,8 @@ Respond with a single JSON object (no markdown) matching this shape:
   "reasoning_steps": ["optional 2-4 short bullets — internal reasoning"],
   "strategic_assessment": "optional 2-3 sentences — strategic layer only",
   "posts_signals": { "topics": ["string"], "interest_signals": ["string — themes/communities from reshares, not personal claims"], "post_notes": [{"kind":"original|reshare|news_share|unknown","summary":"what this tells us"}], "hiring_or_role_change": boolean, "engagement_hook": "string", "suggested_comment_angle": "string" },
-  "cleaning_plan": { "bucket": "enrich_first" | "needs_review" | "review_remove" | "reach_out_dm" | "engage_comment" | "nurture_light" | "keep_passive", "confidence": "low" | "medium" | "high", "rationale": "string", "playbook": "one short next step for the user" }
+  "cleaning_plan": { "bucket": "enrich_first" | "needs_review" | "review_remove" | "reach_out_dm" | "engage_comment" | "nurture_light" | "keep_passive", "confidence": "low" | "medium" | "high", "rationale": "string", "playbook": "one short next step for the user" },
+  "activity_validation": { "tier": "active" | "occasional" | "lurker" | "dormant" | "unknown", "reachability_note": "string" }
 }
 
 Definitions (align with user's app):
@@ -226,7 +234,11 @@ You MUST include "cleaning_plan" on every response:
 - enrich_first: list-only or missing About/Experience — user should capture more on LinkedIn first.
 - review_remove: stewardship or cleanup suggests pruning the connection.
 - reach_out_dm: strong outreach_fit reach_out with enough profile context for a DM.
-- engage_comment: nurture fit OR weak timing for DM but relationship worth a public comment/react first; prefer when PROFILE_AND_POSTS or posts_signals suggest a concrete hook from original posts within the last year. Reshares/news_share indicate interest only.
+- engage_comment: nurture fit OR weak timing for DM but relationship worth a public comment/react first; prefer when PROFILE_AND_POSTS or posts_signals suggest a concrete hook from original posts within the last year. Reshares/news_share indicate interest only. Requires rule_activity tier active or occasional — if tier is lurker or dormant, use nurture_light or keep_passive instead.
+
+When rule_activity.tier is lurker or dormant, prefer outreach_fit nurture or skip (not reach_out) unless message_context shows an active private dialogue. Include activity_validation when you agree or disagree with rule_activity.
+
+When rule_activity.tier is unknown, do not penalize — posts page may not be captured yet.
 
 When PROFILE_AND_POSTS labels posts as Reshare or Shared news/article, populate posts_signals.interest_signals and post_notes — do not treat shared headlines as the contact's own achievements or opinions.
 - nurture_light: keep warm, revisit later; no pitch now.
