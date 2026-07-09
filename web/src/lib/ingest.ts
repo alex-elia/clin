@@ -17,6 +17,10 @@ import {
 } from "@/lib/messagingCaptureResolve";
 import { canonicalizeLinkedInUrl, normalizeCompany } from "@/lib/url";
 import { SCORE_RULE_VERSION, scoreContact } from "@/lib/scoring";
+import {
+  computeLinkedInActivity,
+} from "@/lib/linkedinActivity";
+import { tryUpdateContactActivity } from "@/lib/contactActivitySqlExtras";
 
 type Db = ReturnType<typeof getDb>;
 type DbClient = BetterSQLite3Database<typeof schema>;
@@ -625,7 +629,12 @@ async function ingestPostsCapture(db: Db, input: IngestInput) {
     ...merged,
     lastSeenAt: now,
   };
-  const scores = scoreContact(baseForScore);
+  const activityAssessment = computeLinkedInActivity({
+    profilePosts: posts,
+    postsCapturedAt: now.toISOString(),
+    hasPostsCapture: true,
+  });
+  const scores = scoreContact(baseForScore, { activityAssessment });
 
   db.transaction((tx) => {
     syncPersistContact(tx, {
@@ -645,6 +654,10 @@ async function ingestPostsCapture(db: Db, input: IngestInput) {
   const row = await db.query.contacts.findFirst({
     where: eq(contacts.linkedinUrlCanonical, canonical),
   });
+
+  if (row) {
+    tryUpdateContactActivity(row.id, activityAssessment);
+  }
 
   return {
     contactId: row!.id,

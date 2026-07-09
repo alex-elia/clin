@@ -5,6 +5,14 @@ import { contacts, outreachCampaignMembers, outreachCampaigns } from "@/db/schem
 import { extractJsonObjectFromModelText } from "@/lib/llmAnalysis";
 import { completeChat, getLlmConfig } from "@/lib/llm/completeChat";
 import { getGlobalWriterInstructions } from "@/lib/brand";
+import { getOrCreateContentBrandContext } from "@/lib/contentBrandContext";
+import {
+  buildOutreachFormattingInstruction,
+  buildOutreachLanguageInstruction,
+  parseContentLanguagePreference,
+  recipientTextForOutreachLanguage,
+  resolveOutreachLanguage,
+} from "@/lib/contentLanguage";
 import { readMemberIcpFromRow } from "@/lib/campaignMemberIcp";
 import { buildContactContextBundle } from "@/lib/contactContextBundle";
 import {
@@ -25,13 +33,15 @@ import { POST_RECENCY_LLM_RULE } from "@/lib/profilePostRecency";
 
 const outSchema = z.object({ message: z.string() });
 
-const DEFAULT_OUTREACH_SYSTEM = `You write short, personalized LinkedIn connection notes or DMs (keep under 2000 characters). Reply with strictly valid JSON only: {"message":"..."} — no markdown, no code fences, no extra keys.
+const DEFAULT_OUTREACH_SYSTEM = `You write personalized LinkedIn connection notes or DMs (keep under 2000 characters). Reply with strictly valid JSON only: {"message":"..."} — no markdown, no code fences, no extra keys.
 
 The user message includes who YOU are (sender) and who the recipient is. Write in the sender's voice. Sign with the sender's real name — never use bracket placeholders like [Your Name] or {{name}}.
 
+Follow the LANGUAGE and FORMATTING sections in the user message. If "Additional instructions from the user" conflict with default tone or length, user instructions win.
+
 If your runtime exposes web search, browsing, or URL fetch tools (e.g. Ollama web_search / web_fetch or an app-integrated browser): use them before you draft when the recipient names a company or organization in Company or Headline. Run a few focused queries—such as "<company> official about products", "<company> news", or the company name plus the person's role from Headline—to ground one concrete, truthful hook (what they build, sector, or a recent public milestone). Do not invent financials, headcount, or non-public facts. If tools are unavailable or results are empty, write using only the Clin-provided fields.
 
-Tone: professional, warm, concise. Be specific; avoid generic templates.
+Tone: professional, warm, specific. Avoid generic templates.
 
 ${POST_RECENCY_LLM_RULE}
 
@@ -86,6 +96,10 @@ export async function generateOutreachDraftForMember(
 
   const sender = await getSenderIdentity();
   const ownerCtx = await getUserContextForLlm();
+  const [globalWriter, brandCtx] = await Promise.all([
+    getGlobalWriterInstructions(),
+    getOrCreateContentBrandContext(),
+  ]);
 
   let user = `${buildSenderIdentityPromptBlock(sender)}\n\n`;
   user += `Campaign context (what you are offering in this campaign):\n${campaign.contextText}\n\n`;
@@ -100,13 +114,12 @@ export async function generateOutreachDraftForMember(
       user += `Your positioning & offer (what you sell / who you help):\n${ownerCtx.positioningSummary}\n\n`;
     }
   }
-  const globalWriter = await getGlobalWriterInstructions();
   if (globalWriter) {
     user += `Your global outreach voice (Clin → You & voice):\n${globalWriter}\n\n`;
   }
   const writerNotes = campaign.writerInstructions?.trim();
   if (writerNotes) {
-    user += `Additional instructions from the user (follow closely):\n${writerNotes}\n\n`;
+    user += `Additional instructions from the user (follow closely — overrides default formatting and tone when they conflict):\n${writerNotes}\n\n`;
   }
   user += `Recipient:\n- Name: ${contact.fullName ?? ""}\n- Headline: ${contact.headline ?? ""}\n- Company: ${contact.company ?? ""}\n- Location: ${contact.location ?? ""}\n`;
 
@@ -115,6 +128,23 @@ export async function generateOutreachDraftForMember(
     buildContactContextBundle(contact.id),
     Promise.resolve(selectContactLlmExtension(contact.id)),
   ]);
+
+  const recipientContext = recipientTextForOutreachLanguage({
+    fullName: contact.fullName,
+    headline: contact.headline,
+    company: contact.company,
+    location: contact.location,
+    profileContext: profileBlock || contextBundle.profile_context,
+  });
+  const resolvedLanguage = resolveOutreachLanguage({
+    brandPreference: parseContentLanguagePreference(brandCtx.contentLanguage),
+    marketRegion: brandCtx.marketRegion,
+    campaignWriterInstructions: writerNotes ?? null,
+    globalWriterInstructions: globalWriter,
+    recipientContext,
+  });
+  user += `\n${buildOutreachLanguageInstruction(resolvedLanguage)}\n\n`;
+  user += `${buildOutreachFormattingInstruction(writerNotes ?? null)}\n\n`;
   if (profileBlock) {
     user += `\nProfile details (from the latest LinkedIn profile Capture in Clin — scroll About/Experience/Education on their profile, then Capture again to refresh):\n${profileBlock}\n`;
   }
@@ -146,6 +176,8 @@ export async function generateOutreachDraftForMember(
     provider: llm.provider,
     systemOverride: Boolean(override),
     hasWriterInstructions: Boolean(writerNotes),
+    draftLanguage: resolvedLanguage.language,
+    draftLanguageSource: resolvedLanguage.source,
   });
 
   let raw: string;

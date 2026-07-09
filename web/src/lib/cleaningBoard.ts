@@ -26,6 +26,8 @@ import type {
 } from "@/lib/cleaningBoardTypes";
 import { listContactLlmExtensionsMap } from "@/lib/contactSqlExtras";
 import { listContactCleaningExtensionsMap } from "@/lib/cleaningSqlExtras";
+import { listContactActivityExtensionsMap } from "@/lib/contactActivitySqlExtras";
+import type { LinkedInActivityTier } from "@/lib/linkedinActivity";
 import { countContactsPendingLlmAnalysis } from "@/lib/autopilot";
 import { countContactsNeedingProfileCapture } from "@/lib/enrichment";
 
@@ -50,12 +52,26 @@ function compositeScore(view: LlmAnalysisView | null): number | null {
   return Math.round((s.r + s.b + (100 - s.c)) / 3);
 }
 
+function boardSortScore(
+  composite: number | null,
+  activityScore: number | null,
+): number {
+  const c = composite ?? 0;
+  if (activityScore == null) return c;
+  return c * 0.7 + activityScore * 0.3;
+}
+
+function isLowLinkedInActivity(tier: LinkedInActivityTier | null): boolean {
+  return tier === "lurker" || tier === "dormant";
+}
+
 function resolveAiBucket(input: {
   readiness: ContactReadiness;
   analysis: LlmAnalysisView | null;
   segment: string;
   hasLlm: boolean;
   threadAnalysis: InboxThreadAnalysis | null;
+  activityTier: LinkedInActivityTier | null;
 }): CleaningBucket | null {
   return resolveCleaningBucket({
     readiness: input.readiness,
@@ -65,6 +81,7 @@ function resolveAiBucket(input: {
     threadAnalysis: input.threadAnalysis,
     cleaningUserBucket: null,
     cleaningDismissedAt: null,
+    activityTier: input.activityTier,
   });
 }
 
@@ -77,6 +94,11 @@ function buildCard(
     cleaningUserBucket: CleaningBucket | null;
     cleaningDismissedAt: number | null;
   },
+  activityExt: {
+    activityTier: LinkedInActivityTier | null;
+    activityScore: number | null;
+    newestPostAgeLabel: string | null;
+  },
   queueId: string | null,
   rawOutput: Record<string, unknown> | null,
   threadAnalysis: InboxThreadAnalysis | null,
@@ -87,6 +109,7 @@ function buildCard(
     segment: row.segment,
     hasLlm,
     threadAnalysis,
+    activityTier: activityExt.activityTier,
   });
   const bucket = resolveCleaningBucket({
     readiness,
@@ -96,6 +119,7 @@ function buildCard(
     threadAnalysis,
     cleaningUserBucket: cleaningExt.cleaningUserBucket,
     cleaningDismissedAt: cleaningExt.cleaningDismissedAt,
+    activityTier: activityExt.activityTier,
   });
   if (!bucket) return null;
 
@@ -119,6 +143,13 @@ function buildCard(
     analysis,
     playbook,
     compositeScore: compositeScore(analysis),
+    sortScore: boardSortScore(
+      compositeScore(analysis),
+      activityExt.activityScore,
+    ),
+    activityTier: activityExt.activityTier,
+    activityScore: activityExt.activityScore,
+    newestPostAgeLabel: activityExt.newestPostAgeLabel,
     queueId,
     threadAnalysis,
     threadStageLabel: threadStageLabel(threadAnalysis?.thread_stage),
@@ -128,6 +159,7 @@ function buildCard(
 export async function buildCleaningBoard(opts?: {
   contactLimit?: number;
   perBucketLimit?: number;
+  lowActivityOnly?: boolean;
 }): Promise<CleaningBoardData> {
   const contactLimit = opts?.contactLimit ?? 400;
   const perBucketLimit = opts?.perBucketLimit ?? 40;
@@ -159,6 +191,7 @@ export async function buildCleaningBoard(opts?: {
   }
   const extMap = listContactLlmExtensionsMap(contactIds);
   const cleaningMap = listContactCleaningExtensionsMap(contactIds);
+  const activityMap = listContactActivityExtensionsMap(contactIds);
 
   const pendingQueues = await db.query.actionQueue.findMany({
     where: and(eq(actionQueue.status, "pending")),
@@ -197,6 +230,18 @@ export async function buildCleaningBoard(opts?: {
       cleaningUserBucket: null,
       cleaningDismissedAt: null,
     };
+    const activityExt = activityMap.get(row.id) ?? {
+      activityTier: null,
+      activityScore: null,
+      activityComputedAt: null,
+      newestPostAgeLabel: null,
+    };
+    if (
+      opts?.lowActivityOnly &&
+      !isLowLinkedInActivity(activityExt.activityTier)
+    ) {
+      continue;
+    }
     const rawOutput =
       (rawRefined as Record<string, unknown> | null) ??
       (rawProv as Record<string, unknown> | null);
@@ -207,6 +252,7 @@ export async function buildCleaningBoard(opts?: {
       analysis,
       hasLlm,
       cleaningExt,
+      activityExt,
       queueByContact.get(row.id) ?? null,
       rawOutput,
       threadAnalysisByContact.get(row.id) ?? null,
@@ -221,8 +267,8 @@ export async function buildCleaningBoard(opts?: {
 
   for (const bucket of CLEANING_BUCKETS) {
     byBucket[bucket].sort((a, b) => {
-      const sa = a.compositeScore ?? -1;
-      const sb = b.compositeScore ?? -1;
+      const sa = a.sortScore ?? a.compositeScore ?? -1;
+      const sb = b.sortScore ?? b.compositeScore ?? -1;
       return sb - sa;
     });
   }

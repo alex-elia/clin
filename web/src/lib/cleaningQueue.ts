@@ -10,6 +10,7 @@ import {
 import { pickLatestAnalysisView } from "@/lib/contactLlmDisplay";
 import { loadLatestProfileCapturesByContactId } from "@/lib/campaignMemberReadiness";
 import { listContactCleaningExtensionsMap } from "@/lib/cleaningSqlExtras";
+import { selectContactActivityExtension } from "@/lib/contactActivitySqlExtras";
 import type { InboxThreadAnalysis } from "@/lib/inboxThreadAnalysisTypes";
 import {
   assessContactReadiness,
@@ -54,6 +55,7 @@ export async function syncCleaningQueueFromAnalysis(
     threadAnalysis: threadAnalysis ?? null,
     cleaningUserBucket: cleaningExt.cleaningUserBucket,
     cleaningDismissedAt: cleaningExt.cleaningDismissedAt,
+    activityTier: selectContactActivityExtension(contactId)?.activityTier ?? null,
   });
   if (!bucket) return;
 

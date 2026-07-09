@@ -15,7 +15,17 @@ export function migrationsFolderFromCwd(cwd = process.cwd()): string {
 
 export function defaultDataDirectory(cwd = process.cwd()): string {
   const mig = migrationsFolderFromCwd(cwd);
-  return path.join(path.dirname(mig), "data");
+  const webDataDir = path.join(path.dirname(mig), "data");
+  const repoDataDir = path.join(path.dirname(path.dirname(mig)), "data");
+
+  const legacyDb = path.join(webDataDir, "clin.db");
+  const repoDb = path.join(repoDataDir, "clin.db");
+
+  // Keep existing DB locations; new installs use repo-level data/ (outside web/) so
+  // Next dev file watching does not recompile on every SQLite write.
+  if (fs.existsSync(legacyDb)) return webDataDir;
+  if (fs.existsSync(repoDb)) return repoDataDir;
+  return repoDataDir;
 }
 
 function bootstrapConfigPath(cwd = process.cwd()): string {

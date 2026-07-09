@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getCaptureQueueSkipMemberIds } from "@/lib/captureQueueSkip";
 import {
   countProfileDepths,
   enrichCampaignMembers,
@@ -36,22 +37,33 @@ export async function GET(request: Request) {
     profileMissing: number;
     profileThin: number;
     profileOk: number;
+    queueRemaining: number;
+    skippedCount: number;
     nextProfileUrl: string | null;
     nextProfileName: string | null;
+    nextMemberId: string | null;
+    nextProfileDepth: string | null;
   } | null = null;
 
   if (effectiveCampaignId) {
     const rawMembers = await listCampaignMembers(effectiveCampaignId);
     const enriched = await enrichCampaignMembers(rawMembers);
     const counts = countProfileDepths(enriched);
-    const next = pickNextProfileCaptureTarget(enriched);
+    const skipIds = await getCaptureQueueSkipMemberIds(effectiveCampaignId);
+    const next = pickNextProfileCaptureTarget(enriched, {
+      skipMemberIds: skipIds,
+    });
     captureTargetQueue = {
       memberCount: enriched.length,
       profileMissing: counts.missing,
       profileThin: counts.thin,
       profileOk: counts.ok,
+      queueRemaining: Math.max(0, counts.missing + counts.thin - skipIds.size),
+      skippedCount: skipIds.size,
       nextProfileUrl: next?.profileUrl ?? null,
       nextProfileName: next?.fullName ?? null,
+      nextMemberId: next?.memberId ?? null,
+      nextProfileDepth: next?.profileDepth ?? null,
     };
   }
 

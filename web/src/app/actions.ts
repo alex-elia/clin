@@ -148,6 +148,7 @@ export async function saveLlmForm(formData: FormData) {
     ollamaModel: readFormString(formData, "ollamaModel"),
     cloudBaseUrl: readFormString(formData, "cloudBaseUrl"),
     cloudModel: readFormString(formData, "cloudModel"),
+    cloudReasoningModel: readFormString(formData, "cloudReasoningModel"),
   };
 
   const clearKey = formData.get("clearLlmApiKey") === "on";
@@ -559,15 +560,20 @@ export async function generateOutreachBatchAction(formData: FormData) {
 export async function generateOneOutreachDraftAction(formData: FormData) {
   const campaignId = String(formData.get("campaignId") ?? "").trim();
   const memberId = String(formData.get("memberId") ?? "").trim();
+  const memberFilter = String(formData.get("memberFilter") ?? "").trim();
   if (!campaignId || !memberId) return;
   const result = await generateOutreachDraftForMember(memberId);
   revalidatePath(`/campaigns/${campaignId}`);
-  if (!result.ok) {
-    redirect(
-      `/campaigns/${campaignId}?tab=exec&draftErr=${encodeURIComponent(result.error.slice(0, 500))}`,
-    );
+  const q = new URLSearchParams({ tab: "exec", focus: memberId });
+  if (memberFilter && memberFilter !== "all") {
+    q.set("memberFilter", memberFilter);
   }
-  redirect(`/campaigns/${campaignId}?tab=exec&draftOk=1`);
+  if (!result.ok) {
+    q.set("draftErr", result.error.slice(0, 500));
+    redirect(`/campaigns/${campaignId}?${q.toString()}`);
+  }
+  q.set("draftOk", "1");
+  redirect(`/campaigns/${campaignId}?${q.toString()}`);
 }
 
 export async function saveCampaignMemberDraftAction(formData: FormData) {

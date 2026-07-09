@@ -24,6 +24,7 @@ import {
 } from "@/lib/cleaningThreadAnalysis";
 import { syncCleaningQueueFromAnalysis } from "@/lib/cleaningQueue";
 import { contactAnalyzeBodySchema } from "@/lib/schemas";
+import { recomputeContactActivityFromCaptures } from "@/lib/contactActivitySqlExtras";
 
 type Db = ReturnType<typeof getDb>;
 export type ContactAnalyzeInput = z.infer<typeof contactAnalyzeBodySchema>;
@@ -71,8 +72,14 @@ export async function executeContactAnalysis(
       ? await inferAnalysisTier(db, contactId, msgCtx)
       : body.tier;
 
+  await recomputeContactActivityFromCaptures(contactId);
   const contextBundle =
-    opts?.contextBundle ?? (await buildContactContextBundle(contactId));
+    opts?.contextBundle != null
+      ? {
+          ...opts.contextBundle,
+          activity: (await buildContactContextBundle(contactId)).activity,
+        }
+      : await buildContactContextBundle(contactId);
 
   const threadCtx = await ensureCleaningThreadAnalysis(contactId, llm);
   const threadAnalysisForPrompt = threadCtx.analysis

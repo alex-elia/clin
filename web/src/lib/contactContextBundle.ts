@@ -4,6 +4,12 @@ import { captureSessions } from "@/db/schema";
 import { safeTruncate } from "@/lib/llm/sanitizePromptText";
 import { getLatestProfileContextForOutreach } from "@/lib/profileCaptureContext";
 import { filterRecentProfilePosts } from "@/lib/profilePostRecency";
+import {
+  computeLinkedInActivity,
+  formatLinkedInActivityForPrompt,
+  type LinkedInActivityAssessment,
+} from "@/lib/linkedinActivity";
+import { selectContactActivityExtension } from "@/lib/contactActivitySqlExtras";
 
 export type ContextDepth = "missing" | "thin" | "ok";
 
@@ -11,6 +17,7 @@ export type ContactContextBundle = {
   contactId: string;
   profile_context: string;
   company_intel_context: string;
+  activity: LinkedInActivityAssessment;
   context_completeness: {
     profile: ContextDepth;
     posts: ContextDepth;
@@ -214,6 +221,31 @@ export async function buildContactContextBundle(
       ? "thin"
       : "missing";
 
+  const activity = computeLinkedInActivity({
+    profilePosts: (postsMeta.json?.profilePosts ?? []) as {
+      text?: string;
+      ageLabel?: string;
+      postKind?: string;
+    }[],
+    postsCapturedAt: postsMeta.capturedAt,
+    hasPostsCapture: Boolean(postsMeta.capturedAt),
+  });
+
+  const storedActivity = selectContactActivityExtension(contactId);
+  if (
+    storedActivity?.activityTier &&
+    storedActivity.activityComputedAt &&
+    postsMeta.capturedAt &&
+    new Date(storedActivity.activityComputedAt).getTime() >=
+      new Date(postsMeta.capturedAt).getTime()
+  ) {
+    activity.tier = storedActivity.activityTier;
+    activity.score = storedActivity.activityScore;
+    if (storedActivity.newestPostAgeLabel) {
+      activity.newestPostAgeLabel = storedActivity.newestPostAgeLabel;
+    }
+  }
+
   return {
     contactId,
     profile_context,
@@ -222,6 +254,7 @@ export async function buildContactContextBundle(
       jobsMeta.json,
       webMeta.json,
     ),
+    activity,
     context_completeness: {
       profile: profileDepth,
       posts: postsDepthFromJson(postsMeta.json),
@@ -245,6 +278,15 @@ export function formatContactContextBundleForPrompt(
   return {
     PROFILE_AND_POSTS: bundle.profile_context || null,
     COMPANY_INTEL: bundle.company_intel_context || null,
+    LINKEDIN_ACTIVITY: formatLinkedInActivityForPrompt(bundle.activity),
+    rule_activity: {
+      tier: bundle.activity.tier,
+      score: bundle.activity.score,
+      recent_post_count: bundle.activity.recentPostCount,
+      stale_post_count: bundle.activity.stalePostCount,
+      newest_post_age_label: bundle.activity.newestPostAgeLabel,
+      reasons: bundle.activity.reasons,
+    },
     context_completeness: bundle.context_completeness,
     captured_at: bundle.capturedAt,
   };

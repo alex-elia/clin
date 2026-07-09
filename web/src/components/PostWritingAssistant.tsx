@@ -22,6 +22,26 @@ import {
 import type { CoachAction } from "@/lib/brandCoachTypes";
 import type { PostFormPatch } from "@/components/ContentPostWorkspace";
 
+function llmRouteLabel(debug: BrandCoachTurnDebug): string {
+  const provider =
+    debug.provider === "openai_compatible" ? "Cloud" : "Ollama (local)";
+  const tier =
+    debug.modelTier === "reasoning"
+      ? "reasoning"
+      : debug.modelTier === "orchestrator"
+        ? "fast"
+        : null;
+  const size =
+    debug.contextChars != null ? ` · ${debug.contextChars} chars sent` : "";
+  const route =
+    debug.autoswitched && debug.modelRouteReason
+      ? ` · auto (${debug.modelRouteReason})`
+      : debug.modelRouteReason
+        ? ` · ${debug.modelRouteReason}`
+        : "";
+  return `${provider}${tier ? ` · ${tier}` : ""} / ${debug.model}${size}${route}`;
+}
+
 export type CoachDraftPayload = {
   title?: string;
   format?: string;
@@ -101,6 +121,7 @@ export function PostWritingAssistant({
         savedToDb?: boolean;
         appliedCount?: number;
         appliedFields?: string[];
+        appliedPatch?: PostFormPatch;
         applyErrors?: string[];
         resolvedLanguage?: string;
         languageHint?: string;
@@ -111,17 +132,13 @@ export function PostWritingAssistant({
         setError(data.error ?? `Failed (${res.status})`);
         if (data.debug) {
           setCoachDebug(data.debug);
-          setLastLlmRoute(
-            `${data.debug.provider} / ${data.debug.model}${data.debug.contextChars != null ? ` · ${data.debug.contextChars} chars` : ""}`,
-          );
+          setLastLlmRoute(llmRouteLabel(data.debug));
         }
         return;
       }
       if (data.threadId) setThreadId(data.threadId);
       if (data.debug) {
-        setLastLlmRoute(
-          `${data.debug.provider} / ${data.debug.model}${data.debug.contextChars != null ? ` · ${data.debug.contextChars} chars` : ""}`,
-        );
+        setLastLlmRoute(llmRouteLabel(data.debug));
       }
       const reply = truncateForCoach(
         data.reply ?? "",
@@ -130,6 +147,9 @@ export function PostWritingAssistant({
       );
 
       if (data.savedToDb) {
+        if (data.appliedPatch && !planningOnly && postId) {
+          onApplyPatch(data.appliedPatch);
+        }
         router.refresh();
         const fields =
           data.appliedFields?.length ? ` (${data.appliedFields.join(", ")})` : "";
@@ -138,10 +158,17 @@ export function PostWritingAssistant({
           data.debug?.parse.schemaValid === false ? data.debug : null,
         );
         setStatusLine(
-          `Saved ${data.appliedCount ?? 0} update(s) to this post${fields}. The form below is refreshed.`,
+          data.appliedCount
+            ? `Saved ${data.appliedCount} update(s) to this post${fields}. The form below is updated.`
+            : `Coach replied but no fields were saved${fields ? ` — tried: ${data.appliedFields?.join(", ")}` : ""}. See errors below.`,
         );
         if (data.applyErrors?.length) {
           setError(data.applyErrors.join(" "));
+        } else if (!data.appliedCount) {
+          setCoachDebug(data.debug ?? null);
+          setError(
+            "Coach sent updates but they could not be saved. See debug below or try Apply again.",
+          );
         }
       } else if (!planningOnly && postId && data.actions?.length) {
         const filled = applyCoachPatchesToForm(
@@ -211,7 +238,7 @@ export function PostWritingAssistant({
       const msg = e instanceof Error ? e.message : "Request failed.";
       setError(
         msg.includes("fetch") || msg === "Failed to fetch"
-          ? "Request failed — the tab may have run out of memory or the server restarted. Check Settings → AI call logs for brand_coach."
+          ? "Request failed before the server finished — often a browser tab memory limit with very large drafts. Check Settings → AI call logs (brand_coach) for the provider used; cloud calls should show openai_compatible."
           : msg,
       );
     } finally {

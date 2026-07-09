@@ -55,6 +55,16 @@ export function repairClinSqliteSchema(db: Database.Database): void {
     db,
     "ALTER TABLE contacts ADD COLUMN cleaning_dismissed_at integer",
   );
+  addColumnOrExists(db, "ALTER TABLE contacts ADD COLUMN activity_tier text");
+  addColumnOrExists(db, "ALTER TABLE contacts ADD COLUMN activity_score integer");
+  addColumnOrExists(
+    db,
+    "ALTER TABLE contacts ADD COLUMN activity_computed_at integer",
+  );
+  addColumnOrExists(
+    db,
+    "ALTER TABLE contacts ADD COLUMN newest_post_age_label text",
+  );
 
   if (!tableExists(db, "cleaning_exec_queue")) {
     db.exec(`

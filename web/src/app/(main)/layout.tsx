@@ -3,8 +3,6 @@ import { SiteFooter } from "@/components/SiteFooter";
 import { EditorialQueueDrain } from "@/components/EditorialQueueDrain";
 import { DailyReminderBanner } from "@/components/DailyReminderBanner";
 
-export const dynamic = "force-dynamic";
-
 export default function MainLayout({
   children,
 }: {

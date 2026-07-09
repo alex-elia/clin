@@ -152,3 +152,80 @@ export function postTextForLanguageDetection(parts: {
     .filter((s) => typeof s === "string" && s.trim())
     .join("\n\n");
 }
+
+export function recipientTextForOutreachLanguage(parts: {
+  fullName?: string | null;
+  headline?: string | null;
+  company?: string | null;
+  location?: string | null;
+  profileContext?: string | null;
+}): string {
+  return [
+    parts.fullName,
+    parts.headline,
+    parts.company,
+    parts.location,
+    parts.profileContext,
+  ]
+    .filter((s) => typeof s === "string" && s.trim())
+    .join("\n\n");
+}
+
+/** Outreach DM language: brand default, writer notes, then recipient profile/posts. */
+export function resolveOutreachLanguage(input: {
+  brandPreference: ContentLanguagePreference;
+  marketRegion?: string | null;
+  campaignWriterInstructions?: string | null;
+  globalWriterInstructions?: string | null;
+  recipientContext?: string;
+}): ResolvedLanguage {
+  const hints = [
+    input.campaignWriterInstructions,
+    input.globalWriterInstructions,
+  ]
+    .filter((s) => typeof s === "string" && s.trim())
+    .join("\n\n");
+
+  const defaultLanguage: ResolvedPostLanguage =
+    input.marketRegion === "en" ? "en" : "fr";
+
+  return resolveContentLanguage({
+    brandPreference: input.brandPreference,
+    userMessage: hints,
+    postText: input.recipientContext,
+    defaultLanguage,
+  });
+}
+
+export function buildOutreachLanguageInstruction(
+  resolved: ResolvedLanguage,
+): string {
+  const name = POST_LANGUAGE_LABELS[resolved.language];
+  const sourceNote =
+    resolved.source === "detected_post"
+      ? " (matched from recipient profile/posts)"
+      : resolved.source === "brand"
+        ? " (your Clin voice default)"
+        : "";
+  return `LANGUAGE: Write the entire message in ${name}${sourceNote}. Do not mix English and French unless the user explicitly asked. The Clin analysis blocks may be in English — still write the outreach message in ${name}.`;
+}
+
+export function buildOutreachFormattingInstruction(
+  writerNotes?: string | null,
+): string {
+  const lines = [
+    "FORMATTING: Write 2–4 short paragraphs with a blank line between each (in JSON, put \\n\\n between paragraphs in the message string).",
+    "Do not output one dense block of text.",
+  ];
+  if (
+    writerNotes &&
+    /paragraph|line\s*break|saut\s*de\s*ligne|retours?\s*(à\s*)?la\s*ligne|espacement|whitespace|a\s+ligne/i.test(
+      writerNotes,
+    )
+  ) {
+    lines.push(
+      "The user asked for paragraph/line-break formatting — follow that strictly (overrides default length).",
+    );
+  }
+  return lines.join(" ");
+}

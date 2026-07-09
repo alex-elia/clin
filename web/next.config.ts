@@ -19,6 +19,16 @@ function optionalBasePath(): string | undefined {
 
 const isDesktopStandalone = process.env.CLIN_DESKTOP_STANDALONE === "1";
 
+/** Paths that should not trigger dev recompiles (SQLite, local data). */
+const devWatchIgnored = [
+  path.join(webRoot, "data"),
+  path.join(webRoot, "..", "data"),
+  "**/*.db",
+  "**/*.db-wal",
+  "**/*.db-shm",
+  "**/*.db-journal",
+];
+
 const nextConfig: NextConfig = {
   basePath: optionalBasePath(),
   output: isDesktopStandalone ? "standalone" : undefined,
@@ -28,6 +38,21 @@ const nextConfig: NextConfig = {
     root: webRoot,
   },
   serverExternalPackages: ["better-sqlite3", "bindings"],
+  webpack: (config, { dev }) => {
+    if (dev) {
+      const prev = config.watchOptions?.ignored;
+      const prevList = Array.isArray(prev)
+        ? prev
+        : prev
+          ? [prev]
+          : [];
+      config.watchOptions = {
+        ...config.watchOptions,
+        ignored: [...prevList, ...devWatchIgnored],
+      };
+    }
+    return config;
+  },
 };
 
 export default nextConfig;

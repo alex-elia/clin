@@ -399,7 +399,14 @@ async function loadCampaignCaptureHint() {
     const q = j.captureTargetQueue;
     if (queueEl) {
       if (q && q.memberCount > 0) {
-        queueEl.textContent = `Queue: ${q.profileMissing} need profile, ${q.profileThin} need richer capture, ${q.profileOk} detailed.`;
+        const nextLine = q.nextProfileName
+          ? ` Next: ${q.nextProfileName}${q.nextProfileDepth ? ` (${q.nextProfileDepth})` : ""}.`
+          : q.queueRemaining === 0
+            ? " Queue empty for capture."
+            : "";
+        const skipLine =
+          q.skippedCount > 0 ? ` ${q.skippedCount} skipped this session.` : "";
+        queueEl.textContent = `Queue: ${q.profileMissing} need profile, ${q.profileThin} need richer capture, ${q.profileOk} detailed.${skipLine}${nextLine}`;
       } else {
         queueEl.textContent = "";
       }
@@ -1065,6 +1072,7 @@ document.getElementById("pipeline-stop")?.addEventListener("click", async () => 
       return;
     }
     setStatus(resp?.ok ? "Automated capture stop requested." : "Stop request failed.", "ok");
+    void refreshCampaignUi();
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (isMessageChannelClosedError(msg)) {
@@ -1075,6 +1083,63 @@ document.getElementById("pipeline-stop")?.addEventListener("click", async () => 
       return;
     }
     setStatus(msg || "Stop request failed.", "err");
+  }
+});
+
+document.getElementById("skip-capture-queue")?.addEventListener("click", async () => {
+  const campaignId = selectedCampaignIdFromPicker();
+  if (!campaignId) {
+    setStatus("Choose a campaign first.", "err");
+    return;
+  }
+  try {
+    const resp = await chrome.runtime.sendMessage({
+      type: "CLIN_CAPTURE_QUEUE_SKIP",
+      campaignId,
+      stopPipeline: true,
+    });
+    if (chrome.runtime.lastError) {
+      setStatus(chrome.runtime.lastError.message || "Skip failed.", "err");
+      return;
+    }
+    if (!resp?.ok) {
+      setStatus(resp?.error || "Skip failed.", "err");
+      return;
+    }
+    const next = resp.nextProfileName
+      ? ` Next: ${resp.nextProfileName}.`
+      : " Queue empty.";
+    setStatus(`Skipped current contact.${next} Capture stopped.`, "ok");
+    void refreshCampaignUi();
+    void refreshPipelineStatus();
+  } catch (e) {
+    setStatus(e instanceof Error ? e.message : "Skip failed.", "err");
+  }
+});
+
+document.getElementById("clear-capture-queue-skips")?.addEventListener("click", async () => {
+  const campaignId = selectedCampaignIdFromPicker();
+  if (!campaignId) {
+    setStatus("Choose a campaign first.", "err");
+    return;
+  }
+  try {
+    const resp = await chrome.runtime.sendMessage({
+      type: "CLIN_CAPTURE_QUEUE_CLEAR",
+      campaignId,
+    });
+    if (chrome.runtime.lastError) {
+      setStatus(chrome.runtime.lastError.message || "Reset failed.", "err");
+      return;
+    }
+    if (!resp?.ok) {
+      setStatus(resp?.error || "Reset failed.", "err");
+      return;
+    }
+    setStatus("Skipped contacts restored to the capture queue.", "ok");
+    void refreshCampaignUi();
+  } catch (e) {
+    setStatus(e instanceof Error ? e.message : "Reset failed.", "err");
   }
 });
 

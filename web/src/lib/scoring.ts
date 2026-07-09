@@ -1,6 +1,7 @@
 import type { contacts } from "@/db/schema";
+import type { LinkedInActivityAssessment } from "@/lib/linkedinActivity";
 
-export const SCORE_RULE_VERSION = "1";
+export const SCORE_RULE_VERSION = "2";
 
 type ContactRow = typeof contacts.$inferSelect;
 
@@ -22,7 +23,10 @@ function daysSince(date: Date | null | undefined): number | null {
   return (Date.now() - date.getTime()) / (1000 * 60 * 60 * 24);
 }
 
-export function scoreContact(row: Partial<ContactRow> & { lastSeenAt?: Date | null }): ScoreResult {
+export function scoreContact(
+  row: Partial<ContactRow> & { lastSeenAt?: Date | null },
+  opts?: { activityAssessment?: LinkedInActivityAssessment | null },
+): ScoreResult {
   const relationshipReasons: string[] = [];
   const businessReasons: string[] = [];
   const cleanupReasons: string[] = [];
@@ -60,6 +64,29 @@ export function scoreContact(row: Partial<ContactRow> & { lastSeenAt?: Date | nu
     businessReasons.push("Company present — better account context.");
   }
   businessScore = Math.min(100, businessScore);
+
+  const activity = opts?.activityAssessment;
+  if (activity && activity.tier !== "unknown") {
+    if (activity.tier === "lurker") {
+      businessScore = Math.min(businessScore, 32);
+      businessReasons.push(
+        "LinkedIn activity lurker — only stale posts visible; lower outreach reachability.",
+      );
+    } else if (activity.tier === "dormant") {
+      businessScore = Math.min(businessScore, 38);
+      businessReasons.push(
+        "No visible LinkedIn posts — moderate reachability penalty.",
+      );
+    } else if (activity.tier === "occasional") {
+      businessReasons.push(
+        "Occasional LinkedIn poster — engage via recent post when possible.",
+      );
+    } else if (activity.tier === "active") {
+      businessReasons.push(
+        "Active on LinkedIn — good channel for comment-first outreach.",
+      );
+    }
+  }
 
   let cleanupScore = 15;
   if (relationshipScore < 40) {

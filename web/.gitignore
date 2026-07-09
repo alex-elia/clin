@@ -21,7 +21,10 @@
 /build
 
 # local dev lock (scripts/dev-start.mjs)
-/data/.clin-dev.lock
+/.clin-dev.lock
+
+# local SQLite + exports (keep out of Next dev file watcher)
+/data/
 
 # misc
 .DS_Store

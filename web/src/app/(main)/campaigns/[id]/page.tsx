@@ -10,7 +10,14 @@ import { CampaignFormFields } from "@/components/CampaignFormFields";
 import { CampaignMemberMessagingPanel } from "@/components/CampaignMemberMessagingPanel";
 import { CampaignOrchestrateButton } from "@/components/CampaignOrchestrateButton";
 import { CampaignMemberIcpCheckButton } from "@/components/CampaignMemberIcpCheckButton";
+import { CampaignMemberDraftForm } from "@/components/CampaignMemberDraftForm";
+import { CampaignExecScrollRestore } from "@/components/CampaignExecScrollRestore";
+import { CampaignScrollPreservingForm } from "@/components/CampaignScrollPreservingForm";
 import { RecommendationPanel } from "@/components/RecommendationPanel";
+import {
+  LinkedInActivityBadge,
+  linkedInActivityWarnBeforeEngage,
+} from "@/components/LinkedInActivityBadge";
 import { pickContactPlaybookFromEnvelope } from "@/lib/contactPlaybook";
 import {
   ICP_ACTION_LABELS,
@@ -18,16 +25,15 @@ import {
   icpMatchBadgeClass,
 } from "@/lib/campaignMemberIcpShared";
 import { loadPendingEngageExecByMemberId } from "@/lib/campaignEngageQueue";
+import { campaignMemberAnchorId } from "@/lib/campaignExecScroll";
 import { RemoveFromCampaignForm } from "@/components/RemoveFromCampaignForm";
 import {
   approveCampaignMemberReadyAction,
   clearCaptureTargetCampaignAction,
-  generateOneOutreachDraftAction,
   markCampaignMemberSentAction,
   markCampaignMemberSkippedAction,
   queueCampaignMemberEngageAction,
   reopenCampaignMemberDraftAction,
-  saveCampaignMemberDraftAction,
   setCaptureTargetAndActiveExtensionAction,
   setCaptureTargetCampaignAction,
   updateCampaignAction,
@@ -124,6 +130,7 @@ export default async function CampaignDetailPage({
     engageErr?: string;
     memberFilter?: string;
     tab?: string;
+    focus?: string;
   }>;
 }) {
   const { id } = await params;
@@ -199,9 +206,16 @@ export default async function CampaignDetailPage({
     hasMembers: membersEnriched.length > 0,
   });
   const filterCounts = readinessFilterCounts(membersEnriched, filterCtx);
-  const members = membersEnriched.filter((m) =>
-    enrichedMemberMatchesFilter(m, memberFilter, filterCtx),
+  const memberOrder = new Map(
+    membersRaw.map((row, index) => [row.member.id, index]),
   );
+  const members = membersEnriched
+    .filter((m) => enrichedMemberMatchesFilter(m, memberFilter, filterCtx))
+    .sort(
+      (a, b) =>
+        (memberOrder.get(a.member.id) ?? 0) -
+        (memberOrder.get(b.member.id) ?? 0),
+    );
   const nextCapture = pickNextProfileCaptureTarget(membersEnriched);
   const openMembers = membersEnriched.filter(
     (m) =>
@@ -358,6 +372,10 @@ export default async function CampaignDetailPage({
         </div>
       ) : (
         <div className="space-y-6 pt-2">
+          <CampaignExecScrollRestore
+            campaignId={id}
+            focusMemberId={sp.focus}
+          />
           <section className="clin-card p-4">
             <h2 className="text-sm font-semibold">Capture queue &amp; readiness</h2>
             <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-6">
@@ -532,6 +550,9 @@ export default async function CampaignDetailPage({
                 icpRationale,
                 icpRecommendedAction,
                 icpCheckedAt,
+                activityTier,
+                activityScore,
+                newestPostAgeLabel,
               } = row;
               const draft = member.draftOutreach ?? "";
               const hasDraft = draft.trim().length > 0;
@@ -570,10 +591,13 @@ export default async function CampaignDetailPage({
               const isEngagePath =
                 member.status === "engage" || Boolean(pendingEngageExecId);
               const showWorkflowBadge = isPostSend || member.status === "engage";
+              const activityEngageWarn =
+                linkedInActivityWarnBeforeEngage(activityTier);
               return (
                 <div
-                  key={`${member.id}-${member.updatedAt.getTime()}`}
-                  className="clin-card p-4"
+                  key={member.id}
+                  id={campaignMemberAnchorId(member.id)}
+                  className="clin-card p-4 scroll-mt-24"
                 >
                   <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-2">
@@ -597,6 +621,12 @@ export default async function CampaignDetailPage({
                           engage pending
                         </span>
                       ) : null}
+                      <LinkedInActivityBadge
+                        tier={activityTier}
+                        score={activityScore}
+                        newestPostAgeLabel={newestPostAgeLabel}
+                        compact
+                      />
                       {showWorkflowBadge ? (
                         <span
                           className={`rounded px-1.5 py-0.5 text-xs font-medium ${workflowPhaseBadgeClass(workflowPhase)}`}
@@ -683,31 +713,18 @@ export default async function CampaignDetailPage({
                     />
                   ) : null}
                   {member.status !== "closed" ? (
-                    <form
-                      action={saveCampaignMemberDraftAction}
-                      className="mt-3 space-y-2"
-                    >
-                      <input type="hidden" name="campaignId" value={id} />
-                      <input type="hidden" name="memberId" value={member.id} />
-                      <textarea
-                        name="draftOutreach"
-                        rows={5}
-                        defaultValue={draft}
-                        className="w-full clin-input text-sm"
-                      />
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="submit"
-                          className="clin-btn-secondary text-xs px-2 py-1"
-                        >
-                          Save draft
-                        </button>
-                      </div>
-                    </form>
+                    <CampaignMemberDraftForm
+                      campaignId={id}
+                      memberId={member.id}
+                      initialDraft={draft}
+                    />
                   ) : draft.trim() ? (
-                    <p className="mt-3 whitespace-pre-wrap rounded-lg border border-clin-border bg-clin-surface-muted/30 p-3 text-sm text-clin-muted">
-                      {draft}
-                    </p>
+                    <CampaignMemberDraftForm
+                      campaignId={id}
+                      memberId={member.id}
+                      initialDraft={draft}
+                      readOnly
+                    />
                   ) : null}
                   {isEngagePath ? (
                     <p className="mt-3 text-sm text-[var(--clin-muted)]">
@@ -736,18 +753,11 @@ export default async function CampaignDetailPage({
                       campaignId={id}
                       memberId={member.id}
                     />
-                    <form action={generateOneOutreachDraftAction}>
-                      <input type="hidden" name="campaignId" value={id} />
-                      <input type="hidden" name="memberId" value={member.id} />
-                      <button
-                        type="submit"
-                        className="clin-btn-secondary text-xs px-2 py-1"
-                      >
-                        Regenerate (LLM)
-                      </button>
-                    </form>
                     {member.status !== "ready" ? (
-                      <form action={approveCampaignMemberReadyAction}>
+                      <CampaignScrollPreservingForm
+                        campaignId={id}
+                        action={approveCampaignMemberReadyAction}
+                      >
                         <input type="hidden" name="campaignId" value={id} />
                         <input type="hidden" name="memberId" value={member.id} />
                         <button
@@ -757,9 +767,12 @@ export default async function CampaignDetailPage({
                         >
                           Ready for extension
                         </button>
-                      </form>
+                      </CampaignScrollPreservingForm>
                     ) : (
-                      <form action={reopenCampaignMemberDraftAction}>
+                      <CampaignScrollPreservingForm
+                        campaignId={id}
+                        action={reopenCampaignMemberDraftAction}
+                      >
                         <input type="hidden" name="campaignId" value={id} />
                         <input type="hidden" name="memberId" value={member.id} />
                         <button
@@ -768,12 +781,15 @@ export default async function CampaignDetailPage({
                         >
                           Back to draft
                         </button>
-                      </form>
+                      </CampaignScrollPreservingForm>
                     )}
                     {!pendingEngageExecId &&
                     member.status !== "sent" &&
                     member.status !== "skipped" ? (
-                      <form action={queueCampaignMemberEngageAction}>
+                      <CampaignScrollPreservingForm
+                        campaignId={id}
+                        action={queueCampaignMemberEngageAction}
+                      >
                         <input type="hidden" name="campaignId" value={id} />
                         <input type="hidden" name="memberId" value={member.id} />
                         <button
@@ -783,12 +799,20 @@ export default async function CampaignDetailPage({
                         >
                           Queue engage
                         </button>
-                      </form>
+                      </CampaignScrollPreservingForm>
+                    ) : null}
+                    {activityEngageWarn ? (
+                      <p className="w-full text-xs text-amber-800 dark:text-amber-200">
+                        {activityEngageWarn}
+                      </p>
                     ) : null}
                     {member.status !== "sent" &&
                     member.status !== "skipped" ? (
                       <>
-                        <form action={markCampaignMemberSentAction}>
+                        <CampaignScrollPreservingForm
+                          campaignId={id}
+                          action={markCampaignMemberSentAction}
+                        >
                           <input type="hidden" name="campaignId" value={id} />
                           <input type="hidden" name="memberId" value={member.id} />
                           <button
@@ -798,8 +822,11 @@ export default async function CampaignDetailPage({
                           >
                             Mark sent (manual)
                           </button>
-                        </form>
-                        <form action={markCampaignMemberSkippedAction}>
+                        </CampaignScrollPreservingForm>
+                        <CampaignScrollPreservingForm
+                          campaignId={id}
+                          action={markCampaignMemberSkippedAction}
+                        >
                           <input type="hidden" name="campaignId" value={id} />
                           <input type="hidden" name="memberId" value={member.id} />
                           <button
@@ -808,7 +835,7 @@ export default async function CampaignDetailPage({
                           >
                             Skip
                           </button>
-                        </form>
+                        </CampaignScrollPreservingForm>
                       </>
                     ) : null}
                       </>

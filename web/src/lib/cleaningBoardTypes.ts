@@ -5,6 +5,7 @@ import type { ContactPlaybook } from "@/lib/contactPlaybook";
 import type { LlmAnalysisView } from "@/lib/contactLlmDisplay";
 import type { ContactReadiness } from "@/lib/contactReadinessShared";
 import type { InboxThreadAnalysis } from "@/lib/inboxThreadAnalysisTypes";
+import type { LinkedInActivityTier } from "@/lib/linkedinActivity";
 
 export type CleaningContactCard = {
   contactId: string;
@@ -20,6 +21,11 @@ export type CleaningContactCard = {
   analysis: LlmAnalysisView | null;
   playbook: ContactPlaybook | null;
   compositeScore: number | null;
+  /** Blended composite + activity for board sort. */
+  sortScore: number | null;
+  activityTier: LinkedInActivityTier | null;
+  activityScore: number | null;
+  newestPostAgeLabel: string | null;
   queueId: string | null;
   threadAnalysis: InboxThreadAnalysis | null;
   threadStageLabel: string | null;

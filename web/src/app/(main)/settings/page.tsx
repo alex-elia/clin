@@ -427,7 +427,8 @@ export default async function SettingsPage() {
           <p className="mt-1 text-sm text-[var(--clin-muted)]">
             Powers contact insights, branding post coach, outreach drafts, and
             copy suggestions. Choose either a model on your computer (private) or a
-            cloud API (faster, sends text to your provider).
+            cloud API (faster, sends text to your provider). Cloud mode can
+            auto-switch to a reasoning model for long LinkedIn posts.
           </p>
         </div>
 
@@ -437,7 +438,7 @@ export default async function SettingsPage() {
             Which AI to use
           </h3>
           <LlmSettingsFields
-            key={`${llm.provider}-${llm.ollama.baseUrl}-${llm.cloud.baseUrl}-${llm.ollama.model}-${llm.cloud.model}`}
+            key={`${llm.provider}-${llm.ollama.baseUrl}-${llm.cloud.baseUrl}-${llm.ollama.model}-${llm.cloud.model}-${llm.cloud.reasoningModel ?? ""}`}
             provider={llm.provider}
             ollama={llm.ollama}
             cloud={llm.cloud}

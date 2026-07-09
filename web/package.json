@@ -17,6 +17,7 @@
     "start": "next start",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit",
+    "test": "npx tsx --test src/lib/linkedinActivity.test.ts src/lib/contentLanguage.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",

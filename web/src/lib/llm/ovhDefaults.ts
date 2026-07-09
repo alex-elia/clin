@@ -5,9 +5,12 @@ export const OVH_AI_DEFAULT_BASE_URL =
 /** Fast instruct model; good for Clin drafts and analysis. */
 export const OVH_AI_DEFAULT_MODEL = "Mistral-Small-3.2-24B-Instruct-2506";
 
+/** Reasoning model for long posts / structured coach actions (Nemrut REASONING). */
+export const OVH_AI_DEFAULT_REASONING_MODEL = "gpt-oss-120b";
+
 export const OVH_AI_SUGGESTED_MODELS = [
   OVH_AI_DEFAULT_MODEL,
-  "gpt-oss-120b",
+  OVH_AI_DEFAULT_REASONING_MODEL,
   "gpt-oss-20b",
   "Qwen2.5-72B-Instruct",
   "Llama-3.1-8B-Instruct",

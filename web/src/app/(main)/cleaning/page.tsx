@@ -17,10 +17,17 @@ import { listPendingCleaningExecItems } from "@/lib/cleaningExecQueueList";
 
 export const dynamic = "force-dynamic";
 
-export default async function CleaningPage() {
+export default async function CleaningPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ bucket?: string; filter?: string }>;
+}) {
   getDb();
+  const sp = await searchParams;
   const [board, settings, pending, execItems] = await Promise.all([
-    buildCleaningBoard(),
+    buildCleaningBoard({
+      lowActivityOnly: sp.filter === "low_activity",
+    }),
     getAutopilotSettings(),
     Promise.resolve(countContactsPendingLlmAnalysis()),
     listPendingCleaningExecItems({ limit: 100 }),

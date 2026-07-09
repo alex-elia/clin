@@ -21,6 +21,7 @@ import {
   tryUpdateCleaningUserBucket,
 } from "@/lib/cleaningSqlExtras";
 import { listContactLlmExtensionsMap } from "@/lib/contactSqlExtras";
+import { selectContactActivityExtension } from "@/lib/contactActivitySqlExtras";
 import { loadLatestProfileCapturesByContactId } from "@/lib/campaignMemberReadiness";
 import { enqueueCleaningExec } from "@/lib/cleaningExecQueue";
 import { generateEngageCommentForContact } from "@/lib/cleaningEngageComment";
@@ -72,6 +73,7 @@ async function loadContactContext(contactId: string) {
     threadAnalysis,
     cleaningUserBucket: cleaningExt.cleaningUserBucket,
     cleaningDismissedAt: cleaningExt.cleaningDismissedAt,
+    activityTier: selectContactActivityExtension(contactId)?.activityTier ?? null,
   });
 
   return {

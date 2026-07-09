@@ -8,6 +8,7 @@ import {
   buildContactContextBundle,
   type ContactContextBundle,
 } from "@/lib/contactContextBundle";
+import { formatLinkedInActivityForPrompt } from "@/lib/linkedinActivity";
 import { getLatestProfileContextForOutreach } from "@/lib/profileCaptureContext";
 import { getUserContextForLlm, userContextHasLlmSignal } from "@/lib/userContext";
 
@@ -31,6 +32,32 @@ function profileContextFromBundle(bundle: ContactContextBundle): string {
     bundle.company_intel_context,
   ].filter(Boolean);
   return parts.join("\n\n");
+}
+
+function applyActivityCapToIcpMatch(
+  match: CampaignIcpMatch,
+  bundle: ContactContextBundle,
+  contact: { headline?: string | null },
+): CampaignIcpMatch {
+  const tier = bundle.activity.tier;
+  if (tier !== "lurker" && tier !== "dormant") return match;
+
+  const strongHeadline =
+    typeof contact.headline === "string" &&
+    contact.headline.trim().length >= 16;
+
+  let { icp_match, recommended_action, rationale } = match;
+  if (icp_match === "strong") icp_match = "partial";
+
+  if (
+    recommended_action === "engage_comment" ||
+    (recommended_action === "keep_and_draft" && !strongHeadline)
+  ) {
+    recommended_action = icp_match === "weak" ? "skip" : "keep";
+    rationale = `${rationale} LinkedIn activity tier ${tier} — limited recent posts; prefer nurture over engage/DM.`;
+  }
+
+  return { icp_match, recommended_action, rationale };
 }
 
 export async function checkContactAgainstCampaignIcp(opts: {
@@ -77,6 +104,12 @@ export async function checkContactAgainstCampaignIcp(opts: {
         segment: contact.segment,
         profile_context: profileCtx,
       },
+      LINKEDIN_ACTIVITY: formatLinkedInActivityForPrompt(bundle.activity),
+      rule_activity: {
+        tier: bundle.activity.tier,
+        score: bundle.activity.score,
+        newest_post_age_label: bundle.activity.newestPostAgeLabel,
+      },
       owner_context: userContextHasLlmSignal(owner)
         ? {
             goals: owner.goalsText,
@@ -105,6 +138,8 @@ Respond with JSON only:
 - unknown: not enough data — say what is missing in rationale.
 - keep_and_draft: strong fit with enough profile to draft a DM.
 - engage_comment: partial/nurture fit with a concrete recent-post hook — comment on their post first to warm the relationship; not ready for a cold DM.
+When LINKEDIN_ACTIVITY tier is lurker or dormant, cap icp_match at partial and avoid engage_comment or keep_and_draft unless headline is a strong ICP signal.
+When tier is unknown, do not penalize for missing posts capture.
 Do not invent facts.`,
     user,
     jsonMode: true,
@@ -117,5 +152,5 @@ Do not invent facts.`,
   if (!parsed.success) {
     throw new Error(`ICP check parse failed: ${parsed.error.message.slice(0, 200)}`);
   }
-  return parsed.data;
+  return applyActivityCapToIcpMatch(parsed.data, bundle, contact);
 }
