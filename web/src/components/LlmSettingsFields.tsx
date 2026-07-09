@@ -180,6 +180,8 @@ export function LlmSettingsFields({
 
       onRefresh={() => void refreshOllamaModels(ollamaBase)}
 
+      required={!isCloud}
+
     />
 
   );
@@ -188,7 +190,7 @@ export function LlmSettingsFields({
 
   const cloudFields = (
 
-    <CloudFields cloud={cloud} apiKeySet={apiKeySet} showPrivacyNote={isCloud} />
+    <CloudFields cloud={cloud} apiKeySet={apiKeySet} showPrivacyNote={isCloud} required={isCloud} />
 
   );
 
@@ -502,6 +504,8 @@ function OllamaFields({
 
   onRefresh,
 
+  required = true,
+
 }: {
 
   ollama: LlmProviderProfile;
@@ -517,6 +521,8 @@ function OllamaFields({
   loading: boolean;
 
   onRefresh: () => void;
+
+  required?: boolean;
 
 }) {
 
@@ -536,6 +542,8 @@ function OllamaFields({
 
         onBlur={onOllamaBaseBlur}
 
+        required={required}
+
       />
 
       <OllamaModelField
@@ -551,6 +559,8 @@ function OllamaFields({
         baseUrl={ollamaBase}
 
         onRefresh={onRefresh}
+
+        required={required}
 
       />
 
@@ -570,6 +580,8 @@ function CloudFields({
 
   showPrivacyNote,
 
+  required = true,
+
 }: {
 
   cloud: LlmProviderProfile;
@@ -577,6 +589,8 @@ function CloudFields({
   apiKeySet: boolean;
 
   showPrivacyNote: boolean;
+
+  required?: boolean;
 
 }) {
 
@@ -610,9 +624,25 @@ function CloudFields({
 
         defaultValue={cloud.baseUrl}
 
+        required={required}
+
       />
 
-      <CloudModelField model={cloud.model} />
+      <CloudModelField
+        name="cloudModel"
+        model={cloud.model}
+        label="Default model (fast)"
+        description="Used for planning, light edits, and contact analysis."
+        required={required}
+      />
+
+      <CloudModelField
+        name="cloudReasoningModel"
+        model={cloud.reasoningModel ?? "gpt-oss-120b"}
+        label="Reasoning model (auto)"
+        description="Clin switches here for long posts, articles, and heavy coach context."
+        required={false}
+      />
 
       <label className="block space-y-1 text-sm">
 
@@ -672,6 +702,8 @@ function OllamaModelField({
 
   onRefresh,
 
+  required = true,
+
 }: {
 
   model: string;
@@ -685,6 +717,8 @@ function OllamaModelField({
   baseUrl: string;
 
   onRefresh: () => void;
+
+  required?: boolean;
 
 }) {
 
@@ -717,6 +751,8 @@ function OllamaModelField({
           description="Exact tag from `ollama list`."
 
           defaultValue={model}
+
+          required={required}
 
         />
 
@@ -812,7 +848,7 @@ function OllamaModelField({
 
         className="mt-1 clin-input w-full"
 
-        required
+        required={required}
 
       >
 
@@ -854,7 +890,19 @@ function OllamaModelField({
 
 
 
-function CloudModelField({ model }: { model: string }) {
+function CloudModelField({
+  name,
+  model,
+  label,
+  description,
+  required = true,
+}: {
+  name: string;
+  model: string;
+  label: string;
+  description?: string;
+  required?: boolean;
+}) {
 
   const suggested: string[] = [...OVH_AI_SUGGESTED_MODELS];
 
@@ -866,17 +914,17 @@ function CloudModelField({ model }: { model: string }) {
 
     <label className="block space-y-1 text-sm">
 
-      <span className="font-medium text-clin-text">Model id</span>
+      <span className="font-medium text-clin-text">{label}</span>
 
       <select
 
-        name="cloudModel"
+        name={name}
 
         defaultValue={model}
 
         className="mt-1 clin-input w-full"
 
-        required
+        required={required}
 
       >
 
@@ -898,6 +946,12 @@ function CloudModelField({ model }: { model: string }) {
 
       </select>
 
+      {description ? (
+
+        <span className="block text-xs text-clin-muted">{description}</span>
+
+      ) : null}
+
     </label>
 
   );
@@ -918,6 +972,8 @@ function LlmTextField({
 
   onBlur,
 
+  required = true,
+
 }: {
 
   name: string;
@@ -929,6 +985,8 @@ function LlmTextField({
   defaultValue: string;
 
   onBlur?: (value: string) => void;
+
+  required?: boolean;
 
 }) {
 
@@ -944,7 +1002,7 @@ function LlmTextField({
 
         type="text"
 
-        required
+        required={required}
 
         defaultValue={defaultValue}
 

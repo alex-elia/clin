@@ -77,7 +77,9 @@ export async function POST(req: Request) {
       if (action.type !== "update_post" || !action.patch) return [];
       return Object.keys(action.patch);
     });
-    clientActions = [];
+    if (savedToDb) {
+      clientActions = [];
+    }
   }
 
   return NextResponse.json({
@@ -91,6 +93,10 @@ export async function POST(req: Request) {
     applyErrors,
     resolvedLanguage: result.resolvedLanguage.language,
     languageHint: result.resolvedLanguage.source,
+    llm: {
+      provider: result.debug.provider,
+      model: result.debug.model,
+    },
     debug: result.debug,
   });
 }

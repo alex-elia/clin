@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { COACH_LIMITS } from "@/lib/coachContextLimits";
 import {
   CONTENT_POST_FORMATS,
   CONTENT_POST_STATUSES,
@@ -15,10 +16,10 @@ export const coachUpdatePostSchema = z.object({
       title: z.string().max(300).optional(),
       status: z.enum(CONTENT_POST_STATUSES).optional(),
       format: z.enum(CONTENT_POST_FORMATS).optional(),
-      ideaNotes: z.string().max(50_000).nullable().optional(),
-      hook: z.string().max(8_000).nullable().optional(),
-      body: z.string().max(50_000).nullable().optional(),
-      articleBody: z.string().max(100_000).nullable().optional(),
+      ideaNotes: z.string().max(COACH_LIMITS.ideaNotes).nullable().optional(),
+      hook: z.string().max(COACH_LIMITS.hook).nullable().optional(),
+      body: z.string().max(COACH_LIMITS.body).nullable().optional(),
+      articleBody: z.string().max(COACH_LIMITS.articleBody).nullable().optional(),
       styleNotes: z.string().max(12_000).nullable().optional(),
       language: z.enum(["fr", "en"]).nullable().optional(),
       lastCoachSummary: z.string().max(500).nullable().optional(),
@@ -34,9 +35,9 @@ export const coachCreatePostSchema = z.object({
     title: z.string().min(1).max(300),
     status: z.enum(CONTENT_POST_STATUSES).optional(),
     format: z.enum(CONTENT_POST_FORMATS).optional(),
-    ideaNotes: z.string().max(50_000).nullable().optional(),
-    hook: z.string().max(8_000).nullable().optional(),
-    body: z.string().max(50_000).nullable().optional(),
+    ideaNotes: z.string().max(COACH_LIMITS.ideaNotes).nullable().optional(),
+    hook: z.string().max(COACH_LIMITS.hook).nullable().optional(),
+    body: z.string().max(COACH_LIMITS.body).nullable().optional(),
     language: z.enum(["fr", "en"]).nullable().optional(),
     scheduledAt: coachScheduledAtSchema,
   }),

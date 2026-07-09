@@ -6,7 +6,8 @@ import {
   postTextForLanguageDetection,
   resolveContentLanguage,
 } from "@/lib/contentLanguage";
-import { completeChat, getLlmConfig } from "@/lib/llm/completeChat";
+import { completeChat, getLlmConfigForTier } from "@/lib/llm/completeChat";
+import { routeCopyAssistantModel } from "@/lib/llm/llmModelRoute";
 import { getOrCreateUserContext } from "@/lib/userContext";
 import {
   generateCopyRequestSchema,
@@ -108,7 +109,9 @@ export async function generateCopyFromBrief(
   }
   const { field, audience, prompt, context } = parsed.data;
 
-  const llm = await getLlmConfig();
+  const route = routeCopyAssistantModel(field);
+  const llmResolved = await getLlmConfigForTier(route.tier);
+  const llm = llmResolved.config;
   const [globalWriter, userCtx, brand] = await Promise.all([
     getGlobalWriterInstructions(),
     getOrCreateUserContext(),
@@ -150,7 +153,13 @@ export async function generateCopyFromBrief(
       user,
       timeoutMs: 90_000,
       feature: "copy_assistant",
-      meta: { field, audience },
+      meta: {
+        field,
+        audience,
+        modelTier: llmResolved.modelTier,
+        modelRouteReason: route.reason,
+        autoswitched: llmResolved.autoswitched,
+      },
     });
     raw = stripFences(raw);
     if (!raw) {

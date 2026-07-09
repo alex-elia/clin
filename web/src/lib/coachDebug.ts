@@ -14,6 +14,10 @@ export type BrandCoachTurnDebug = {
   llmLogId?: string;
   provider: string;
   model: string;
+  /** orchestrator (fast) vs reasoning (gpt-oss-120b, etc.) */
+  modelTier?: "orchestrator" | "reasoning";
+  modelRouteReason?: string;
+  autoswitched?: boolean;
   replyPreview: string;
   /** Prompt size sent to the model (user block chars). */
   contextChars?: number;

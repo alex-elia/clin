@@ -148,6 +148,7 @@ export async function saveLlmForm(formData: FormData) {
     ollamaModel: readFormString(formData, "ollamaModel"),
     cloudBaseUrl: readFormString(formData, "cloudBaseUrl"),
     cloudModel: readFormString(formData, "cloudModel"),
+    cloudReasoningModel: readFormString(formData, "cloudReasoningModel"),
   };
 
   const clearKey = formData.get("clearLlmApiKey") === "on";

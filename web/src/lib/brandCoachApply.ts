@@ -62,6 +62,12 @@ export async function applyCoachActions(
           if (patch.scheduledAt !== undefined) {
             dbPatch.scheduledAt = parseScheduledAt(patch.scheduledAt);
           }
+          if (Object.keys(dbPatch).length === 0) {
+            result.errors.push(
+              `update_post ${action.postId}: no fields to update in patch.`,
+            );
+            break;
+          }
           const ok = await updateContentPost(action.postId, dbPatch);
           if (!ok) result.errors.push(`Post not found: ${action.postId}`);
           else result.applied += 1;

@@ -7,8 +7,16 @@ import {
   readOvhProcessEnv,
   resolveOvhApiBaseFromEnv,
   resolveOvhDefaultModel,
+  resolveOvhReasoningModel,
 } from "@/lib/llm/ovhEnv";
+import { OVH_AI_DEFAULT_REASONING_MODEL } from "@/lib/llm/ovhDefaults";
+import type {
+  LlmModelTier,
+} from "@/lib/llm/llmModelRoute";
+import { resolveTierModelId } from "@/lib/llm/llmModelRoute";
 import type { LlmConfig, LlmProvider } from "@/lib/llm/types";
+
+export type { LlmModelTier } from "@/lib/llm/llmModelRoute";
 
 export { hasEnvCloudCredentials, hasEnvLocalFile };
 
@@ -21,6 +29,7 @@ export const LLM_KEYS = {
   ollamaModel: "llm.ollama.model",
   cloudBaseUrl: "llm.cloud.base_url",
   cloudModel: "llm.cloud.model",
+  cloudReasoningModel: "llm.cloud.reasoning_model",
   apiKey: "llm.api_key",
 } as const;
 
@@ -81,6 +90,9 @@ const ENV_CLOUD_MODEL =
     ? process.env.LLM_MODEL.trim()
     : resolveOvhDefaultModel(OVH_ENV);
 
+const ENV_CLOUD_REASONING_MODEL =
+  resolveOvhReasoningModel(OVH_ENV) ?? OVH_AI_DEFAULT_REASONING_MODEL;
+
 const ENV_API_KEY =
   typeof process.env.LLM_API_KEY === "string" && process.env.LLM_API_KEY.trim()
     ? process.env.LLM_API_KEY.trim()
@@ -93,6 +105,8 @@ const ENV_API_KEY =
 export type LlmProviderProfile = {
   baseUrl: string;
   model: string;
+  /** Cloud only — used when autoswitch picks reasoning tier. */
+  reasoningModel?: string;
 };
 
 type ResolvedProfiles = {
@@ -135,6 +149,9 @@ function resolveProfilesFromMap(map: Map<string, string>): ResolvedProfiles {
     map.get(LLM_KEYS.cloudModel)?.trim() ||
     (legacyModel && !legacyIsOllama ? legacyModel : undefined) ||
     ENV_CLOUD_MODEL;
+  const cloudReasoningModel =
+    map.get(LLM_KEYS.cloudReasoningModel)?.trim() ||
+    ENV_CLOUD_REASONING_MODEL;
 
   const apiKey = map.get(LLM_KEYS.apiKey)?.trim() || undefined;
 
@@ -147,6 +164,7 @@ function resolveProfilesFromMap(map: Map<string, string>): ResolvedProfiles {
     cloud: {
       baseUrl: cloudBase.replace(/\/$/, ""),
       model: cloudModel,
+      reasoningModel: cloudReasoningModel,
     },
     apiKey: apiKey || undefined,
   };
@@ -253,6 +271,12 @@ export async function migrateLegacyLlmSettingsIfNeeded(): Promise<void> {
   await upsertSetting(LLM_KEYS.ollamaModel, ollamaModel);
   await upsertSetting(LLM_KEYS.cloudBaseUrl, cloudBase.replace(/\/$/, ""));
   await upsertSetting(LLM_KEYS.cloudModel, cloudModel);
+  if (!map.get(LLM_KEYS.cloudReasoningModel)?.trim()) {
+    await upsertSetting(
+      LLM_KEYS.cloudReasoningModel,
+      ENV_CLOUD_REASONING_MODEL,
+    );
+  }
   if (!map.get(LLM_KEYS.provider)?.trim()) {
     await upsertSetting(LLM_KEYS.provider, provider);
   }
@@ -265,6 +289,14 @@ export async function seedLlmSettingsFromEnvOnce(): Promise<void> {
   g.__CLIN_LLM_ENV_SEEDED__ = true;
 
   await migrateLegacyLlmSettingsIfNeeded();
+
+  const mapBeforeEnv = await loadSettingsMap();
+  if (!mapBeforeEnv.get(LLM_KEYS.cloudReasoningModel)?.trim()) {
+    await upsertSetting(
+      LLM_KEYS.cloudReasoningModel,
+      ENV_CLOUD_REASONING_MODEL,
+    );
+  }
 
   if (!hasEnvLocalFile()) return;
 
@@ -293,6 +325,10 @@ export async function seedLlmSettingsFromEnvOnce(): Promise<void> {
     ENV_CLOUD_BASE.replace(/\/$/, ""),
   );
   await seedIfMissing(LLM_KEYS.cloudModel, ENV_CLOUD_MODEL);
+  await seedIfMissing(
+    LLM_KEYS.cloudReasoningModel,
+    ENV_CLOUD_REASONING_MODEL,
+  );
   if (ENV_API_KEY && !map.get(LLM_KEYS.apiKey)?.trim()) {
     await upsertSetting(LLM_KEYS.apiKey, ENV_API_KEY);
   }
@@ -316,6 +352,28 @@ export async function getLlmConfig(): Promise<LlmConfig> {
   return activeConfig(await loadProfilesFromDb());
 }
 
+/** Apply orchestrator vs reasoning tier on cloud; Ollama keeps the configured model. */
+export async function getLlmConfigForTier(
+  tier: LlmModelTier,
+): Promise<{ config: LlmConfig; modelTier: LlmModelTier; autoswitched: boolean }> {
+  await seedLlmSettingsFromEnvOnce();
+  const profiles = await loadProfilesFromDb();
+  const base = activeConfig(profiles);
+  if (base.provider !== "openai_compatible") {
+    return { config: base, modelTier: "orchestrator", autoswitched: false };
+  }
+  const picked = resolveTierModelId(
+    profiles.cloud.model,
+    profiles.cloud.reasoningModel,
+    tier,
+  );
+  return {
+    config: { ...base, model: picked.model },
+    modelTier: picked.tier,
+    autoswitched: picked.autoswitched,
+  };
+}
+
 export async function getLlmConfigPublic(): Promise<LlmConfigPublic> {
   await seedLlmSettingsFromEnvOnce();
   const map = await loadSettingsMap();
@@ -335,6 +393,7 @@ export type LlmConfigPatch = Partial<{
   ollamaModel: string;
   cloudBaseUrl: string;
   cloudModel: string;
+  cloudReasoningModel: string;
   apiKey: string | null;
 }>;
 
@@ -363,6 +422,11 @@ export async function updateLlmConfig(
     typeof patch.cloudModel === "string" && patch.cloudModel.trim()
       ? patch.cloudModel.trim()
       : current.cloud.model;
+  const cloudReasoningModel =
+    typeof patch.cloudReasoningModel === "string" &&
+    patch.cloudReasoningModel.trim()
+      ? patch.cloudReasoningModel.trim()
+      : current.cloud.reasoningModel ?? ENV_CLOUD_REASONING_MODEL;
 
   let apiKey = current.apiKey;
   if (patch.apiKey === null) {
@@ -376,6 +440,7 @@ export async function updateLlmConfig(
   await upsertSetting(LLM_KEYS.ollamaModel, ollamaModel);
   await upsertSetting(LLM_KEYS.cloudBaseUrl, cloudBaseUrl);
   await upsertSetting(LLM_KEYS.cloudModel, cloudModel);
+  await upsertSetting(LLM_KEYS.cloudReasoningModel, cloudReasoningModel);
 
   if (apiKey) {
     await upsertSetting(LLM_KEYS.apiKey, apiKey);

@@ -97,8 +97,30 @@ export function ContentPostWorkspace({
   const [autopilotImageGenerated, setAutopilotImageGenerated] = useState(false);
 
   useEffect(() => {
+    setTitle(post.title);
     setStatus(post.status as ContentPostStatus);
-  }, [post.status]);
+    setFormat(post.format as ContentPostFormat);
+    setIdeaNotes(post.ideaNotes ?? "");
+    setHook(post.hook ?? "");
+    setBody(post.body ?? "");
+    setArticleBody(post.articleBody ?? "");
+    setScheduledAt(toLocalDatetimeValue(post.scheduledAt));
+    setLanguage(post.language ?? "auto");
+    setMediaItems(post.mediaJson?.items ?? []);
+  }, [
+    post.id,
+    post.updatedAt,
+    post.title,
+    post.status,
+    post.format,
+    post.ideaNotes,
+    post.hook,
+    post.body,
+    post.articleBody,
+    post.scheduledAt,
+    post.language,
+    post.mediaJson,
+  ]);
 
   const scrollToHandoff = useCallback(() => {
     document

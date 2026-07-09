@@ -8,6 +8,7 @@ import type { CompleteChatParams } from "@/lib/llm/types";
 export type { CompleteChatParams, LlmConfig, LlmProvider } from "@/lib/llm/types";
 export {
   getLlmConfig,
+  getLlmConfigForTier,
   getLlmConfigPublic,
   hasEnvCloudCredentials,
   hasEnvLocalFile,
