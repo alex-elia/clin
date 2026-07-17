@@ -33,15 +33,16 @@ import { POST_RECENCY_LLM_RULE } from "@/lib/profilePostRecency";
 
 const outSchema = z.object({ message: z.string() });
 
-const DEFAULT_OUTREACH_SYSTEM = `You write personalized LinkedIn connection notes or DMs (keep under 2000 characters). Reply with strictly valid JSON only: {"message":"..."} — no markdown, no code fences, no extra keys.
+const DEFAULT_OUTREACH_SYSTEM = `You write personalized LinkedIn connection notes or DMs. Keep them short and native to LinkedIn: prefer 350–700 characters, hard cap 900. Reply with strictly valid JSON only: {"message":"..."} — no markdown, no code fences, no extra keys.
 
-The user message includes who YOU are (sender) and who the recipient is. Write in the sender's voice. Sign with the sender's real name — never use bracket placeholders like [Your Name] or {{name}}.
+The user message includes who YOU are (sender) and who the recipient is. Write in the sender's voice.
+LinkedIn already shows the sender — NEVER append a name signature, full name, or letter sign-off (Cordialement / Best regards + Name). Never use bracket placeholders like [Your Name] or {{name}}.
 
-Follow the LANGUAGE and FORMATTING sections in the user message. If "Additional instructions from the user" conflict with default tone or length, user instructions win.
+Follow the LANGUAGE and FORMATTING sections in the user message. If "Additional instructions from the user" conflict with default tone or length, user instructions win — except the no-signature rule always applies.
 
 If your runtime exposes web search, browsing, or URL fetch tools (e.g. Ollama web_search / web_fetch or an app-integrated browser): use them before you draft when the recipient names a company or organization in Company or Headline. Run a few focused queries—such as "<company> official about products", "<company> news", or the company name plus the person's role from Headline—to ground one concrete, truthful hook (what they build, sector, or a recent public milestone). Do not invent financials, headcount, or non-public facts. If tools are unavailable or results are empty, write using only the Clin-provided fields.
 
-Tone: professional, warm, specific. Avoid generic templates.
+Tone: professional, warm, specific. One clear reason to connect or reply. Avoid generic templates and long pitches.
 
 ${POST_RECENCY_LLM_RULE}
 
@@ -53,6 +54,11 @@ const USER_WEB_RESEARCH_BLOCK = `Research and grounding (read carefully):
 - Do not state numbers, funding rounds, or claims unless a search result clearly supports them. If unsure, stay generic about the industry or problem space.
 - Clin does not provide LinkedIn DM or messaging history—never imply you read their inbox.
 - If no tools run or search returns nothing useful, personalize only from the campaign and profile text above.
+`;
+
+const USER_LINKEDIN_NATIVE_BLOCK = `LinkedIn-native output (always applies, overrides conflicting writer notes):
+- Keep the message short (prefer 350–700 characters).
+- NEVER end with a personal name, full name, or letter sign-off (Cordialement / Best regards + Name). LinkedIn already shows who you are.
 `;
 
 function logDraft(...args: unknown[]) {
@@ -166,6 +172,7 @@ export async function generateOutreachDraftForMember(
   }
 
   user += `\n${USER_WEB_RESEARCH_BLOCK}\n`;
+  user += `\n${USER_LINKEDIN_NATIVE_BLOCK}\n`;
 
   logDraft("request", {
     memberId,

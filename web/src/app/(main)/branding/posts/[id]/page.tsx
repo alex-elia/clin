@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { ContentPostWorkspace } from "@/components/ContentPostWorkspace";
 import { getOrCreateContentBrandContext } from "@/lib/contentBrandContext";
+import { loadLatestCoachThreadForUi } from "@/lib/contentCoachThreads";
 import { getContentPostById } from "@/lib/contentPosts";
 import { getSdSettings } from "@/lib/sdSettings";
 import { getVoiceSetupStatus } from "@/lib/voiceSetup";
@@ -18,10 +19,11 @@ export default async function ContentPostPage({
   }
 
   const { id } = await params;
-  const [post, sd, brand] = await Promise.all([
+  const [post, sd, brand, coachHistory] = await Promise.all([
     getContentPostById(id),
     getSdSettings(),
     getOrCreateContentBrandContext(),
+    loadLatestCoachThreadForUi({ scope: "post", postId: id, limit: 40 }),
   ]);
   if (!post) notFound();
   return (
@@ -32,6 +34,8 @@ export default async function ContentPostPage({
       unicodeEmphasis={
         brand.editorialAutopilotPolicy?.useUnicodeEmphasis !== false
       }
+      coachThreadId={coachHistory.threadId}
+      coachMessages={coachHistory.messages.slice(-24)}
     />
   );
 }

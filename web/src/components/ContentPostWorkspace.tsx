@@ -7,7 +7,7 @@ import { VoiceInputButton } from "@/components/VoiceInputButton";
 import { PostPreviewHandoff } from "@/components/PostPreviewHandoff";
 import { PostAutopilotPanel } from "@/components/post-autopilot/PostAutopilotPanel";
 import { appendTranscriptToText } from "@/lib/speechRecognition";
-import { PostWritingAssistant } from "@/components/PostWritingAssistant";
+import { PostWritingAssistant, type CoachChatMessage } from "@/components/PostWritingAssistant";
 import { TutorialHelpLayer } from "@/components/tutorial/TutorialHelpLayer";
 import {
   BRANDING_POST_TOUR_ID,
@@ -62,6 +62,8 @@ type ContentPostWorkspaceProps = {
   sdEnabled: boolean;
   brandContentLanguage: string | null;
   unicodeEmphasis?: boolean;
+  coachThreadId?: string | null;
+  coachMessages?: CoachChatMessage[];
 };
 
 function toLocalDatetimeValue(d: Date | null): string {
@@ -76,6 +78,8 @@ export function ContentPostWorkspace({
   sdEnabled,
   brandContentLanguage,
   unicodeEmphasis = true,
+  coachThreadId,
+  coachMessages,
 }: ContentPostWorkspaceProps) {
   const [title, setTitle] = useState(post.title);
   const [status, setStatus] = useState(post.status as ContentPostStatus);
@@ -282,6 +286,8 @@ export function ContentPostWorkspace({
           getCoachDraft={coachDraft}
           speechLanguage={language}
           onApplyPatch={applyPatch}
+          initialThreadId={coachThreadId}
+          initialMessages={coachMessages}
         />
 
         <form action={saveContentPostAction} className="space-y-6">

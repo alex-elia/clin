@@ -5,15 +5,17 @@ import { getDb } from "@/db";
 import { getDailyReminderSummary } from "@/lib/dailyReminder";
 import { getHomeDashboardData } from "@/lib/homeDashboard";
 import { getOrCreateContentBrandContext } from "@/lib/contentBrandContext";
+import { loadLatestCoachThreadForUi } from "@/lib/contentCoachThreads";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
   getDb();
-  const [dash, brand, dailyTasks] = await Promise.all([
+  const [dash, brand, dailyTasks, coachHistory] = await Promise.all([
     getHomeDashboardData(),
     getOrCreateContentBrandContext(),
     getDailyReminderSummary(),
+    loadLatestCoachThreadForUi({ scope: "home", limit: 40 }),
   ]);
 
   const pipelineActive =
@@ -175,7 +177,11 @@ export default async function HomePage() {
         )}
       </section>
 
-      <HomeCoachPanel brandLanguage={brand.contentLanguage} />
+      <HomeCoachPanel
+        brandLanguage={brand.contentLanguage}
+        initialThreadId={coachHistory.threadId}
+        initialMessages={coachHistory.messages.slice(-24)}
+      />
     </div>
   );
 }

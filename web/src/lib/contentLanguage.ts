@@ -214,8 +214,9 @@ export function buildOutreachFormattingInstruction(
   writerNotes?: string | null,
 ): string {
   const lines = [
-    "FORMATTING: Write 2–4 short paragraphs with a blank line between each (in JSON, put \\n\\n between paragraphs in the message string).",
-    "Do not output one dense block of text.",
+    "FORMATTING: Write 1–3 short paragraphs with a blank line between each (in JSON, put \\n\\n between paragraphs in the message string).",
+    "Keep it LinkedIn-native: scannable, not an email. Prefer under ~700 characters.",
+    "Do not output one dense block of text. Do not end with a name signature.",
   ];
   if (
     writerNotes &&

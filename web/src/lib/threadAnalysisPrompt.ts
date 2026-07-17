@@ -41,7 +41,7 @@ Respond with a single JSON object (no markdown):
   "sales_rationale": "2-4 sentences — STRATEGIC ONLY: what they want, ICP/fit, risk/opportunity, recommended posture. Do not repeat the draft here.",
   "recommended_action": "reply_now" | "reply_later" | "mark_done" | "no_reply_needed" | "follow_up_question" | "schedule_call",
   "action_rationale": "1-3 sentences — TACTICAL ONLY: why this action now, tied to thread_stage and campaign CTA",
-  "suggested_reply": "draft when strategy_verdict is reply_with_draft (under 1200 chars); null when no_reply",
+  "suggested_reply": "draft when strategy_verdict is reply_with_draft (prefer under 600 chars, hard cap 900); null when no_reply",
   "alternative_actions": ["optional short bullets when strategy_verdict is other"],
   "tone_notes": "optional brief note on tone, objections, or risks"
 }
@@ -64,8 +64,8 @@ strategy_verdict rules:
 Draft rules (suggested_reply):
 - Follow campaign writer_instructions for tone, must-mention, avoid, and preferred CTA when provided.
 - Align with owner goals/positioning and the sales coach playbook block.
-- Answer their last message first; one clear CTA; human and concise — no bracket placeholders.
-- Sign with sender name when known. Clin never sends — user copies manually.
+- Answer their last message first; one clear CTA; human and concise (prefer under 600 chars, hard cap 900) — no bracket placeholders.
+- LinkedIn already shows who is writing — NEVER append a name signature or letter sign-off. Clin never sends — user copies manually.
 
 Grounding:
 - Use only facts from the payload. Do not invent prior conversations or company facts.

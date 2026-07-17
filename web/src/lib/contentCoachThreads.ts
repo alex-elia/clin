@@ -1,4 +1,4 @@
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { contentAiMessages, contentAiThreads } from "@/db/schema";
 import type { CoachAction } from "@/lib/brandCoachTypes";
@@ -8,6 +8,11 @@ import {
 } from "@/lib/coachContextLimits";
 
 export type CoachThreadScope = "studio" | "post" | "home";
+
+export type CoachUiMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
 
 export async function getOrCreateThread(options: {
   threadId?: string;
@@ -83,12 +88,57 @@ export async function appendThreadMessage(
 }
 
 export async function getLatestStudioThread(): Promise<string | null> {
+  return getLatestThreadId({ scope: "studio" });
+}
+
+export async function getLatestHomeThread(): Promise<string | null> {
+  return getLatestThreadId({ scope: "home" });
+}
+
+export async function getLatestPostThread(
+  postId: string,
+): Promise<string | null> {
+  return getLatestThreadId({ scope: "post", postId });
+}
+
+export async function getLatestThreadId(options: {
+  scope: CoachThreadScope;
+  postId?: string | null;
+}): Promise<string | null> {
   const db = getDb();
+  const where =
+    options.scope === "post" && options.postId
+      ? and(
+          eq(contentAiThreads.scope, "post"),
+          eq(contentAiThreads.postId, options.postId),
+        )
+      : eq(contentAiThreads.scope, options.scope);
+
   const rows = await db
-    .select()
+    .select({ id: contentAiThreads.id })
     .from(contentAiThreads)
-    .where(eq(contentAiThreads.scope, "studio"))
+    .where(where)
     .orderBy(desc(contentAiThreads.updatedAt))
     .limit(1);
   return rows[0]?.id ?? null;
+}
+
+/** Load latest coach thread + messages for UI hydrate (refresh / remount). */
+export async function loadLatestCoachThreadForUi(options: {
+  scope: CoachThreadScope;
+  postId?: string | null;
+  limit?: number;
+}): Promise<{ threadId: string | null; messages: CoachUiMessage[] }> {
+  const threadId = await getLatestThreadId(options);
+  if (!threadId) {
+    return { threadId: null, messages: [] };
+  }
+  const rows = await listThreadMessages(threadId, options.limit ?? 40);
+  const messages: CoachUiMessage[] = rows
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+    }));
+  return { threadId, messages };
 }

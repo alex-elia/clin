@@ -24,6 +24,7 @@ import {
   inferSalesMotion,
 } from "@/lib/salesCoachPlaybook";
 import {
+  applySenderNameToDraft,
   buildSenderIdentityPromptBlock,
   getSenderIdentity,
 } from "@/lib/senderIdentity";
@@ -341,18 +342,29 @@ export async function runInboxThreadAnalysis(input: {
     );
   }
 
+  const analysis = { ...out.data };
+  if (analysis.suggested_reply?.trim()) {
+    analysis.suggested_reply = applySenderNameToDraft(
+      analysis.suggested_reply.trim(),
+      sender,
+    );
+    if (!analysis.suggested_reply) {
+      analysis.suggested_reply = null;
+    }
+  }
+
   if (input.persist !== false) {
     await saveThreadAnalysis({
       contactId: input.contactId,
       threadKey: resolvedThreadKey,
-      analysis: out.data,
+      analysis,
       messageCount,
       model: settings.model,
     });
   }
 
   return {
-    analysis: out.data,
+    analysis,
     threadKey: resolvedThreadKey,
     messageCount,
     replyState,

@@ -58,7 +58,10 @@ export function CoachDebugPanel({ debug }: CoachDebugPanelProps) {
         </div>
       </dl>
       <p className="mt-2 text-[10px] text-amber-800 dark:text-amber-200/80">
-        Full history: Settings → AI call logs
+        Full history:{" "}
+        <a href="/settings/llm-logs" className="underline underline-offset-2">
+          Settings → AI call logs
+        </a>
       </p>
     </details>
   );

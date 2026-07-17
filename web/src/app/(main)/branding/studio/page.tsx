@@ -5,6 +5,7 @@ import { TrendsInboxPanel } from "@/components/TrendsInboxPanel";
 import { listContentPosts, listRecentPublished } from "@/lib/contentPosts";
 import { CONTENT_STATUS_LABELS, type ContentPostStatus } from "@/lib/contentPostsShared";
 import { getOrCreateContentBrandContext } from "@/lib/contentBrandContext";
+import { loadLatestCoachThreadForUi } from "@/lib/contentCoachThreads";
 import { getVoiceSetupStatus } from "@/lib/voiceSetup";
 
 export const dynamic = "force-dynamic";
@@ -15,10 +16,11 @@ export default async function BrandStudioPage() {
     redirect("/branding/setup");
   }
 
-  const [posts, published, brand] = await Promise.all([
+  const [posts, published, brand, coachHistory] = await Promise.all([
     listContentPosts({ limit: 30 }),
     listRecentPublished(5),
     getOrCreateContentBrandContext(),
+    loadLatestCoachThreadForUi({ scope: "studio", limit: 40 }),
   ]);
 
   const upcoming = posts
@@ -78,7 +80,11 @@ export default async function BrandStudioPage() {
 
       <TrendsInboxPanel />
 
-      <PlanningChatPanel brandLanguage={brand.contentLanguage} />
+      <PlanningChatPanel
+        brandLanguage={brand.contentLanguage}
+        initialThreadId={coachHistory.threadId}
+        initialMessages={coachHistory.messages.slice(-24)}
+      />
     </div>
   );
 }

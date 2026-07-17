@@ -58,7 +58,8 @@ export default async function MePage() {
         </p>
         <ol className="list-decimal space-y-1 pl-5 text-[var(--clin-muted)]">
           <li>
-            Capture your LinkedIn profile in voice setup so drafts sign with your real name.
+            Capture your LinkedIn profile in voice setup so drafts use your real
+            company and headline context (never as a pasted name signature).
           </li>
           <li>
             Fill <strong className="text-[var(--clin-text)]">positioning</strong> with product, ICP,
@@ -106,7 +107,8 @@ export default async function MePage() {
       <form action={saveGlobalWriterForm} className="clin-card space-y-3 p-5">
         <h2 className="clin-section-title">Outreach writer (DMs)</h2>
         <p className="text-xs text-[var(--clin-muted)]">
-          Used for campaign outreach drafts, not LinkedIn posts.
+          Used for campaign outreach drafts, not LinkedIn posts. Keep DMs short;
+          do not ask the model to sign with your name — LinkedIn already shows it.
         </p>
         <textarea
           name="globalWriterInstructions"

@@ -7,23 +7,42 @@ import { applyLinkedInUnicodeEmphasis } from "@/lib/linkedinUnicodeFormat";
 
 /** Shared LLM instruction — import in coach / copy assistant prompts. */
 export const LINKEDIN_POST_COPY_RULES = `LinkedIn hook and body: plain text (no ## headings or markdown links).
+Write for the LinkedIn feed: short, scannable paragraphs — prefer ~800–1300 characters for the body (format=post) unless the user explicitly asks longer. One idea per post; cut filler and corporate fluff.
 Use light emphasis markers that Clin converts when copying to LinkedIn: **key phrase** for bold, *phrase* for italic (1–3 highlights per post, not whole paragraphs).
 Never use section labels such as "CTA:", "**CTA:**", "Call to action:", "Hashtags:", or "Accroche:".
 End with a natural closing line (question, invite to comment, link, DM) woven into the prose — not labeled as a CTA.
-Hashtags only when appropriate, inline at the end without a "Hashtags" header.
+NEVER end with a personal name signature, email, phone, or letter sign-off (e.g. "Alexandre GON", "— Firstname Lastname", "Cordialement," / "Best regards," + name). LinkedIn already shows the author.
+Hashtags only when appropriate, inline at the end without a "Hashtags" header (max ~3–5).
 When a mention roster is provided, tag people/companies using the exact @Name spelling from the roster (LinkedIn will link on paste).`;
 
 export const LINKEDIN_MENTION_COACH_HINT = `Mention roster (use exact spellings for @tags when relevant, max 1–3 per post):
 `;
 
+/** Strip labeled sections and letter-style name sign-offs before paste. */
 export function stripLinkedInSectionLabels(text: string): string {
-  return text
-    .replace(
-      /^\s*(?:\*\*)?\s*(?:CTA|Call[- ]to[- ]action|Hashtags?|Accroche|Chute)\s*(?:\*\*)?\s*:?\s*$/gim,
-      "",
-    )
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  return stripLinkedInLetterSignOff(
+    text
+      .replace(
+        /^\s*(?:\*\*)?\s*(?:CTA|Call[- ]to[- ]action|Hashtags?|Accroche|Chute)\s*(?:\*\*)?\s*:?\s*$/gim,
+        "",
+      )
+      .replace(/\n{3,}/g, "\n\n")
+      .trim(),
+  );
+}
+
+const LETTER_SIGNOFF_LINE_RE =
+  /(?:\n|^)\s*(?:Cordialement|Bien à vous|Bien cordialement|Meilleures salutations|Best regards|Kind regards|Warm regards|Regards|Sincerely|Cheers)\s*[,.]?\s*(?:\n+\s*(?:—|–|-)?\s*[A-ZÀ-Ÿ][^\n]{1,60})?\s*$/iu;
+
+/** Remove trailing "Cordialement, / Best regards," + Name blocks from post copy. */
+export function stripLinkedInLetterSignOff(text: string): string {
+  let out = text.replace(/\r\n/g, "\n").trimEnd();
+  for (let i = 0; i < 3; i++) {
+    const next = out.replace(LETTER_SIGNOFF_LINE_RE, "").trimEnd();
+    if (next === out) break;
+    out = next;
+  }
+  return out.trim();
 }
 
 export type LinkedInPostCopyInput = {

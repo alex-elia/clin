@@ -46,7 +46,11 @@ export async function POST(req: Request) {
   }
   if (!result.ok) {
     return NextResponse.json(
-      { error: result.error, debug: result.debug },
+      {
+        error: result.error,
+        debug: result.debug,
+        threadId: result.threadId,
+      },
       { status: 502 },
     );
   }

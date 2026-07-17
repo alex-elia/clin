@@ -47,6 +47,15 @@ const menus: NavMenu[] = [
       { href: "/analytics", label: "Analytics" },
     ],
   },
+  {
+    id: "settings",
+    label: "Settings",
+    hub: { href: "/settings", label: "Overview" },
+    items: [
+      { href: "/settings/llm-logs", label: "AI call logs" },
+      { href: "/settings/finops", label: "FinOps" },
+    ],
+  },
 ];
 
 function isActive(pathname: string, href: string): boolean {
@@ -215,18 +224,6 @@ export function Nav() {
                   onClose={close}
                 />
               ))}
-
-              <li>
-                <Link
-                  href="/settings"
-                  className={`rounded-md px-2.5 py-1.5 ${topLinkClass("/settings")}`}
-                  aria-current={
-                    isActive(pathname, "/settings") ? "page" : undefined
-                  }
-                >
-                  Settings
-                </Link>
-              </li>
 
               <li className="ml-1 border-l border-[var(--clin-border)] pl-2">
                 <Link
