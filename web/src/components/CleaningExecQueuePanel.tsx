@@ -47,6 +47,7 @@ export function CleaningExecQueuePanel({
       suggestedComment?: string;
       skip?: boolean;
       regenerateComment?: boolean;
+      markDisconnected?: boolean;
     },
   ) {
     setBusyId(execId);
@@ -102,6 +103,9 @@ export function CleaningExecQueuePanel({
         items={removal}
         busyId={busyId}
         onSkip={(execId) => patchItem(execId, { skip: true })}
+        onConfirmDisconnected={(execId) =>
+          patchItem(execId, { markDisconnected: true })
+        }
       />
     </section>
   );
@@ -252,16 +256,22 @@ function RemovalQueueSection({
   items,
   busyId,
   onSkip,
+  onConfirmDisconnected,
 }: {
   items: CleaningExecListItem[];
   busyId: string | null;
   onSkip: (execId: string) => void;
+  onConfirmDisconnected: (execId: string) => void;
 }) {
   return (
     <div className="clin-card space-y-4 p-5">
       <h3 className="font-medium text-[var(--clin-text)]">
         Removal queue ({items.length})
       </h3>
+      <p className="text-xs text-[var(--clin-muted)]">
+        After disconnecting on LinkedIn, confirm here or in the extension
+        Cleaning tab.
+      </p>
 
       {items.length === 0 ? (
         <p className="text-sm text-[var(--clin-muted)]">
@@ -301,14 +311,24 @@ function RemovalQueueSection({
                     </a>
                   ) : null}
                 </div>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => onSkip(item.execId)}
-                  className="clin-btn-secondary mt-3 text-xs px-2 py-1 disabled:opacity-50"
-                >
-                  Remove from queue
-                </button>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onConfirmDisconnected(item.execId)}
+                    className="clin-btn-primary text-xs px-2 py-1 disabled:opacity-50"
+                  >
+                    I disconnected on LinkedIn
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onSkip(item.execId)}
+                    className="clin-btn-secondary text-xs px-2 py-1 disabled:opacity-50"
+                  >
+                    Remove from queue
+                  </button>
+                </div>
               </li>
             );
           })}

@@ -9,6 +9,7 @@ export type { CompleteChatParams, LlmConfig, LlmProvider } from "@/lib/llm/types
 export {
   getLlmConfig,
   getLlmConfigForTier,
+  getLlmConfigForVisual,
   getLlmConfigPublic,
   hasEnvCloudCredentials,
   hasEnvLocalFile,

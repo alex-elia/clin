@@ -9,6 +9,7 @@ const bodySchema = z.object({
   suggestedComment: z.string().optional(),
   skip: z.boolean().optional(),
   regenerateComment: z.boolean().optional(),
+  markDisconnected: z.boolean().optional(),
 });
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -30,11 +31,13 @@ export async function PATCH(req: Request, context: RouteContext) {
     );
   }
 
-  const { suggestedComment, skip, regenerateComment } = parsed.data;
+  const { suggestedComment, skip, regenerateComment, markDisconnected } =
+    parsed.data;
   if (
     !skip &&
     suggestedComment === undefined &&
-    !regenerateComment
+    !regenerateComment &&
+    !markDisconnected
   ) {
     return NextResponse.json({ error: "No changes requested." }, { status: 400 });
   }
@@ -44,8 +47,14 @@ export async function PATCH(req: Request, context: RouteContext) {
       suggestedComment,
       skip,
       regenerateComment,
+      markDisconnected,
     });
-    return NextResponse.json({ ok: true, item, skipped: skip === true });
+    return NextResponse.json({
+      ok: true,
+      item,
+      skipped: skip === true,
+      disconnected: markDisconnected === true,
+    });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : String(e) },

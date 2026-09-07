@@ -2,7 +2,7 @@
  * Start Clin dev with a fixed port, singleton guard, and PID lock file.
  *
  *   npm run dev
- *   CLIN_DEV_PORT=3001 npm run dev
+ *   CLIN_DEV_PORT=3200 npm run dev
  */
 import { spawn } from "node:child_process";
 import path from "node:path";

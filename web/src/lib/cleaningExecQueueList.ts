@@ -2,6 +2,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { cleaningExecQueue, contacts } from "@/db/schema";
 import { generateEngageCommentForContact } from "@/lib/cleaningEngageComment";
+import { acknowledgeRemovalExec } from "@/lib/cleaningRemovalAck";
 import {
   completeCleaningExec,
   type CleaningExecKind,
@@ -158,6 +159,7 @@ export async function updateCleaningExecItem(
     suggestedComment?: string;
     skip?: boolean;
     regenerateComment?: boolean;
+    markDisconnected?: boolean;
   },
 ): Promise<CleaningExecListItem | null> {
   const db = getDb();
@@ -166,6 +168,14 @@ export async function updateCleaningExecItem(
   });
   if (!row || row.status !== "pending") {
     throw new Error("Queue item not found or already completed.");
+  }
+
+  if (patch.markDisconnected) {
+    if (row.kind !== "removal") {
+      throw new Error("Only removal items can be marked disconnected.");
+    }
+    await acknowledgeRemovalExec(execId, "disconnected");
+    return null;
   }
 
   if (patch.skip) {

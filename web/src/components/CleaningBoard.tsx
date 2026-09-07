@@ -92,7 +92,8 @@ export function CleaningBoard({ data }: Props) {
       | "dismiss"
       | "defer"
       | "enqueue_review"
-      | "enqueue_engage",
+      | "enqueue_engage"
+      | "confirm_disconnected",
     bucket?: CleaningBucket,
   ) {
     const ids = [...selected];
@@ -134,6 +135,11 @@ export function CleaningBoard({ data }: Props) {
         setSuccess(
           "Queued for engage — edit comments in Exec queues below, then use extension Cleaning tab.",
         );
+      } else if (action === "confirm_disconnected") {
+        const ok = results.filter((r) => r.ok).length;
+        setSuccess(
+          `Marked ${ok} contact(s) as disconnected on LinkedIn.`,
+        );
       }
       setSelected(new Set());
       router.refresh();
@@ -152,7 +158,8 @@ export function CleaningBoard({ data }: Props) {
       | "dismiss"
       | "defer"
       | "enqueue_review"
-      | "enqueue_engage",
+      | "enqueue_engage"
+      | "confirm_disconnected",
     bucket?: CleaningBucket,
   ) {
     setBusy(true);
@@ -186,6 +193,8 @@ export function CleaningBoard({ data }: Props) {
         setSuccess(
           "Queued for engage — see Exec queues below to edit comments.",
         );
+      } else if (result?.ok && action === "confirm_disconnected") {
+        setSuccess("Marked as disconnected on LinkedIn.");
       } else if (!result?.ok && result?.error) {
         setError(result.error);
         return;
@@ -488,7 +497,8 @@ function ContactBucketCard({
       | "dismiss"
       | "defer"
       | "enqueue_review"
-      | "enqueue_engage",
+      | "enqueue_engage"
+      | "confirm_disconnected",
     bucket?: CleaningBucket,
   ) => void;
 }) {
@@ -635,7 +645,8 @@ function ContactBucketCard({
             ) : null}
             {card.bucket === "review_remove" ? (
               <span className="text-xs text-[var(--clin-muted)]">
-                Accept queues removal in extension
+                Accept queues removal, or confirm after you disconnect on
+                LinkedIn
               </span>
             ) : null}
           </div>
@@ -648,6 +659,16 @@ function ContactBucketCard({
             >
               Accept
             </button>
+            {card.bucket === "review_remove" ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onAction("confirm_disconnected")}
+                className="clin-btn-secondary text-xs px-2 py-1 disabled:opacity-50"
+              >
+                I disconnected on LinkedIn
+              </button>
+            ) : null}
             {activeBucket === "engage_comment" ? (
               <button
                 type="button"

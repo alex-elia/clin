@@ -9,7 +9,7 @@ import {
   resolveOvhDefaultModel,
   resolveOvhReasoningModel,
 } from "@/lib/llm/ovhEnv";
-import { OVH_AI_DEFAULT_REASONING_MODEL } from "@/lib/llm/ovhDefaults";
+import { OVH_AI_DEFAULT_REASONING_MODEL, OVH_AI_DEFAULT_VISUAL_MODEL } from "@/lib/llm/ovhDefaults";
 import type {
   LlmModelTier,
 } from "@/lib/llm/llmModelRoute";
@@ -30,6 +30,7 @@ export const LLM_KEYS = {
   cloudBaseUrl: "llm.cloud.base_url",
   cloudModel: "llm.cloud.model",
   cloudReasoningModel: "llm.cloud.reasoning_model",
+  cloudVisualModel: "llm.cloud.visual_model",
   apiKey: "llm.api_key",
 } as const;
 
@@ -93,6 +94,12 @@ const ENV_CLOUD_MODEL =
 const ENV_CLOUD_REASONING_MODEL =
   resolveOvhReasoningModel(OVH_ENV) ?? OVH_AI_DEFAULT_REASONING_MODEL;
 
+const ENV_CLOUD_VISUAL_MODEL =
+  typeof process.env.OVH_AI_VISUAL_MODEL === "string" &&
+  process.env.OVH_AI_VISUAL_MODEL.trim()
+    ? process.env.OVH_AI_VISUAL_MODEL.trim()
+    : OVH_AI_DEFAULT_VISUAL_MODEL;
+
 const ENV_API_KEY =
   typeof process.env.LLM_API_KEY === "string" && process.env.LLM_API_KEY.trim()
     ? process.env.LLM_API_KEY.trim()
@@ -107,6 +114,8 @@ export type LlmProviderProfile = {
   model: string;
   /** Cloud only — used when autoswitch picks reasoning tier. */
   reasoningModel?: string;
+  /** Cloud only — visual LLM for image prompt drafting (e.g. Qwen3.8-27B). */
+  visualModel?: string;
 };
 
 type ResolvedProfiles = {
@@ -152,6 +161,8 @@ function resolveProfilesFromMap(map: Map<string, string>): ResolvedProfiles {
   const cloudReasoningModel =
     map.get(LLM_KEYS.cloudReasoningModel)?.trim() ||
     ENV_CLOUD_REASONING_MODEL;
+  const cloudVisualModel =
+    map.get(LLM_KEYS.cloudVisualModel)?.trim() || ENV_CLOUD_VISUAL_MODEL;
 
   const apiKey = map.get(LLM_KEYS.apiKey)?.trim() || undefined;
 
@@ -165,6 +176,7 @@ function resolveProfilesFromMap(map: Map<string, string>): ResolvedProfiles {
       baseUrl: cloudBase.replace(/\/$/, ""),
       model: cloudModel,
       reasoningModel: cloudReasoningModel,
+      visualModel: cloudVisualModel,
     },
     apiKey: apiKey || undefined,
   };
@@ -277,6 +289,9 @@ export async function migrateLegacyLlmSettingsIfNeeded(): Promise<void> {
       ENV_CLOUD_REASONING_MODEL,
     );
   }
+  if (!map.get(LLM_KEYS.cloudVisualModel)?.trim()) {
+    await upsertSetting(LLM_KEYS.cloudVisualModel, ENV_CLOUD_VISUAL_MODEL);
+  }
   if (!map.get(LLM_KEYS.provider)?.trim()) {
     await upsertSetting(LLM_KEYS.provider, provider);
   }
@@ -296,6 +311,9 @@ export async function seedLlmSettingsFromEnvOnce(): Promise<void> {
       LLM_KEYS.cloudReasoningModel,
       ENV_CLOUD_REASONING_MODEL,
     );
+  }
+  if (!mapBeforeEnv.get(LLM_KEYS.cloudVisualModel)?.trim()) {
+    await upsertSetting(LLM_KEYS.cloudVisualModel, ENV_CLOUD_VISUAL_MODEL);
   }
 
   if (!hasEnvLocalFile()) return;
@@ -329,6 +347,7 @@ export async function seedLlmSettingsFromEnvOnce(): Promise<void> {
     LLM_KEYS.cloudReasoningModel,
     ENV_CLOUD_REASONING_MODEL,
   );
+  await seedIfMissing(LLM_KEYS.cloudVisualModel, ENV_CLOUD_VISUAL_MODEL);
   if (ENV_API_KEY && !map.get(LLM_KEYS.apiKey)?.trim()) {
     await upsertSetting(LLM_KEYS.apiKey, ENV_API_KEY);
   }
@@ -374,6 +393,21 @@ export async function getLlmConfigForTier(
   };
 }
 
+/** Visual LLM for post image prompt drafting (cloud only). Falls back to orchestrator on Ollama. */
+export async function getLlmConfigForVisual(): Promise<LlmConfig> {
+  await seedLlmSettingsFromEnvOnce();
+  const profiles = await loadProfilesFromDb();
+  const base = activeConfig(profiles);
+  if (base.provider !== "openai_compatible") {
+    return base;
+  }
+  const visual = profiles.cloud.visualModel?.trim();
+  if (visual && visual !== base.model) {
+    return { ...base, model: visual };
+  }
+  return base;
+}
+
 export async function getLlmConfigPublic(): Promise<LlmConfigPublic> {
   await seedLlmSettingsFromEnvOnce();
   const map = await loadSettingsMap();
@@ -394,6 +428,7 @@ export type LlmConfigPatch = Partial<{
   cloudBaseUrl: string;
   cloudModel: string;
   cloudReasoningModel: string;
+  cloudVisualModel: string;
   apiKey: string | null;
 }>;
 
@@ -427,6 +462,10 @@ export async function updateLlmConfig(
     patch.cloudReasoningModel.trim()
       ? patch.cloudReasoningModel.trim()
       : current.cloud.reasoningModel ?? ENV_CLOUD_REASONING_MODEL;
+  const cloudVisualModel =
+    typeof patch.cloudVisualModel === "string" && patch.cloudVisualModel.trim()
+      ? patch.cloudVisualModel.trim()
+      : current.cloud.visualModel ?? ENV_CLOUD_VISUAL_MODEL;
 
   let apiKey = current.apiKey;
   if (patch.apiKey === null) {
@@ -441,6 +480,7 @@ export async function updateLlmConfig(
   await upsertSetting(LLM_KEYS.cloudBaseUrl, cloudBaseUrl);
   await upsertSetting(LLM_KEYS.cloudModel, cloudModel);
   await upsertSetting(LLM_KEYS.cloudReasoningModel, cloudReasoningModel);
+  await upsertSetting(LLM_KEYS.cloudVisualModel, cloudVisualModel);
 
   if (apiKey) {
     await upsertSetting(LLM_KEYS.apiKey, apiKey);

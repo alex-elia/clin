@@ -1,8 +1,9 @@
 import { desc } from "drizzle-orm";
-import { getDb, getSqlite } from "@/db";
+import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { loadLatestProfileCapturesByContactId } from "@/lib/campaignMemberReadiness";
 import { profileDepthForContact } from "@/lib/enrichment";
+import { loadMessagingCaptureFlags } from "@/lib/messagingCaptureFlags";
 import type {
   ContactReadiness,
   ExtractionReadiness,
@@ -76,25 +77,7 @@ export function assessContactReadiness(
   };
 }
 
-export function loadMessagingCaptureFlags(contactIds: string[]): Set<string> {
-  const set = new Set<string>();
-  if (contactIds.length === 0) return set;
-  const placeholders = contactIds.map(() => "?").join(",");
-  try {
-    const rows = getSqlite()
-      .prepare(
-        `SELECT DISTINCT contact_id AS id
-         FROM capture_sessions
-         WHERE page_type = 'messaging'
-           AND contact_id IN (${placeholders})`,
-      )
-      .all(...contactIds) as { id: string }[];
-    for (const r of rows) set.add(r.id);
-  } catch {
-    /* table missing in ancient DB */
-  }
-  return set;
-}
+export { loadMessagingCaptureFlags } from "@/lib/messagingCaptureFlags";
 
 /** Batch readiness for cleaning board (recent contacts). */
 export async function assessRecentContactsReadiness(

@@ -7,7 +7,7 @@ import {
 export function SiteFooter() {
   return (
     <footer className="mt-auto border-t border-[var(--clin-border)] bg-[var(--clin-surface-muted)]">
-      <div className="mx-auto max-w-6xl px-4 py-6 text-sm text-[var(--clin-muted)]">
+      <div className="mx-auto max-w-[90rem] px-4 py-6 text-sm text-[var(--clin-muted)]">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p>
             Clin — local-first LinkedIn assistant. Open source; you run it on

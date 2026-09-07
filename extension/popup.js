@@ -1,4 +1,4 @@
-const DEFAULT_BASE = "http://127.0.0.1:3000";
+const DEFAULT_BASE = "http://127.0.0.1:3100";
 const LIVE_STATUS_KEY = "clinExtensionLiveStatus";
 const LAST_PACE_KEY = "clin_last_pace_message";
 

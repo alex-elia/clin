@@ -31,15 +31,17 @@ npm install
 npm run dev
 ```
 
-`npm run dev` binds **port 3000** (or `CLIN_DEV_PORT`), refuses a second Clin instance, and writes a dev lock under `web/data/`. Stop a stuck server with `npm run dev:stop` from `web/`.
+`npm run dev` binds **port 3100** (or `CLIN_DEV_PORT`), refuses a second Clin instance, and writes a dev lock under `web/data/`. Stop a stuck server with `npm run dev:stop` from `web/`.
 
-Open [http://127.0.0.1:3000](http://127.0.0.1:3000). Confirm runtime: [http://127.0.0.1:3000/api/health](http://127.0.0.1:3000/api/health) (`db: true`, `dbPath`, `apiRevision`). On first API use, SQLite is created at `web/data/clin.db` (migrations from `web/drizzle/`).
+For daily use (not coding), prefer `npm run build` once, then `npm run start`. That also binds **3100** (do not pass `-p`: npm treats it as `--prefix`).
+
+Open [http://127.0.0.1:3100](http://127.0.0.1:3100). Confirm runtime: [http://127.0.0.1:3100/api/health](http://127.0.0.1:3100/api/health) (`db: true`, `dbPath`, `apiRevision`). On first API use, SQLite is created at `web/data/clin.db` (migrations from `web/drizzle/`).
 
 ### Chrome extension
 
 1. Keep the web app running (`npm run dev`).
 2. Chrome → **Extensions** → **Developer mode** → **Load unpacked** → select the [`extension/`](./extension/) folder.
-3. Set **Clin API base** to `http://127.0.0.1:3000` if needed.
+3. Set **Clin API base** to `http://127.0.0.1:3100` if needed.
 4. Open LinkedIn, use the Clin popup (capture, campaigns, optional runners).
 
 Details: [`extension/README.md`](./extension/README.md).
@@ -52,13 +54,13 @@ Install [Ollama](https://ollama.com/), pull a model (e.g. `qwen2.5:8b`), and poi
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Start dashboard + API (singleton on port 3000) |
-| `npm run dev:stop` | Stop port 3000 / orphaned Clin dev (from `web/`) |
+| `npm run dev` | Start dashboard + API (singleton on port 3100) |
+| `npm run dev:stop` | Stop port 3100 / orphaned Clin dev (from `web/`) |
 | `npm run dev:clean` | Clear `.next` cache then start dev (from `web/`) |
 | `npm run lint` | ESLint (`web/`) |
 | `npm run typecheck` | TypeScript check (`web/`) |
 | `npm run check` | Typecheck + lint (same as pre-commit quality gate) |
-| `npm run build` / `npm run start` | Production build / serve |
+| `npm run build` / `npm run start` | Production build / serve (port 3100, same as `npm run dev`) |
 | `npm run build:desktop` | Build standalone runtime for Electron packaging |
 | `npm run dist:desktop:win` | Build Windows portable + zip desktop artifacts |
 | `npm run dist:desktop:mac` | Build macOS zip desktop artifact |

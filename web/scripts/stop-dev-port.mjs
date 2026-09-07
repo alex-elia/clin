@@ -1,5 +1,5 @@
 /**
- * Stop Clin dev: lock PID, default port, and any Clin on 3000..3010.
+ * Stop Clin dev: lock PID, default port (3100), and any Clin on 3000..3010.
  *
  *   npm run dev:stop
  */
@@ -55,7 +55,9 @@ for (const { port: p, pids, dbPath } of clinListeners) {
 if (killed.size === 0) {
   const fallback = pidsOnPort(port);
   if (fallback.length === 0) {
-    console.log(`[clin] No Clin listener on ports 3000–3010 (or port ${port}).`);
+    console.log(
+      `[clin] No Clin listener on ports 3000–3010 (or port ${port}).`,
+    );
   } else {
     for (const pid of fallback) {
       if (!killed.has(pid)) killPid(pid, `port ${port}`);

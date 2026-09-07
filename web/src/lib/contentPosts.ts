@@ -1,4 +1,18 @@
-import { and, asc, count, desc, eq, gte, inArray, isNotNull, isNull, lte, ne } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
 import { getDb } from "@/db";
 import { contentPosts, type ContentMediaJson } from "@/db/schema";
 import type {
@@ -45,11 +59,18 @@ export async function getContentPostById(
   return rows[0] ?? null;
 }
 
-export async function listContentPosts(options?: {
+export type ListContentPostsOptions = {
   statuses?: ContentPostStatus[];
+  formats?: ContentPostFormat[];
+  search?: string;
+  scheduled?: "any" | "scheduled" | "unscheduled";
   excludeArchived?: boolean;
   limit?: number;
-}): Promise<ContentPostRow[]> {
+};
+
+export async function listContentPosts(
+  options?: ListContentPostsOptions,
+): Promise<ContentPostRow[]> {
   const db = getDb();
   const conditions = [];
   if (options?.excludeArchived !== false) {
@@ -57,6 +78,25 @@ export async function listContentPosts(options?: {
   }
   if (options?.statuses?.length) {
     conditions.push(inArray(contentPosts.status, options.statuses));
+  }
+  if (options?.formats?.length) {
+    conditions.push(inArray(contentPosts.format, options.formats));
+  }
+  if (options?.scheduled === "scheduled") {
+    conditions.push(isNotNull(contentPosts.scheduledAt));
+  } else if (options?.scheduled === "unscheduled") {
+    conditions.push(isNull(contentPosts.scheduledAt));
+  }
+  const search = options?.search?.trim();
+  if (search) {
+    const term = `%${search.toLowerCase()}%`;
+    conditions.push(
+      or(
+        sql`lower(${contentPosts.title}) like ${term}`,
+        sql`lower(coalesce(${contentPosts.hook}, '')) like ${term}`,
+        sql`lower(coalesce(${contentPosts.ideaNotes}, '')) like ${term}`,
+      )!,
+    );
   }
   let q = db.select().from(contentPosts);
   if (conditions.length) {

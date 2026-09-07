@@ -2,15 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { cleaningExecQueue, contacts } from "@/db/schema";
-import { completeCleaningExec } from "@/lib/cleaningExecQueue";
-import {
-  logCleaningExecAction,
-  rollActionGapAfterSuccess,
-  getCleaningExecSettings,
-} from "@/lib/cleaningExecSettings";
-import { tryUpdateCleaningDismissedAt } from "@/lib/cleaningSqlExtras";
-import { setContactSegment } from "@/lib/autopilotActions";
+import { cleaningExecQueue } from "@/db/schema";
+import { acknowledgeRemovalExec } from "@/lib/cleaningRemovalAck";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,26 +40,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  await completeCleaningExec({ id: execId, outcome, error: error ?? null });
-
-  if (outcome === "disconnected") {
-    await setContactSegment(row.contactId, "ghost");
-    tryUpdateCleaningDismissedAt(row.contactId, true);
-    const settings = await getCleaningExecSettings();
-    await rollActionGapAfterSuccess(settings);
+  try {
+    await acknowledgeRemovalExec(execId, outcome, error ?? null);
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : String(e) },
+      { status: 400 },
+    );
   }
-
-  await logCleaningExecAction({
-    contactId: row.contactId,
-    kind: "removal",
-    outcome,
-    error: error ?? null,
-  });
-
-  await db
-    .update(contacts)
-    .set({ lastUpdatedAt: new Date() })
-    .where(eq(contacts.id, row.contactId));
 
   return NextResponse.json({ ok: true });
 }

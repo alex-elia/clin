@@ -15,6 +15,8 @@ const bodySchema = z.object({
     "defer",
     "enqueue_review",
     "enqueue_engage",
+    "approve_removal",
+    "confirm_disconnected",
   ]),
   bucket: z.enum(CLEANING_BUCKETS).optional(),
 });

@@ -1,26 +1,33 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { updateContentPostStatusAction } from "@/app/actions";
+import { ContentPlanBoard } from "@/components/ContentPlanBoard";
+import { ContentPlanFiltersBar } from "@/components/ContentPlanFiltersBar";
+import {
+  ContentPlanPipeline,
+} from "@/components/ContentPlanPipeline";
 import {
   countScheduledPosts,
   listContentPosts,
   listScheduledPostsInCalendarMonth,
   listUnscheduledBacklog,
   postsByLocalDay,
+  type ContentPostRow,
 } from "@/lib/contentPosts";
 import {
-  BOARD_COLUMNS,
+  buildContentPlanHref,
+  parseContentPlanFilters,
+  type ContentPlanPostCard,
+  type ContentPlanSearchParams,
+} from "@/lib/contentPlanFilters";
+import {
   CONTENT_FORMAT_LABELS,
   CONTENT_STATUS_LABELS,
+  type ContentPostFormat,
   type ContentPostStatus,
 } from "@/lib/contentPostsShared";
 import { getVoiceSetupStatus } from "@/lib/voiceSetup";
 
 export const dynamic = "force-dynamic";
-
-function monthHref(year: number, month: number, view: string) {
-  return `/branding/calendar?y=${year}&m=${month}&view=${view}`;
-}
 
 function parseCalendarYear(raw: string | undefined, fallback: number): number {
   if (!raw) return fallback;
@@ -38,10 +45,37 @@ function parseCalendarMonth(raw: string | undefined, fallback: number): number {
   return fallback;
 }
 
+function toPostCards(posts: ContentPostRow[]): ContentPlanPostCard[] {
+  return posts.map((p) => ({
+    id: p.id,
+    title: p.title,
+    status: p.status as ContentPostStatus,
+    format: p.format as ContentPostFormat,
+    scheduledAt: p.scheduledAt?.toISOString() ?? null,
+  }));
+}
+
+function listOptionsFromFilters(
+  filters: ReturnType<typeof parseContentPlanFilters>,
+) {
+  return {
+    statuses: filters.statuses.length ? filters.statuses : undefined,
+    formats: filters.format ? [filters.format] : undefined,
+    search: filters.search || undefined,
+    scheduled:
+      filters.scheduled === "yes"
+        ? ("scheduled" as const)
+        : filters.scheduled === "no"
+          ? ("unscheduled" as const)
+          : ("any" as const),
+    limit: 200,
+  };
+}
+
 export default async function ContentCalendarPage({
   searchParams,
 }: {
-  searchParams: Promise<{ y?: string; m?: string; view?: string }>;
+  searchParams: Promise<ContentPlanSearchParams>;
 }) {
   const setup = await getVoiceSetupStatus();
   if (!setup.complete) {
@@ -52,18 +86,34 @@ export default async function ContentCalendarPage({
   const now = new Date();
   const year = parseCalendarYear(sp.y, now.getFullYear());
   const month = parseCalendarMonth(sp.m, now.getMonth());
-  const view = sp.view === "board" || sp.view === "table" ? sp.view : "calendar";
+  const view =
+    sp.view === "board" || sp.view === "table" ? sp.view : "calendar";
+  const filters = parseContentPlanFilters(sp);
 
-  const prev = month === 0 ? { y: year - 1, m: 11 } : { y: year, m: month - 1 };
-  const next = month === 11 ? { y: year + 1, m: 0 } : { y: year, m: month + 1 };
+  const navBase = {
+    y: year,
+    m: month,
+    view,
+    status: sp.status,
+    format: sp.format,
+    q: sp.q,
+    scheduled: sp.scheduled,
+  };
+
+  const prev =
+    month === 0 ? { y: year - 1, m: 11 } : { y: year, m: month - 1 };
+  const next =
+    month === 11 ? { y: year + 1, m: 0 } : { y: year, m: month + 1 };
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const firstDow = new Date(year, month, 1).getDay();
 
-  const [backlog, postsThisMonthList, allPosts, scheduledTotal] =
+  const listOpts = listOptionsFromFilters(filters);
+
+  const [backlog, postsThisMonthList, filteredPosts, scheduledTotal] =
     await Promise.all([
       listUnscheduledBacklog(),
       listScheduledPostsInCalendarMonth(year, month),
-      listContentPosts({ limit: 200 }),
+      listContentPosts(listOpts),
       countScheduledPosts(),
     ]);
   const byDay = postsByLocalDay(postsThisMonthList, year, month);
@@ -77,12 +127,7 @@ export default async function ContentCalendarPage({
     year: "numeric",
   });
 
-  const boardPosts = Object.fromEntries(
-    BOARD_COLUMNS.map((col) => [
-      col,
-      allPosts.filter((p) => p.status === col),
-    ]),
-  ) as Record<ContentPostStatus, typeof allPosts>;
+  const postCards = toPostCards(filteredPosts);
 
   return (
     <div className="space-y-8">
@@ -110,7 +155,7 @@ export default async function ContentCalendarPage({
         {(["calendar", "table", "board"] as const).map((v) => (
           <Link
             key={v}
-            href={monthHref(year, month, v)}
+            href={buildContentPlanHref({ ...navBase, view: v })}
             className={view === v ? "clin-pill clin-pill-active" : "clin-pill"}
           >
             {v === "calendar" ? "Calendar" : v === "table" ? "Pipeline" : "Board"}
@@ -121,18 +166,25 @@ export default async function ContentCalendarPage({
       {view === "calendar" ? (
         <>
           <div className="flex items-center justify-between gap-4">
-            <Link href={monthHref(prev.y, prev.m, view)} className="clin-link text-sm">
+            <Link
+              href={buildContentPlanHref({ ...navBase, ...prev, view })}
+              className="clin-link text-sm"
+            >
               ← Previous
             </Link>
             <h2 className="text-lg font-semibold">{monthLabel}</h2>
-            <Link href={monthHref(next.y, next.m, view)} className="clin-link text-sm">
+            <Link
+              href={buildContentPlanHref({ ...navBase, ...next, view })}
+              className="clin-link text-sm"
+            >
               Next →
             </Link>
           </div>
           {scheduledElsewhere > 0 ? (
             <p className="text-sm text-[var(--clin-muted)]">
-              {scheduledElsewhere} scheduled post{scheduledElsewhere === 1 ? "" : "s"}{" "}
-              in other months — use Previous / Next to browse.
+              {scheduledElsewhere} scheduled post
+              {scheduledElsewhere === 1 ? "" : "s"} in other months. Use Previous
+              / Next to browse.
             </p>
           ) : null}
 
@@ -144,7 +196,10 @@ export default async function ContentCalendarPage({
 
           <div className="grid grid-cols-7 gap-1">
             {Array.from({ length: firstDow }).map((_, i) => (
-              <div key={`pad-${i}`} className="min-h-[5rem] rounded-md bg-transparent" />
+              <div
+                key={`pad-${i}`}
+                className="min-h-[5rem] rounded-md bg-transparent"
+              />
             ))}
             {Array.from({ length: daysInMonth }).map((_, i) => {
               const day = i + 1;
@@ -154,7 +209,9 @@ export default async function ContentCalendarPage({
                   key={day}
                   className="min-h-[5rem] rounded-md border border-[var(--clin-border)] bg-[var(--clin-surface)] p-1"
                 >
-                  <span className="text-xs font-medium text-[var(--clin-muted)]">{day}</span>
+                  <span className="text-xs font-medium text-[var(--clin-muted)]">
+                    {day}
+                  </span>
                   <ul className="mt-1 space-y-0.5">
                     {posts.map((p) => (
                       <li key={p.id}>
@@ -186,12 +243,17 @@ export default async function ContentCalendarPage({
           <aside className="clin-card p-4">
             <h3 className="clin-section-title">Unscheduled backlog</h3>
             {backlog.length === 0 ? (
-              <p className="mt-2 text-sm text-[var(--clin-muted)]">No backlog items.</p>
+              <p className="mt-2 text-sm text-[var(--clin-muted)]">
+                No backlog items.
+              </p>
             ) : (
               <ul className="mt-3 space-y-2">
                 {backlog.map((p) => (
                   <li key={p.id}>
-                    <Link href={`/branding/posts/${p.id}`} className="clin-link text-sm">
+                    <Link
+                      href={`/branding/posts/${p.id}`}
+                      className="clin-link text-sm"
+                    >
                       {p.title}
                     </Link>
                     <span className="ml-2 text-xs text-[var(--clin-muted)]">
@@ -206,92 +268,27 @@ export default async function ContentCalendarPage({
       ) : null}
 
       {view === "table" ? (
-        <div className="overflow-x-auto rounded-lg border border-[var(--clin-border)]">
-          <table className="w-full min-w-[640px] text-left text-sm">
-            <thead className="border-b border-[var(--clin-border)] bg-[var(--clin-surface-muted)]">
-              <tr>
-                <th className="px-3 py-2 font-medium">Scheduled</th>
-                <th className="px-3 py-2 font-medium">Title</th>
-                <th className="px-3 py-2 font-medium">Format</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {allPosts.map((p) => (
-                <tr key={p.id} className="border-b border-[var(--clin-border)]">
-                  <td className="px-3 py-2 text-[var(--clin-muted)]">
-                    {p.scheduledAt
-                      ? new Date(p.scheduledAt).toLocaleString(undefined, {
-                          dateStyle: "short",
-                          timeStyle: "short",
-                        })
-                      : "—"}
-                  </td>
-                  <td className="px-3 py-2">
-                    <Link href={`/branding/posts/${p.id}`} className="clin-link font-medium">
-                      {p.title}
-                    </Link>
-                  </td>
-                  <td className="px-3 py-2 text-[var(--clin-muted)]">
-                    {CONTENT_FORMAT_LABELS[p.format as keyof typeof CONTENT_FORMAT_LABELS] ?? p.format}
-                  </td>
-                  <td className="px-3 py-2">
-                    {CONTENT_STATUS_LABELS[p.status as ContentPostStatus]}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ContentPlanPipeline
+          year={year}
+          month={month}
+          view={view}
+          filters={filters}
+          posts={postCards}
+        />
       ) : null}
 
       {view === "board" ? (
-        <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-5">
-          {BOARD_COLUMNS.map((col) => (
-            <div
-              key={col}
-              className="rounded-lg border border-[var(--clin-border)] bg-[var(--clin-surface-muted)]/40 p-3"
-            >
-              <h3 className="text-sm font-semibold">{CONTENT_STATUS_LABELS[col]}</h3>
-              <ul className="mt-2 space-y-2">
-                {(boardPosts[col] ?? []).map((p) => (
-                  <li key={p.id} className="clin-card p-2 text-sm">
-                    <Link href={`/branding/posts/${p.id}`} className="clin-link font-medium">
-                      {p.title}
-                    </Link>
-                    {p.scheduledAt ? (
-                      <p className="mt-1 text-[10px] text-[var(--clin-muted)]">
-                        {new Date(p.scheduledAt).toLocaleDateString()}
-                      </p>
-                    ) : null}
-                    {col !== "published" ? (
-                      <form action={updateContentPostStatusAction} className="mt-2">
-                        <input type="hidden" name="id" value={p.id} />
-                        <input type="hidden" name="status" value={nextStatus(col)} />
-                        <button type="submit" className="text-[10px] text-[var(--clin-accent)]">
-                          → {CONTENT_STATUS_LABELS[nextStatus(col)]}
-                        </button>
-                      </form>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
+        <div className="space-y-4">
+          <ContentPlanFiltersBar
+            year={year}
+            month={month}
+            view={view}
+            filters={filters}
+            resultCount={postCards.length}
+          />
+          <ContentPlanBoard initialPosts={postCards} />
         </div>
       ) : null}
     </div>
   );
-}
-
-function nextStatus(current: ContentPostStatus): ContentPostStatus {
-  const flow: ContentPostStatus[] = [
-    "idea",
-    "drafting",
-    "review",
-    "ready",
-    "published",
-  ];
-  const i = flow.indexOf(current);
-  return i >= 0 && i < flow.length - 1 ? flow[i + 1]! : current;
 }

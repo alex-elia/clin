@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ContactActionBar } from "@/components/ContactActionBar";
+import { ContactHygieneChip } from "@/components/ContactHygieneChip";
 import { ContactLlmPanel } from "@/components/ContactLlmPanel";
 import { LinkedInActivityBadge } from "@/components/LinkedInActivityBadge";
 import { ContactProfileCaptureSummary } from "@/components/ContactProfileCaptureSummary";
@@ -16,6 +17,7 @@ import {
   getLatestMessagingCaptureForContact,
   resolveMessageContextForAnalysis,
 } from "@/lib/messagingContext";
+import { assessContactNetworkHygiene } from "@/lib/networkHygienePipeline";
 
 export const dynamic = "force-dynamic";
 
@@ -28,13 +30,14 @@ export default async function ContactDetailPage({
   const contact = await getContactById(id);
   if (!contact) notFound();
 
-  const [llm, messagingCapture, campaigns, memberships, activity] =
+  const [llm, messagingCapture, campaigns, memberships, activity, hygiene] =
     await Promise.all([
     Promise.resolve(selectContactLlmExtension(contact.id)),
     getLatestMessagingCaptureForContact(contact.id),
     listOutreachCampaigns(),
     listCampaignMembershipsForContact(contact.id),
     Promise.resolve(selectContactActivityExtension(contact.id)),
+    assessContactNetworkHygiene(contact.id),
   ]);
 
   const initialMessage = resolveMessageContextForAnalysis(
@@ -43,7 +46,7 @@ export default async function ContactDetailPage({
   );
 
   return (
-    <div className="mx-auto max-w-4xl space-y-8">
+    <div className="space-y-8">
       <div>
         <Link href="/contacts" className="clin-link text-sm">
           ← Contacts
@@ -85,6 +88,8 @@ export default async function ContactDetailPage({
         company={contact.company}
         location={contact.location}
       />
+
+      {hygiene ? <ContactHygieneChip hygiene={hygiene} /> : null}
 
       <ContactLlmPanel
         contactId={contact.id}

@@ -43,7 +43,7 @@ export async function GET() {
     dbOk = false;
   }
 
-  const port = Number(process.env.PORT || 3000);
+  const port = Number(process.env.PORT || process.env.CLIN_DEV_PORT || 3100);
 
   let llmProvider: string | null = null;
   try {

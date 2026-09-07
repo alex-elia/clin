@@ -2,6 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import {
+  runAnalyzeBatchChunked,
+  type AnalyzeBatchProgress,
+} from "@/lib/runAnalyzeBatchClient";
 
 type BatchResult =
   | { contactId: string; ok: true; tier: string }
@@ -17,6 +21,7 @@ export function AutopilotBatchPanel({
   const router = useRouter();
   const [limit, setLimit] = useState(defaultLimit);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<AnalyzeBatchProgress | null>(null);
   const [results, setResults] = useState<BatchResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,23 +29,20 @@ export function AutopilotBatchPanel({
     setBusy(true);
     setError(null);
     setResults(null);
+    setProgress({ target: limit, processed: 0, succeeded: 0, failed: 0 });
     try {
-      const res = await fetch("/api/autopilot/analyze-batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ limit }),
+      const summary = await runAnalyzeBatchChunked({
+        totalLimit: limit,
+        chunkSize: 5,
+        onProgress: setProgress,
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data?.error || `HTTP ${res.status}`);
-        return;
-      }
-      setResults(data.results ?? []);
+      setResults(summary.results as BatchResult[]);
       router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
 
@@ -80,8 +82,19 @@ export function AutopilotBatchPanel({
         onClick={() => void runBatch()}
         className="clin-btn-primary"
       >
-        {busy ? "Running…" : "Run batch now"}
+        {busy && progress
+          ? `Analyzing ${progress.processed}/${progress.target}…`
+          : busy
+            ? "Starting…"
+            : "Run batch now"}
       </button>
+      {progress && busy ? (
+        <p className="text-sm text-clin-muted tabular-nums">
+          {progress.succeeded} succeeded
+          {progress.failed ? ` · ${progress.failed} failed` : ""}. Each contact
+          can take 1–2 minutes.
+        </p>
+      ) : null}
       {error ? <p className="clin-error">{error}</p> : null}
       {results && results.length > 0 ? (
         <ul className="max-h-64 space-y-1 overflow-y-auto font-mono text-xs text-clin-muted">

@@ -644,6 +644,14 @@ function CloudFields({
         required={false}
       />
 
+      <CloudModelField
+        name="cloudVisualModel"
+        model={cloud.visualModel ?? "Qwen3.8-27B"}
+        label="Visual model (image prompts)"
+        description="OVH Visual LLM for SD3 prompt drafting. Default Qwen3.8-27B (large context, multimodal)."
+        required={false}
+      />
+
       <label className="block space-y-1 text-sm">
 
         <span className="font-medium text-clin-text">API key</span>

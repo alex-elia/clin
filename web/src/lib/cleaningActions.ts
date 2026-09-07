@@ -26,6 +26,7 @@ import { loadLatestProfileCapturesByContactId } from "@/lib/campaignMemberReadin
 import { enqueueCleaningExec } from "@/lib/cleaningExecQueue";
 import { generateEngageCommentForContact } from "@/lib/cleaningEngageComment";
 import { approveRemovalForContact } from "@/lib/cleaningRemovalApprove";
+import { confirmContactDisconnected } from "@/lib/cleaningRemovalAck";
 
 const QUEUE_BUCKETS = new Set<CleaningBucket>([
   "review_remove",
@@ -253,7 +254,9 @@ export type CleaningBatchAction =
   | "dismiss"
   | "defer"
   | "enqueue_review"
-  | "enqueue_engage";
+  | "enqueue_engage"
+  | "approve_removal"
+  | "confirm_disconnected";
 
 export type CleaningBatchResult =
   | { contactId: string; ok: true; effect?: CleaningAcceptEffect }
@@ -290,6 +293,20 @@ export async function runCleaningBatchAction(opts: {
         case "enqueue_engage":
           await enqueueEngageForContact(contactId);
           await dismissCleaningContact(contactId);
+          break;
+        case "approve_removal": {
+          const ctx = await loadContactContext(contactId);
+          if (!ctx || ctx.bucket !== "review_remove") {
+            throw new Error("Contact is not in review_remove bucket.");
+          }
+          await approveRemovalForContact(
+            contactId,
+            "Approved from network hygiene pipeline.",
+          );
+          break;
+        }
+        case "confirm_disconnected":
+          await confirmContactDisconnected(contactId);
           break;
         default:
           throw new Error("Unknown action.");

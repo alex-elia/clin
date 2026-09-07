@@ -4,7 +4,7 @@ import {
   parseContentLanguagePreference,
   resolveContentLanguage,
 } from "@/lib/contentLanguage";
-import { completeChat, getLlmConfig } from "@/lib/llm/completeChat";
+import { completeChat, getLlmConfigForVisual } from "@/lib/llm/completeChat";
 import {
   parsePostImageStyle,
   type PostImageStyle,
@@ -170,7 +170,7 @@ export async function buildImagePromptFromPost(
   });
 
   try {
-    const llm = await getLlmConfig();
+    const llm = await getLlmConfigForVisual();
     const user = JSON.stringify(
       {
         post_format: source.format,

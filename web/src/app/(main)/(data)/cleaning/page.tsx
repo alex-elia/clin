@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { AutopilotBatchPanel } from "@/app/(main)/autopilot/AutopilotBatchPanel";
+import { AutopilotBatchPanel } from "@/app/(main)/(data)/autopilot/AutopilotBatchPanel";
 import { CleaningExecQueuePanel } from "@/components/CleaningExecQueuePanel";
 import { CleaningBoard } from "@/components/CleaningBoard";
 import { CleaningExecPanels } from "@/components/CleaningExecPanels";
+import { NetworkHygienePipelinePanel } from "@/components/NetworkHygienePipelinePanel";
 import { getDb } from "@/db";
 import {
   countContactsPendingLlmAnalysis,
@@ -36,7 +37,7 @@ export default async function CleaningPage({
   const removalQueue = execItems.filter((i) => i.kind === "removal");
 
   return (
-    <div className="mx-auto max-w-3xl space-y-10">
+    <div className="space-y-10">
       <div>
         <p className="mb-1 text-xs font-medium uppercase tracking-wide text-[var(--clin-muted)]">
           <Link href="/data" className="clin-link">
@@ -84,6 +85,8 @@ export default async function CleaningPage({
           </li>
         </ol>
       </section>
+
+      <NetworkHygienePipelinePanel />
 
       <Suspense fallback={<p className="text-sm text-[var(--clin-muted)]">Loading buckets…</p>}>
         <CleaningBoard data={board} />

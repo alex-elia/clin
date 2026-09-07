@@ -25,7 +25,7 @@ export default async function AutopilotPage() {
   }));
 
   return (
-    <div className="mx-auto max-w-2xl space-y-8">
+    <div className="space-y-8">
       <div>
         <p className="mb-1 text-xs font-medium uppercase tracking-wide text-[var(--clin-muted)]">
           <Link href="/data" className="clin-link">
