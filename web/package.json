@@ -17,7 +17,7 @@
     "start": "node scripts/prod-start.mjs",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit",
-    "test": "npx tsx --test src/lib/linkedinActivity.test.ts src/lib/contentLanguage.test.ts src/lib/senderIdentity.test.ts src/lib/networkHygienePipeline.test.ts src/lib/connectionDegree.test.ts",
+    "test": "npx tsx --test src/lib/linkedinActivity.test.ts src/lib/contentLanguage.test.ts src/lib/senderIdentity.test.ts src/lib/networkHygienePipeline.test.ts src/lib/connectionDegree.test.ts src/lib/capturePayloadSanitize.test.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",

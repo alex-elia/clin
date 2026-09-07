@@ -2,7 +2,96 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import type { AppEvent } from "@/lib/telemetry/appEventLog";
 import type { TelemetrySummary } from "@/lib/telemetry/telemetrySummary";
+
+function CaptureIngestDebugPanel() {
+  const [items, setItems] = useState<AppEvent[]>([]);
+  const [logFile, setLogFile] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const res = await fetch(
+        "/api/telemetry/events?action=capture_ingest&limit=40&errorsOnly=1",
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      setItems(Array.isArray(data.items) ? data.items : []);
+      setLogFile(typeof data.logFile === "string" ? data.logFile : "");
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : String(e));
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  return (
+    <div id="capture-debug" className="clin-card p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="clin-section-title">Capture ingest debug</h3>
+          <p className="mt-1 text-sm text-[var(--clin-muted)]">
+            Failed extension profile captures (validation, ingest, pace). For all
+            events, open the JSONL file on disk.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void load()}
+          className="clin-btn-secondary text-sm"
+          disabled={loading}
+        >
+          Refresh
+        </button>
+      </div>
+      {logFile ? (
+        <p className="mt-2 break-all font-mono text-xs text-[var(--clin-muted)]">
+          Log file: {logFile}
+        </p>
+      ) : null}
+      {loadError ? <p className="clin-error mt-2">{loadError}</p> : null}
+      {!loading && items.length === 0 && !loadError ? (
+        <p className="mt-3 text-sm text-[var(--clin-muted)]">
+          No failed capture_ingest events in the log yet.
+        </p>
+      ) : null}
+      {items.length > 0 ? (
+        <ul className="mt-3 max-h-96 space-y-2 overflow-y-auto font-mono text-xs">
+          {items.map((e) => (
+            <li
+              key={e.id}
+              className="rounded border border-[var(--clin-border)] p-2 text-[var(--clin-text)]"
+            >
+              <div className="text-[var(--clin-muted)]">
+                {new Date(e.at).toLocaleString()} · {e.ok ? "OK" : "ERR"}
+                {e.durationMs != null ? ` · ${ms(e.durationMs)}` : ""}
+              </div>
+              {e.error ? (
+                <div className="mt-1 text-red-700">{e.error}</div>
+              ) : null}
+              {e.meta && Object.keys(e.meta).length > 0 ? (
+                <div className="mt-1 text-[var(--clin-muted)]">
+                  {Object.entries(e.meta)
+                    .map(([k, v]) => `${k}=${String(v)}`)
+                    .join(" · ")}
+                </div>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
 
 function ms(n: number | null | undefined): string {
   if (n == null) return "—";
@@ -316,6 +405,8 @@ export function TelemetryDashboard() {
               </ul>
             </div>
           ) : null}
+
+          <CaptureIngestDebugPanel />
         </>
       ) : null}
 

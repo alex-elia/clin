@@ -308,7 +308,7 @@ export function enrichedMemberMatchesFilter(
 export function pickNextProfileCaptureTarget(
   rows: EnrichedCampaignMember[],
   opts?: { skipMemberIds?: Iterable<string> },
-): { profileUrl: string; fullName: string | null; memberId: string; profileDepth: ProfileDepth } | null {
+): { profileUrl: string; fullName: string | null; memberId: string; contactId: string; profileDepth: ProfileDepth } | null {
   const skip = new Set(opts?.skipMemberIds ?? []);
   const sorted = [...rows].sort((a, b) => {
     if (a.profileDepth !== b.profileDepth) {
@@ -326,6 +326,7 @@ export function pickNextProfileCaptureTarget(
       profileUrl,
       fullName: m.contact.fullName,
       memberId: m.member.id,
+      contactId: m.contact.id,
       profileDepth: m.profileDepth,
     };
   }

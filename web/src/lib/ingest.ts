@@ -315,25 +315,51 @@ export async function ingestCapture(
     return ingestContactIntelCapture(db, input);
   }
 
-  const canonical = canonicalizeLinkedInUrl(input.sourceUrl);
-  if (!canonical) {
+  const scrapedCanonical = canonicalizeLinkedInUrl(input.sourceUrl);
+  if (!scrapedCanonical) {
     throw new Error("Could not derive canonical LinkedIn URL from sourceUrl");
   }
 
+  const participantName =
+    typeof input.extractedFields.fullName === "string"
+      ? input.extractedFields.fullName.trim() || undefined
+      : undefined;
+
+  const { contact: targetContact, resolvedVia } = ctx
+    ? await resolveMessagingCaptureTargetContact(db, {
+        ...ctx,
+        scrapedProfileUrl: input.sourceUrl,
+        participantName,
+      })
+    : { contact: undefined, resolvedVia: null };
+
   const now = input.capturedAt ? new Date(input.capturedAt) : new Date();
 
-  const existing = await findContactByCanonical(db, canonical);
+  const existing =
+    targetContact ?? (await findContactByCanonical(db, scrapedCanonical));
+
+  const profileCanonical =
+    existing?.linkedinUrlCanonical?.trim() || scrapedCanonical;
 
   const normalizedFields = normalizeExtractedPersonFields(input.extractedFields);
-  const extractedFields = {
+  const extractedFields: Record<string, unknown> = {
     ...input.extractedFields,
     ...normalizedFields,
   };
+  if (
+    scrapedCanonical !== profileCanonical ||
+    (resolvedVia &&
+      resolvedVia !== "scrapedUrl" &&
+      resolvedVia !== "scrapedUrlOnCampaign")
+  ) {
+    extractedFields.profileSourceUrlScraped = scrapedCanonical;
+    if (resolvedVia) extractedFields.profileCaptureResolvedVia = resolvedVia;
+  }
 
   const { merged, scores } = buildMergedAndScores(
-    canonical,
+    profileCanonical,
     input.sourceUrl,
-    extractedFields,
+    extractedFields as IngestInput["extractedFields"],
     existing,
     now,
     input.pageType,
@@ -345,9 +371,16 @@ export async function ingestCapture(
     company: Boolean(extractedFields.company),
     location: Boolean(extractedFields.location),
     connectionDegree: Boolean(extractedFields.connectionDegree),
-    about: Boolean(extractedFields.about?.trim()),
-    experienceBullets: Boolean(extractedFields.experienceBullets?.length),
-    educationBullets: Boolean(extractedFields.educationBullets?.length),
+    about:
+      typeof extractedFields.about === "string"
+        ? Boolean(extractedFields.about.trim())
+        : false,
+    experienceBullets: Array.isArray(extractedFields.experienceBullets)
+      ? extractedFields.experienceBullets.length > 0
+      : false,
+    educationBullets: Array.isArray(extractedFields.educationBullets)
+      ? extractedFields.educationBullets.length > 0
+      : false,
     ...(input.fieldPresence ?? {}),
   };
   const confidence =
@@ -370,16 +403,22 @@ export async function ingestCapture(
     });
   });
 
-  const row = await db.query.contacts.findFirst({
-    where: eq(contacts.linkedinUrlCanonical, canonical),
-  });
+  const row =
+    existing ??
+    (await db.query.contacts.findFirst({
+      where: eq(contacts.linkedinUrlCanonical, scrapedCanonical),
+    }));
 
-  if (row && input.pageType === "profile") {
+  if (!row) {
+    throw new Error("Contact row missing after profile ingest");
+  }
+
+  if (input.pageType === "profile") {
     await backfillContactFieldsFromLatestProfileCapture(db, row.id);
   }
 
   const refreshed = await db.query.contacts.findFirst({
-    where: eq(contacts.id, row!.id),
+    where: eq(contacts.id, row.id),
   });
 
   const display = refreshed ?? row!;

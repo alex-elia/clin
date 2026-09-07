@@ -26,6 +26,11 @@ import { maybeRunPostCaptureAnalysis } from "@/lib/postCaptureAnalysis";
 
 import { capturePayloadSchema } from "@/lib/schemas";
 
+import {
+  formatCaptureValidationError,
+  sanitizeCapturePayload,
+} from "@/lib/capturePayloadSanitize";
+
 import { trackFeatureEvent } from "@/lib/telemetry/orchestration";
 
 
@@ -70,18 +75,29 @@ export async function POST(req: Request) {
 
 
 
-  const parsed = capturePayloadSchema.safeParse(body);
+  const parsed = capturePayloadSchema.safeParse(sanitizeCapturePayload(body));
 
   if (!parsed.success) {
-
+    const details = parsed.error.flatten();
+    const message = formatCaptureValidationError(details);
+    trackFeatureEvent("capture_ingest", {
+      ok: false,
+      error: message,
+      meta: {
+        stage: "validation",
+        pageType:
+          body && typeof body === "object" && "pageType" in body
+            ? String((body as { pageType?: unknown }).pageType ?? "")
+            : "",
+      },
+    });
     return NextResponse.json(
-
-      { error: "Validation failed", details: parsed.error.flatten() },
-
+      {
+        error: message,
+        details,
+      },
       { status: 400 },
-
     );
-
   }
 
 

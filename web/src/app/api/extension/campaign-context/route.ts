@@ -53,6 +53,7 @@ export async function GET(request: Request) {
     nextProfileUrl: string | null;
     nextProfileName: string | null;
     nextMemberId: string | null;
+    nextContactId: string | null;
     nextProfileDepth: string | null;
   } | null = null;
 
@@ -75,6 +76,7 @@ export async function GET(request: Request) {
       nextProfileUrl: next?.profileUrl ?? null,
       nextProfileName: next?.fullName ?? null,
       nextMemberId: next?.memberId ?? null,
+      nextContactId: next?.contactId ?? null,
       nextProfileDepth: next?.profileDepth ?? null,
     };
   }

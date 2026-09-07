@@ -9,6 +9,8 @@ const PROFILE_CAPTURE_TIMES_KEY = "clin_profile_capture_timestamps_ms";
 /** @deprecated migrated to split keys on first read */
 const LEGACY_CAPTURE_TIMES_KEY = "clin_capture_timestamps_ms";
 const LAST_ERROR_KEY = "clin_last_pace_message";
+const CAPTURE_TECH_LOG_KEY = "clinCaptureTechLog";
+const CAPTURE_TECH_LOG_MAX = 50;
 const PIPELINE_RUN_KEY = "clinPipelineRunActive";
 const PIPELINE_STATE_KEY = "clinPipelineState";
 const PIPELINE_TAB_ID_KEY = "clinPipelineTabId";
@@ -304,6 +306,23 @@ async function resetExtensionPaceCounters() {
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === "CLIN_GET_CAPTURE_TECH_LOG") {
+    (async () => {
+      try {
+        const stored = await chrome.storage.local.get([CAPTURE_TECH_LOG_KEY]);
+        sendResponse({
+          ok: true,
+          items: stored[CAPTURE_TECH_LOG_KEY] || [],
+        });
+      } catch (e) {
+        sendResponse({
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    })();
+    return true;
+  }
   if (msg?.type !== "CLIN_RESET_PACE_COUNTERS") return;
   (async () => {
     try {
@@ -424,6 +443,21 @@ async function getLastOutreachMemberContext() {
   return ctx;
 }
 
+async function attachProfileCaptureContext(payload, explicitCtx) {
+  let out = await applyOutreachCampaignId(payload);
+  const ctx =
+    explicitCtx && (explicitCtx.memberId || explicitCtx.linkedinUrl)
+      ? explicitCtx
+      : await getLastOutreachMemberContext();
+  if (!ctx) return out;
+  if (ctx.memberId) out = { ...out, outreachMemberId: ctx.memberId };
+  if (ctx.linkedinUrl) {
+    const url = ensureLinkedInAbsoluteUrl(ctx.linkedinUrl);
+    if (url) out = { ...out, expectedParticipantProfileUrl: url };
+  }
+  return out;
+}
+
 async function attachMessagingCaptureContext(payload) {
   let out = await applyOutreachCampaignId(payload);
   const ctx = await getLastOutreachMemberContext();
@@ -509,6 +543,114 @@ function isLinkedInProfilePageUrl(url) {
   } catch {
     return false;
   }
+}
+
+function linkedInProfileSlug(url) {
+  try {
+    const parts = new URL(url).pathname.split("/").filter(Boolean);
+    if (parts[0] === "in" && parts[1]) {
+      return decodeURIComponent(parts[1]).toLowerCase();
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function profileNavigationTargetKey(url) {
+  if (typeof url !== "string" || !url.trim()) return "";
+  try {
+    const u = new URL(url.trim());
+    u.hash = "";
+    u.search = "";
+    return u.toString().toLowerCase();
+  } catch {
+    return url.trim().toLowerCase();
+  }
+}
+
+function ensureLinkedInAbsoluteUrl(raw) {
+  if (typeof raw !== "string") return null;
+  const t = raw.trim();
+  if (!t) return null;
+  let candidate = t;
+  if (!/^https?:\/\//i.test(candidate)) {
+    if (candidate.startsWith("/")) {
+      candidate = `https://www.linkedin.com${candidate}`;
+    } else if (/^(www\.)?linkedin\.com\//i.test(candidate)) {
+      candidate = `https://${candidate.replace(/^https?:\/\//i, "")}`;
+    } else {
+      return null;
+    }
+  }
+  try {
+    const u = new URL(candidate);
+    const host = u.hostname.toLowerCase().replace(/^www\./, "");
+    if (!host.endsWith("linkedin.com")) return null;
+    const parts = u.pathname.split("/").filter(Boolean);
+    if (parts[0] === "in" && parts[1]) {
+      const slug = decodeURIComponent(parts[1]).toLowerCase();
+      return `https://www.linkedin.com/in/${slug}`;
+    }
+    u.hash = "";
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
+/** Avoid reloading the same profile when LinkedIn redirects vanity → ACoAAA slug. */
+let lastProfileNavigation = { tabId: null, targetUrl: "", at: 0 };
+
+function profileCaptureHasMeaningfulFields(result) {
+  const fp = result?.fieldPresence || {};
+  return Boolean(
+    fp.fullName ||
+      fp.headline ||
+      fp.company ||
+      fp.about ||
+      fp.experienceBullets ||
+      fp.educationBullets,
+  );
+}
+
+function summarizeFieldPresence(fieldPresence) {
+  if (!fieldPresence || typeof fieldPresence !== "object") return "";
+  return Object.entries(fieldPresence)
+    .filter(([, v]) => v)
+    .map(([k]) => k)
+    .join(",");
+}
+
+async function appendCaptureTechLog(entry) {
+  const stored = await chrome.storage.local.get([CAPTURE_TECH_LOG_KEY]);
+  const prev = Array.isArray(stored[CAPTURE_TECH_LOG_KEY])
+    ? stored[CAPTURE_TECH_LOG_KEY]
+    : [];
+  const row = {
+    at: Date.now(),
+    ...entry,
+  };
+  await chrome.storage.local.set({
+    [CAPTURE_TECH_LOG_KEY]: [row, ...prev].slice(0, CAPTURE_TECH_LOG_MAX),
+  });
+}
+
+function finalizeProfileCapturePayload(body, tabUrl, chainOpts = {}) {
+  const out = { ...(body || {}) };
+  const fromTab = ensureLinkedInAbsoluteUrl(tabUrl);
+  const fromBody = ensureLinkedInAbsoluteUrl(out.sourceUrl);
+  const fromExpected = ensureLinkedInAbsoluteUrl(
+    chainOpts.outreachMemberContext?.linkedinUrl ||
+      out.expectedParticipantProfileUrl,
+  );
+  out.sourceUrl = fromBody || fromTab || fromExpected || out.sourceUrl;
+  if (!out.expectedParticipantProfileUrl && fromExpected) {
+    out.expectedParticipantProfileUrl = fromExpected;
+  }
+  delete out.captureDiagnostics;
+  delete out.captureMethods;
+  return out;
 }
 
 function isConnectionsListPageUrl(url) {
@@ -2592,6 +2734,11 @@ async function waitForProfileDomReady(maxMs) {
     if (document.querySelector('[data-anonymize="person-name"]')) return true;
     if (document.querySelector('[data-anonymize="headline"]')) return true;
     if (document.querySelector(".text-body-medium.break-words")) return true;
+    if (document.querySelector('[class*="text-body-medium"][class*="break-words"]')) {
+      return true;
+    }
+    if (document.querySelector('[data-view-name="profile-top-card"]')) return true;
+    if (document.querySelector('[data-view-name*="profile-top-card"]')) return true;
     if (document.querySelector('a[href*="/in/"] h1')) return true;
     if (document.querySelector("main h1")) return true;
     const t = document.title || "";
@@ -3011,6 +3158,61 @@ async function fetchProfileStructuredDataPage() {
     return Object.keys(out).length ? out : null;
   }
 
+  function parseDashElements(body) {
+    const elements = body?.elements;
+    if (!Array.isArray(elements) || !elements[0]) return null;
+    const el = elements[0];
+    const out = {};
+    const fn = [el.firstName, el.lastName]
+      .filter((x) => x != null && String(x).trim())
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (fn) out.fullName = fn;
+    const hl = textField(el.headline) || el.headline;
+    if (typeof hl === "string" && hl.trim()) out.headline = hl.trim();
+    if (typeof el.summary === "string" && el.summary.trim()) {
+      out.about = el.summary.trim().slice(0, 12000);
+    }
+    if (el.locationName) out.location = String(el.locationName).trim();
+    else if (el.geoLocation && typeof el.geoLocation === "object") {
+      const g = el.geoLocation;
+      out.location = [g.city, g.state, g.countryCode]
+        .filter(Boolean)
+        .join(", ")
+        .trim();
+    }
+    return Object.keys(out).length ? out : null;
+  }
+
+  function mergeParsedProfiles(...parts) {
+    const out = {};
+    for (const part of parts) {
+      if (!part || typeof part !== "object") continue;
+      for (const [k, v] of Object.entries(part)) {
+        if (v == null) continue;
+        if (Array.isArray(v) && v.length) {
+          if (!Array.isArray(out[k]) || v.length > out[k].length) out[k] = v;
+        } else if (typeof v === "string" && v.trim() && !out[k]) {
+          out[k] = v.trim();
+        }
+      }
+    }
+    return Object.keys(out).length ? out : null;
+  }
+
+  function profilePayloadUseful(parsed) {
+    if (!parsed) return false;
+    return Boolean(
+      parsed.headline ||
+        parsed.company ||
+        parsed.about ||
+        parsed.experienceBullets?.length ||
+        parsed.educationBullets?.length ||
+        (parsed.fullName && (parsed.location || parsed.headline)),
+    );
+  }
+
   function findGraphqlProfileQueryId() {
     const html = document.documentElement.innerHTML;
     const m = html.match(/voyagerIdentityDashProfiles\.[a-f0-9]{10,}/i);
@@ -3077,8 +3279,12 @@ async function fetchProfileStructuredDataPage() {
 
   if (vanity && headers["csrf-token"]) {
     const decorations = [
+      "com.linkedin.voyager.dash.deco.identity.profile.FullProfileWithEntities-95",
+      "com.linkedin.voyager.dash.deco.identity.profile.FullProfileWithEntities-94",
       "com.linkedin.voyager.dash.deco.identity.profile.FullProfileWithEntities-93",
+      "com.linkedin.voyager.dash.deco.identity.profile.FullProfileWithEntities-92",
       "com.linkedin.voyager.dash.deco.identity.profile.FullProfileWithEntities-91",
+      "com.linkedin.voyager.dash.deco.identity.profile.WebTopCardCore-17",
       "com.linkedin.voyager.dash.deco.identity.profile.WebTopCardCore-16",
     ];
     const urls = [
@@ -3108,14 +3314,11 @@ async function fetchProfileStructuredDataPage() {
         diagnostics.voyagerStatus = resp.status;
         if (!resp.ok) continue;
         const json = await resp.json();
-        const parsed = parseIncluded(json.included, json.data);
-        if (
-          parsed &&
-          (parsed.headline ||
-            parsed.company ||
-            parsed.about ||
-            parsed.experienceBullets?.length)
-        ) {
+        const parsed = mergeParsedProfiles(
+          parseDashElements(json),
+          parseIncluded(json.included, json.data),
+        );
+        if (parsed && profilePayloadUseful(parsed)) {
           voyager = {
             ...parsed,
             captureMethod: url.includes("/graphql") ? "graphql" : "voyager",
@@ -3296,7 +3499,17 @@ function mergeProfileExtractions(voyager, bpr, domResult) {
       const v = s[key];
       if (Array.isArray(v) && v.length > (best?.length || 0)) best = v;
     }
-    return best?.length ? best : undefined;
+    if (!best?.length) return undefined;
+    const maxChars = key === "educationBullets" ? 500 : 600;
+    return best
+      .slice(0, key === "educationBullets" ? 20 : 25)
+      .map((item) => {
+        if (typeof item !== "string") return null;
+        const t = item.trim();
+        if (!t) return null;
+        return t.length > maxChars ? `${t.slice(0, maxChars - 1)}…` : t;
+      })
+      .filter(Boolean);
   }
 
   let fullName = pickScalar("fullName");
@@ -3858,8 +4071,11 @@ function scrapeVisibleProfile() {
 }
 
 /** Wait for LinkedIn top card, then scrape profile fields from a tab. */
-async function scrapeProfileFromTab(tabId) {
-  await focusAutomationTab(tabId);
+async function scrapeProfileFromTab(tabId, opts = {}) {
+  await focusAutomationTab(
+    tabId,
+    opts.forceFocusForScrape ? { forceFocus: true } : opts,
+  );
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
@@ -3911,7 +4127,18 @@ async function scrapeProfileFromTab(tabId) {
   const domResult = injected[0]?.result;
   if (!domResult && !voyager && !bpr) return undefined;
   const merged = mergeProfileExtractions(voyager, bpr, domResult);
-  if (domResult?.sourceUrl) merged.sourceUrl = domResult.sourceUrl;
+  let tabUrl = "";
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    tabUrl = tab?.url || "";
+  } catch {
+    /* ignore */
+  }
+  if (domResult?.sourceUrl) {
+    merged.sourceUrl = domResult.sourceUrl;
+  } else if (tabUrl && isLinkedInProfilePageUrl(tabUrl)) {
+    merged.sourceUrl = tabUrl;
+  }
   if (captureDiagnostics) merged.captureDiagnostics = captureDiagnostics;
   return merged;
 }
@@ -3972,7 +4199,7 @@ async function scrollConnectionsListViewport() {
 /** Bring the LinkedIn automation tab to the foreground (required for lazy-load / scroll). */
 async function focusAutomationTab(tabId, opts = {}) {
   if (typeof tabId !== "number") return;
-  if (opts?.suppressFocus) return;
+  if (opts?.suppressFocus && !opts?.forceFocus) return;
   try {
     const tab = await chrome.tabs.get(tabId);
     if (!tab?.id) return;
@@ -4426,11 +4653,35 @@ async function returnTabToProfileAfterPostsCapture(tabId, profileUrl, timeoutMs 
 async function navigateToProfileForAutomation(tabId, profileUrl, opts = {}) {
   const timeoutMs = opts.suppressFocus ? 180000 : 90000;
   const attempts = opts.suppressFocus ? 3 : 2;
+  const targetKey = profileNavigationTargetKey(profileUrl);
   let lastErr = null;
   for (let i = 0; i < attempts; i += 1) {
     try {
+      let tab = await chrome.tabs.get(tabId);
+      const currentUrl = tab?.url || "";
+      const recentlyNavigated =
+        lastProfileNavigation.tabId === tabId &&
+        lastProfileNavigation.targetUrl === targetKey &&
+        Date.now() - lastProfileNavigation.at < 120000;
+      const sameSlug =
+        linkedInProfileSlug(currentUrl) &&
+        linkedInProfileSlug(profileUrl) &&
+        linkedInProfileSlug(currentUrl) === linkedInProfileSlug(profileUrl);
+      if (
+        !opts.forceReload &&
+        isLinkedInProfilePageUrl(currentUrl) &&
+        (recentlyNavigated || sameSlug)
+      ) {
+        await sleep(900);
+        return;
+      }
       await chrome.tabs.update(tabId, { url: profileUrl });
       await waitForLinkedInProfileTab(tabId, timeoutMs);
+      lastProfileNavigation = {
+        tabId,
+        targetUrl: targetKey,
+        at: Date.now(),
+      };
       return;
     } catch (e) {
       lastErr = e;
@@ -5068,22 +5319,61 @@ async function tryCapturePostsAfterProfile(tabId, root, profileUrl) {
 async function postProfileCaptureForTab(tabId, root, pruned, chainOpts = {}) {
   const tab = await chrome.tabs.get(tabId);
   if (!isLinkedInProfilePageUrl(tab.url)) {
+    await appendCaptureTechLog({
+      ok: false,
+      stage: "precheck",
+      error: "Not on a profile page.",
+      tabUrl: tab?.url || null,
+    });
     return { ok: false, error: "Not on a profile page." };
   }
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      func: prepProfilePageForScrape,
-      args: [9000],
-    });
-  } catch {
-    /* best-effort prep; continue with scrape */
-  }
-  const result = await scrapeProfileFromTab(tabId);
+  const result = await scrapeProfileFromTab(tabId, {
+    suppressFocus: chainOpts.suppressFocus,
+    forceFocusForScrape: Boolean(chainOpts.forceFocusForScrape),
+  });
   if (!result) {
+    await appendCaptureTechLog({
+      ok: false,
+      stage: "scrape",
+      error: "Extractor returned nothing.",
+      tabUrl: tab.url,
+    });
     return { ok: false, error: "Extractor returned nothing." };
   }
-  let capBody = await applyOutreachCampaignId(result);
+  if (!profileCaptureHasMeaningfulFields(result)) {
+    const diag = result.captureDiagnostics || {};
+    const err =
+      "Profile page loaded but no fields were extracted. LinkedIn may have changed the layout, or the tab loaded before content was ready.";
+    await appendCaptureTechLog({
+      ok: false,
+      stage: "scrape",
+      error: err,
+      tabUrl: tab.url,
+      diagnostics: diag,
+      fields: summarizeFieldPresence(result.fieldPresence),
+    });
+    return {
+      ok: false,
+      error: err,
+      diagnostics: diag,
+    };
+  }
+  let capBody = await attachProfileCaptureContext(
+    result,
+    chainOpts.outreachMemberContext,
+  );
+  capBody = finalizeProfileCapturePayload(capBody, tab.url, chainOpts);
+  if (!capBody.sourceUrl) {
+    const err = "Missing sourceUrl after scrape (tab URL unavailable).";
+    await appendCaptureTechLog({
+      ok: false,
+      stage: "payload",
+      error: err,
+      tabUrl: tab.url,
+      fields: summarizeFieldPresence(result.fieldPresence),
+    });
+    return { ok: false, error: err };
+  }
   if (chainOpts.captureChainStep) {
     capBody = { ...capBody, captureChainStep: chainOpts.captureChainStep };
   }
@@ -5103,11 +5393,30 @@ async function postProfileCaptureForTab(tabId, root, pruned, chainOpts = {}) {
     json = { raw: text };
   }
   if (!res.ok) {
+    const err = json?.error || text || `HTTP ${res.status}`;
+    await appendCaptureTechLog({
+      ok: false,
+      stage: "ingest",
+      error: err,
+      tabUrl: tab.url,
+      sourceUrl: capBody.sourceUrl,
+      fields: summarizeFieldPresence(result.fieldPresence),
+      httpStatus: res.status,
+    });
+    await publishUserNotice(err, { scope: chainOpts.scope || "capture", isError: true });
     return {
       ok: false,
-      error: json?.error || text || `HTTP ${res.status}`,
+      error: err,
     };
   }
+  await appendCaptureTechLog({
+    ok: true,
+    stage: "ingest",
+    tabUrl: tab.url,
+    sourceUrl: capBody.sourceUrl,
+    contactId: json?.contactId || null,
+    fields: summarizeFieldPresence(result.fieldPresence),
+  });
   await recordProfileCaptureSuccess(pruned);
   await chrome.storage.local.remove(LAST_ERROR_KEY);
   return { ok: true, json };
@@ -5561,6 +5870,7 @@ async function captureOneCampaignMemberProfileStep(tabId, base, opts = {}) {
   const campaignName = ctx?.captureTargetCampaignName || null;
   const nextProfileUrl = ctx?.captureTargetQueue?.nextProfileUrl || null;
   const nextMemberId = ctx?.captureTargetQueue?.nextMemberId || null;
+  const nextContactId = ctx?.captureTargetQueue?.nextContactId || null;
   if (!nextProfileUrl) {
     return {
       ok: true,
@@ -5601,15 +5911,37 @@ async function captureOneCampaignMemberProfileStep(tabId, base, opts = {}) {
   }
   const automation = await fetchAutomationSettings(base);
   const postsEnabled = Boolean(automation?.autoCapturePostsInEnrich);
+  if (nextMemberId || nextProfileUrl) {
+    await setLastOutreachMemberContext({
+      memberId: nextMemberId,
+      linkedinUrl: nextProfileUrl,
+      fullName: ctx?.captureTargetQueue?.nextProfileName ?? null,
+    });
+  }
   const out = await postProfileCaptureForTab(tabId, root, pruned, {
     captureChainStep: "profile",
     captureChainComplete: !postsEnabled,
+    forceFocusForScrape: true,
+    suppressFocus: opts.suppressFocus,
+    scope: "pipeline",
+    outreachMemberContext:
+      nextMemberId || nextProfileUrl
+        ? { memberId: nextMemberId, linkedinUrl: nextProfileUrl }
+        : undefined,
   });
   if (!out.ok) {
     return {
       ok: false,
       done: false,
       error: out.error || "Campaign profile capture failed.",
+    };
+  }
+  const savedId = out.json?.contactId;
+  if (nextContactId && savedId && savedId !== nextContactId) {
+    return {
+      ok: false,
+      done: false,
+      error: "Capture matched a different contact than the campaign member.",
     };
   }
   let postsCaptured = false;
