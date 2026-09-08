@@ -5,9 +5,11 @@ import { captureSessions, contacts } from "@/db/schema";
 import {
   normalizeConnectionDegree,
   resolveDegreeFromCaptures,
+  isDisconnectedDegree,
   type ConnectionDegreeBackfillResult,
 } from "@/lib/connectionDegree";
 import { invalidateNetworkHygieneSnapshot } from "@/lib/networkHygienePipeline";
+import { listContactCleaningExtensionsMap } from "@/lib/cleaningSqlExtras";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -20,6 +22,10 @@ export async function backfillConnectionDegrees(
       connectionDegree: contacts.connectionDegree,
     })
     .from(contacts);
+
+  const cleaningMap = listContactCleaningExtensionsMap(
+    allContacts.map((c) => c.id),
+  );
 
   const captureRows = getSqlite()
     .prepare(
@@ -55,6 +61,16 @@ export async function backfillConnectionDegrees(
   const now = new Date();
 
   for (const contact of allContacts) {
+    if (isDisconnectedDegree(contact.connectionDegree)) {
+      alreadyOk += 1;
+      continue;
+    }
+    const cleaningExt = cleaningMap.get(contact.id);
+    if (cleaningExt?.cleaningDismissedAt) {
+      alreadyOk += 1;
+      continue;
+    }
+
     const current = normalizeConnectionDegree(contact.connectionDegree);
     const caps = capturesByContact.get(contact.id) ?? [];
     const resolved = resolveDegreeFromCaptures(caps);

@@ -9309,11 +9309,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         const resolvedOutcome =
           outcome ||
           (kind === "removal" ? "disconnected" : "commented");
-        await fetch(`${root}/api/extension/${path}`, {
+        const ackRes = await fetch(`${root}/api/extension/${path}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ execId, outcome: resolvedOutcome }),
         });
+        const ackBody = await ackRes.json().catch(() => ({}));
+        if (!ackRes.ok) {
+          sendResponse({
+            ok: false,
+            error:
+              (ackBody && ackBody.error) ||
+              `Ack failed (${ackRes.status})`,
+          });
+          return;
+        }
         await setExtensionLiveStatus({
           phase: "success",
           scope: "cleaning",

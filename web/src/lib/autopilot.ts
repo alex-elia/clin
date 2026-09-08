@@ -6,7 +6,29 @@ import {
   defaultAutopilotAnalyzeBody,
   executeContactAnalysis,
 } from "@/lib/contactAnalyzeRunner";
+import { backfillContactFieldsFromLatestProfileCapture } from "@/lib/contactProfileBackfill";
 import { getLlmConfig } from "@/lib/llm/completeChat";
+
+/** Shared WHERE for contacts eligible for LLM batch (profile capture + analyzable text). */
+const PENDING_LLM_WHERE_SQL = `
+  EXISTS (
+    SELECT 1 FROM capture_sessions s
+    WHERE s.contact_id = c.id AND s.page_type = 'profile'
+  )
+  AND trim(coalesce(c.llm_provisional_json, '')) = ''
+  AND trim(coalesce(c.llm_refined_json, '')) = ''
+  AND (
+    trim(coalesce(c.full_name, '')) != ''
+    OR trim(coalesce(c.headline, '')) != ''
+    OR EXISTS (
+      SELECT 1 FROM capture_sessions s2
+      WHERE s2.contact_id = c.id AND s2.page_type = 'profile'
+      AND (
+        length(trim(coalesce(json_extract(s2.extracted_json, '$.fullName'), ''))) > 1
+        OR length(trim(coalesce(json_extract(s2.extracted_json, '$.headline'), ''))) > 1
+      )
+    )
+  )`;
 
 export const AUTOPILOT_KEYS = {
   analyzeAfterProfileCapture: "autopilot.analyze_after_profile_capture",
@@ -184,13 +206,7 @@ export function countContactsPendingLlmAnalysis(): number {
       .prepare(
         `SELECT COUNT(*) AS n
          FROM contacts c
-         WHERE EXISTS (
-           SELECT 1 FROM capture_sessions s
-           WHERE s.contact_id = c.id AND s.page_type = 'profile'
-         )
-         AND (trim(coalesce(c.full_name, '')) != '' OR trim(coalesce(c.headline, '')) != '')
-         AND trim(coalesce(c.llm_provisional_json, '')) = ''
-         AND trim(coalesce(c.llm_refined_json, '')) = ''`,
+         WHERE ${PENDING_LLM_WHERE_SQL}`,
       )
       .get() as { n: number } | undefined;
     return Number(row?.n) || 0;
@@ -205,13 +221,7 @@ export function listContactIdsPendingLlmAnalysisRaw(limit: number): string[] {
     const stmt = getSqlite().prepare(
       `SELECT c.id AS id
        FROM contacts c
-       WHERE EXISTS (
-         SELECT 1 FROM capture_sessions s
-         WHERE s.contact_id = c.id AND s.page_type = 'profile'
-       )
-       AND (trim(coalesce(c.full_name, '')) != '' OR trim(coalesce(c.headline, '')) != '')
-       AND trim(coalesce(c.llm_provisional_json, '')) = ''
-       AND trim(coalesce(c.llm_refined_json, '')) = ''
+       WHERE ${PENDING_LLM_WHERE_SQL}
        ORDER BY c.last_updated_at DESC
        LIMIT ?`,
     );
@@ -243,6 +253,7 @@ export async function runLlmAnalysisBatch(opts: {
 
   for (const contactId of ids) {
     try {
+      await backfillContactFieldsFromLatestProfileCapture(db, contactId);
       const { tier } = await executeContactAnalysis(db, contactId, body, llm);
       results.push({ contactId, ok: true, tier });
     } catch (e) {

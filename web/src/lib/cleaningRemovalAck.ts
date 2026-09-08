@@ -1,16 +1,63 @@
 import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { cleaningExecQueue, contacts } from "@/db/schema";
+import { DISCONNECTED_DEGREE } from "@/lib/connectionDegree";
 import { completeCleaningExec } from "@/lib/cleaningExecQueue";
 import {
   getCleaningExecSettings,
   logCleaningExecAction,
   rollActionGapAfterSuccess,
 } from "@/lib/cleaningExecSettings";
-import { tryUpdateCleaningDismissedAt } from "@/lib/cleaningSqlExtras";
-import { setContactSegment } from "@/lib/autopilotActions";
+import {
+  tryUpdateCleaningDismissedAt,
+  tryUpdateCleaningUserBucket,
+} from "@/lib/cleaningSqlExtras";
+import { invalidateNetworkHygieneSnapshot } from "@/lib/networkHygienePipeline";
 
 export type RemovalAckOutcome = "disconnected" | "skipped" | "failed";
+
+async function logRemovalOutcome(
+  contactId: string,
+  outcome: RemovalAckOutcome,
+  error?: string | null,
+): Promise<void> {
+  try {
+    await logCleaningExecAction({
+      contactId,
+      kind: "removal",
+      outcome,
+      error: error ?? null,
+    });
+  } catch {
+    /* automation_log optional on older DBs */
+  }
+}
+
+/** Persist LinkedIn disconnect in Clin (segment, degree, cleaning state). */
+export async function applyContactDisconnectedState(
+  contactId: string,
+): Promise<void> {
+  const db = getDb();
+  const existing = await db.query.contacts.findFirst({
+    where: eq(contacts.id, contactId),
+    columns: { id: true },
+  });
+  if (!existing) throw new Error("Contact not found.");
+
+  await db
+    .update(contacts)
+    .set({
+      segment: "ghost",
+      connectionDegree: DISCONNECTED_DEGREE,
+      lastUpdatedAt: new Date(),
+    })
+    .where(eq(contacts.id, contactId));
+
+  tryUpdateCleaningDismissedAt(contactId, true);
+  tryUpdateCleaningUserBucket(contactId, null);
+  await logRemovalOutcome(contactId, "disconnected");
+  invalidateNetworkHygieneSnapshot();
+}
 
 export async function acknowledgeRemovalExec(
   execId: string,
@@ -27,23 +74,16 @@ export async function acknowledgeRemovalExec(
   await completeCleaningExec({ id: execId, outcome, error: error ?? null });
 
   if (outcome === "disconnected") {
-    await setContactSegment(row.contactId, "ghost");
-    tryUpdateCleaningDismissedAt(row.contactId, true);
+    await applyContactDisconnectedState(row.contactId);
     const settings = await getCleaningExecSettings();
     await rollActionGapAfterSuccess(settings);
+  } else {
+    await logRemovalOutcome(row.contactId, outcome, error ?? null);
+    await db
+      .update(contacts)
+      .set({ lastUpdatedAt: new Date() })
+      .where(eq(contacts.id, row.contactId));
   }
-
-  await logCleaningExecAction({
-    contactId: row.contactId,
-    kind: "removal",
-    outcome,
-    error: error ?? null,
-  });
-
-  await db
-    .update(contacts)
-    .set({ lastUpdatedAt: new Date() })
-    .where(eq(contacts.id, row.contactId));
 
   return { contactId: row.contactId };
 }
@@ -66,16 +106,5 @@ export async function confirmContactDisconnected(
     return;
   }
 
-  await setContactSegment(contactId, "ghost");
-  tryUpdateCleaningDismissedAt(contactId, true);
-  await logCleaningExecAction({
-    contactId,
-    kind: "removal",
-    outcome: "disconnected",
-    error: null,
-  });
-  await db
-    .update(contacts)
-    .set({ lastUpdatedAt: new Date() })
-    .where(eq(contacts.id, contactId));
+  await applyContactDisconnectedState(contactId);
 }

@@ -33,7 +33,7 @@ export function AutopilotBatchPanel({
     try {
       const summary = await runAnalyzeBatchChunked({
         totalLimit: limit,
-        chunkSize: 5,
+        chunkSize: 1,
         onProgress: setProgress,
       });
       setResults(summary.results as BatchResult[]);
@@ -83,7 +83,9 @@ export function AutopilotBatchPanel({
         className="clin-btn-primary"
       >
         {busy && progress
-          ? `Analyzing ${progress.processed}/${progress.target}…`
+          ? progress.processed === 0
+            ? `Starting contact 1/${progress.target}…`
+            : `Analyzing ${progress.processed}/${progress.target}…`
           : busy
             ? "Starting…"
             : "Run batch now"}
@@ -98,8 +100,8 @@ export function AutopilotBatchPanel({
       {error ? <p className="clin-error">{error}</p> : null}
       {results && results.length > 0 ? (
         <ul className="max-h-64 space-y-1 overflow-y-auto font-mono text-xs text-clin-muted">
-          {results.map((r) => (
-            <li key={r.contactId}>
+          {results.map((r, index) => (
+            <li key={`${r.contactId}-${index}`}>
               {r.ok ? (
                 <span className="text-emerald-700">
                   ✓ {r.contactId.slice(0, 8)}… ({r.tier})

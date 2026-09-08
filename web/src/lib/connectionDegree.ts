@@ -4,6 +4,15 @@ export const NORMALIZED_CONNECTION_DEGREES = ["1st", "2nd", "3rd+"] as const;
 export type NormalizedConnectionDegree =
   (typeof NORMALIZED_CONNECTION_DEGREES)[number];
 
+/** Stored on contacts after the user confirms a LinkedIn disconnect in Clin. */
+export const DISCONNECTED_DEGREE = "disconnected";
+
+export function isDisconnectedDegree(
+  degree: string | null | undefined,
+): boolean {
+  return degree?.trim().toLowerCase() === DISCONNECTED_DEGREE;
+}
+
 function cleanDegreeText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
@@ -45,6 +54,7 @@ export function parseConnectionDegree(
 export function normalizeConnectionDegree(
   degree: string | null | undefined,
 ): NormalizedConnectionDegree | null {
+  if (isDisconnectedDegree(degree)) return null;
   if (!degree?.trim()) return null;
   const trimmed = degree.trim();
   if (

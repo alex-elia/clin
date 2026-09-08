@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -10,12 +9,14 @@ import {
   Cell,
   Pie,
   PieChart,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import type { NetworkHygieneSnapshot } from "@/lib/networkHygieneTypes";
+import { ClinChartFrame } from "@/components/charts/ClinChartFrame";
+import type {
+  NetworkHygieneSnapshot,
+} from "@/lib/networkHygieneTypes";
 import {
   runAnalyzeBatchChunked,
   type AnalyzeBatchProgress,
@@ -101,8 +102,16 @@ export function NetworkHygienePipelinePanel() {
 
   async function runAnalyzeBatch() {
     if (!snapshot) return;
-    const target = Math.min(30, snapshot.actHints.analyzeGapCount);
-    if (target <= 0) return;
+    const eligible = snapshot.metrics.pendingLlmAnalysis;
+    const target = Math.min(30, eligible);
+    if (target <= 0) {
+      setActionError(
+        snapshot.actHints.analyzeGapCount > 0
+          ? `${snapshot.actHints.analyzeGapCount} profile capture(s) lack analyzable name/headline. Re-capture profiles or wait for backfill, then Rescan.`
+          : "No contacts pending LLM analysis.",
+      );
+      return;
+    }
     setBusyAction("analyze");
     setActionError(null);
     setActionSuccess(null);
@@ -110,7 +119,7 @@ export function NetworkHygienePipelinePanel() {
     try {
       const summary = await runAnalyzeBatchChunked({
         totalLimit: target,
-        chunkSize: 5,
+        chunkSize: 1,
         onProgress: setAnalyzeProgress,
       });
       setActionSuccess(
@@ -168,40 +177,6 @@ export function NetworkHygienePipelinePanel() {
     }
   }
 
-  async function confirmDisconnected(contactIds: string[]) {
-    if (contactIds.length === 0) return;
-    setBusyAction("confirm-disconnect");
-    setActionError(null);
-    setActionSuccess(null);
-    try {
-      const res = await fetch("/api/cleaning/batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contactIds,
-          action: "confirm_disconnected",
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setActionError(data?.error || `HTTP ${res.status}`);
-        return;
-      }
-      const results = (data.results ?? []) as BatchResult[];
-      const ok = results.filter((r) => r.ok).length;
-      const failed = results.length - ok;
-      setActionSuccess(
-        `Marked ${ok} contact(s) as disconnected${failed ? ` (${failed} failed)` : ""}.`,
-      );
-      await load(true);
-      router.refresh();
-    } catch (e) {
-      setActionError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
   if (loading && !snapshot) {
     return (
       <section className="clin-card p-5">
@@ -239,6 +214,8 @@ export function NetworkHygienePipelinePanel() {
   const activityChart = recordToBars(m.byActivityTier, ACTIVITY_COLORS);
   const threadChart = recordToBars(m.byThreadStage);
   const verdictChart = recordToBars(m.byRemoveVerdict);
+  const analyzeEligible = m.pendingLlmAnalysis;
+  const analyzeGap = snapshot.actHints.analyzeGapCount;
 
   return (
     <section className="space-y-4">
@@ -343,7 +320,7 @@ export function NetworkHygienePipelinePanel() {
           </p>
         </summary>
         <div className="space-y-6 border-t border-[var(--clin-border)] px-5 pb-5 pt-4">
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
             <ChartBlock
               title="Connection degree"
               subtitle={`Only ${m.firstDegreeCount} 1st-degree can disconnect`}
@@ -356,7 +333,7 @@ export function NetworkHygienePipelinePanel() {
               pie
             />
           </div>
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
             <ChartBlock
               title="LinkedIn activity tier"
               subtitle={`${m.activityUnknown} unknown (no posts capture) — not counted as zombie`}
@@ -372,7 +349,7 @@ export function NetworkHygienePipelinePanel() {
               data={threadChart}
             />
           </div>
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
             <ChartBlock
               title="Remove verdict (in scope)"
               subtitle={`${m.removableFirstYes} yes · ${m.removableFirstMaybe} maybe · queue pending ${m.removalQueuePending}`}
@@ -447,10 +424,17 @@ export function NetworkHygienePipelinePanel() {
             <li>
               Analyze{" "}
               <strong className="clin-strong tabular-nums">
-                {snapshot.actHints.analyzeGapCount}
+                {analyzeEligible}
               </strong>{" "}
-              profile-ready contacts without LLM (up to 30 per run).
-              {snapshot.actHints.analyzeGapCount > 0 ? (
+              profile-ready contact(s) without LLM (up to 30 per run).
+              {analyzeGap > analyzeEligible ? (
+                <span className="text-xs text-[var(--clin-muted)]">
+                  {" "}
+                  ({analyzeGap - analyzeEligible} more have a capture but need
+                  name/headline before LLM can run)
+                </span>
+              ) : null}
+              {analyzeEligible > 0 ? (
                 <>
                   <button
                     type="button"
@@ -459,7 +443,9 @@ export function NetworkHygienePipelinePanel() {
                     className="ml-2 clin-btn-primary text-xs"
                   >
                     {busyAction === "analyze" && analyzeProgress
-                      ? `Analyzing ${analyzeProgress.processed}/${analyzeProgress.target}…`
+                      ? analyzeProgress.processed === 0
+                        ? `Starting contact 1/${analyzeProgress.target}…`
+                        : `Analyzing ${analyzeProgress.processed}/${analyzeProgress.target}…`
                       : busyAction === "analyze"
                         ? "Starting…"
                         : "Run batch"}
@@ -521,72 +507,22 @@ export function NetworkHygienePipelinePanel() {
             <p className="text-sm text-emerald-700">{actionSuccess}</p>
           ) : null}
 
-          {snapshot.topRemovalCandidates.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead>
-                  <tr className="border-b border-[var(--clin-border)] text-xs text-[var(--clin-muted)]">
-                    <th className="py-2 pr-3">Contact</th>
-                    <th className="py-2 pr-3">Degree</th>
-                    <th className="py-2 pr-3">C</th>
-                    <th className="py-2 pr-3">Signals</th>
-                    <th className="py-2">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {snapshot.topRemovalCandidates.map((row) => (
-                    <tr
-                      key={row.contactId}
-                      className="border-b border-[var(--clin-border)]"
-                    >
-                      <td className="py-2 pr-3">
-                        <Link
-                          href={`/contacts/${row.contactId}`}
-                          className="clin-link"
-                        >
-                          {row.fullName ?? row.contactId.slice(0, 8)}
-                        </Link>
-                      </td>
-                      <td className="py-2 pr-3 tabular-nums">
-                        {row.connectionDegree}
-                      </td>
-                      <td className="py-2 pr-3 tabular-nums">
-                        {row.cleanupScore}
-                      </td>
-                      <td className="py-2 pr-3 text-xs text-[var(--clin-muted)]">
-                        {row.reasons.join(" · ")}
-                      </td>
-                      <td className="py-2">
-                        <button
-                          type="button"
-                          disabled={busyAction === "confirm-disconnect"}
-                          onClick={() =>
-                            void confirmDisconnected([row.contactId])
-                          }
-                          className="clin-btn-secondary text-xs px-2 py-1 disabled:opacity-50"
-                        >
-                          I disconnected
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <p className="mt-2 text-xs text-[var(--clin-muted)]">
-                <Link
-                  href="/contacts?segment=remove_candidate"
-                  className="clin-link"
-                >
-                  Drill down on contacts
-                </Link>
-              </p>
-            </div>
-          ) : (
-            <p className="text-sm text-[var(--clin-muted)]">
-              No contacts in the Review removal bucket yet. Enrich and analyze
-              to sharpen advice, then accept candidates on the cleaning board.
+          <div className="rounded-lg border border-[var(--clin-border)] bg-[var(--clin-surface-muted)]/40 p-4">
+            <p className="text-sm text-[var(--clin-text)]">
+              Review and stage removals in the{" "}
+              <a href="/cleaning?bucket=review_remove&removal=signals&verdict=maybe" className="clin-link">
+                Cleaning board
+              </a>
+              {" "}above: use <strong className="clin-strong">Review removal</strong> →{" "}
+              <strong className="clin-strong">AI signals</strong> for yes/maybe
+              filters, then <strong className="clin-strong">Stage for removal</strong>{" "}
+              or <strong className="clin-strong">Accept</strong> in the bucket.
             </p>
-          )}
+            <p className="mt-2 text-xs text-[var(--clin-muted)]">
+              {m.removableFirstYes} ready yes · {m.removableFirstMaybe} maybe (1st
+              degree) · {m.reviewRemoveBucket} already in review_remove bucket
+            </p>
+          </div>
         </div>
       </details>
     </section>
@@ -652,13 +588,13 @@ function ChartBlock({
     <div className="clin-card p-4">
       <h3 className="text-sm font-medium">{title}</h3>
       <p className="mt-0.5 text-xs text-[var(--clin-muted)]">{subtitle}</p>
-      <div className="mt-4 h-[220px] w-full">
-        {data.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-sm text-[var(--clin-muted)]">
-            No data yet
-          </div>
-        ) : pie ? (
-          <ResponsiveContainer width="100%" height="100%">
+      {data.length === 0 ? (
+        <div className="mt-4 flex h-[220px] w-full items-center justify-center text-sm text-[var(--clin-muted)]">
+          No data yet
+        </div>
+      ) : (
+        <ClinChartFrame className="mt-4 h-[220px] w-full min-h-0 min-w-0">
+          {pie ? (
             <PieChart>
               <Pie
                 data={data}
@@ -676,9 +612,7 @@ function ChartBlock({
               </Pie>
               <Tooltip />
             </PieChart>
-          </ResponsiveContainer>
-        ) : (
-          <ResponsiveContainer width="100%" height="100%">
+          ) : (
             <BarChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="name" tick={{ fontSize: 11 }} />
@@ -690,9 +624,9 @@ function ChartBlock({
                 ))}
               </Bar>
             </BarChart>
-          </ResponsiveContainer>
-        )}
-      </div>
+          )}
+        </ClinChartFrame>
+      )}
     </div>
   );
 }

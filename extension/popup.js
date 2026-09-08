@@ -1920,8 +1920,9 @@ function renderCleaningRemovalCard(it, base) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ execId: it.execId, outcome: "disconnected" }),
       });
+      const body = await r.json().catch(() => ({}));
       if (!r.ok) {
-        setStatus(await r.text(), "err");
+        setStatus(body?.error || `Mark failed (${r.status})`, "err");
         doneBtn.disabled = false;
         return;
       }
