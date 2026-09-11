@@ -4,23 +4,24 @@ import {
   parseHttpErrorBody,
 } from "@/lib/llm/errors";
 import { resolveOvhChatCompletionsUrl } from "@/lib/llm/ovhEnv";
-import { responseLooksLikeJsonObject } from "@/lib/outreachDraftParse";
 import type {
   ChatCompletionResult,
   CompleteChatParams,
   LlmConfig,
 } from "@/lib/llm/types";
 
-/** Resolve OpenAI-style chat completions URL from a configured API root. */
-export function resolveChatCompletionsUrl(baseUrl: string): string {
-  const root = baseUrl.replace(/\/$/, "");
-  if (/\/chat\/completions$/i.test(root)) return root;
-  if (/\/v1$/i.test(root)) return `${root}/chat/completions`;
-  if (/openai_compat\/.+\/chat\/completions$/i.test(root)) return root;
-  if (/openai_compat|\/api\//i.test(root)) {
-    return `${root}/chat/completions`;
+export { resolveChatCompletionsUrl } from "@/lib/llm/chatCompletionsUrl";
+
+function responseLooksLikeJsonObject(text: string): boolean {
+  const trimmed = text.trim();
+  const start = trimmed.indexOf("{");
+  if (start === -1) return false;
+  try {
+    const parsed: unknown = JSON.parse(trimmed.slice(start));
+    return parsed !== null && typeof parsed === "object";
+  } catch {
+    return false;
   }
-  return `${root}/v1/chat/completions`;
 }
 
 function extractMessageContent(message: Record<string, unknown>): string {
