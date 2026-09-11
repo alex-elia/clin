@@ -1,4 +1,5 @@
 import { getSqlite } from "@/db";
+import { chunkIds } from "@/lib/sqliteInChunks";
 
 export type ContactLlmExtension = {
   llmMessageContext: string | null;
@@ -12,25 +13,27 @@ export function listContactLlmExtensionsMap(
 ): Map<string, ContactLlmExtension> {
   const map = new Map<string, ContactLlmExtension>();
   if (contactIds.length === 0) return map;
-  const placeholders = contactIds.map(() => "?").join(",");
   try {
-    const rows = getSqlite()
-      .prepare(
-        `SELECT id, llm_message_context AS m, llm_provisional_json AS p, llm_refined_json AS r
-         FROM contacts WHERE id IN (${placeholders})`,
-      )
-      .all(...contactIds) as {
-      id: string;
-      m: string | null;
-      p: string | null;
-      r: string | null;
-    }[];
-    for (const row of rows) {
-      map.set(row.id, {
-        llmMessageContext: row.m,
-        llmProvisionalJson: row.p,
-        llmRefinedJson: row.r,
-      });
+    for (const chunk of chunkIds(contactIds)) {
+      const placeholders = chunk.map(() => "?").join(",");
+      const rows = getSqlite()
+        .prepare(
+          `SELECT id, llm_message_context AS m, llm_provisional_json AS p, llm_refined_json AS r
+           FROM contacts WHERE id IN (${placeholders})`,
+        )
+        .all(...chunk) as {
+        id: string;
+        m: string | null;
+        p: string | null;
+        r: string | null;
+      }[];
+      for (const row of rows) {
+        map.set(row.id, {
+          llmMessageContext: row.m,
+          llmProvisionalJson: row.p,
+          llmRefinedJson: row.r,
+        });
+      }
     }
   } catch {
     for (const id of contactIds) {

@@ -7,6 +7,7 @@ import {
   getOutreachSendSettings,
 } from "@/lib/outreachSend";
 import { getSqlite } from "@/db";
+import { markCampaignMemberInviteSent } from "@/lib/campaignInviteLifecycle";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,7 +15,7 @@ export const dynamic = "force-dynamic";
 const bodySchema = z.object({
   memberId: z.string().min(1),
   outcome: z.enum(["sent", "skipped", "failed", "reply_detected"]),
-  action: z.string().optional(),
+  action: z.enum(["dm", "invite"]).optional(),
   error: z.string().optional(),
 });
 
@@ -41,14 +42,20 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
+  const resolvedAction = action ?? "dm";
+
   if (outcome === "sent") {
-    await updateMemberStatus(memberId, "sent");
-    const sqlite = getSqlite();
-    sqlite
-      .prepare(
-        `UPDATE outreach_campaign_members SET message_sent_at = ? WHERE id = ?`,
-      )
-      .run(Date.now(), memberId);
+    if (resolvedAction === "invite") {
+      await markCampaignMemberInviteSent(memberId);
+    } else {
+      await updateMemberStatus(memberId, "sent");
+      const sqlite = getSqlite();
+      sqlite
+        .prepare(
+          `UPDATE outreach_campaign_members SET message_sent_at = ? WHERE id = ?`,
+        )
+        .run(Date.now(), memberId);
+    }
     const settings = await getOutreachSendSettings();
     await rollSendGapAfterSuccess(settings);
   } else if (outcome === "skipped") {
@@ -65,7 +72,7 @@ export async function POST(req: Request) {
   await logOutreachSend({
     campaignMemberId: memberId,
     contactId: row.contactId,
-    action: action ?? "dm",
+    action: resolvedAction,
     outcome,
     error: error ?? null,
   });

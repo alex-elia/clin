@@ -3,8 +3,7 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { captureSessions, contacts } from "@/db/schema";
 import { extractJsonObjectFromModelText } from "@/lib/llmAnalysis";
-import { completeChat } from "@/lib/llm/completeChat";
-import type { LlmConfig } from "@/lib/llm/types";
+import { completeChat, getLlmConfigForFeature } from "@/lib/llm/completeChat";
 import { backfillContactFieldsFromLatestProfileCapture } from "@/lib/contactProfileBackfill";
 import { getOrCreateUserContext } from "@/lib/userContext";
 
@@ -72,9 +71,7 @@ export async function getSelfProfileReadyForOllama(
  * One-shot Ollama pass: infer networking goals + positioning from the linked
  * contact capture (and optional prior goals as hints).
  */
-export async function runSelfGoalsAndPositioningLlm(opts: {
-  settings: LlmConfig;
-}): Promise<SelfProfileLlmResult> {
+export async function runSelfGoalsAndPositioningLlm(): Promise<SelfProfileLlmResult> {
   const db = getDb();
   const ctx = await getOrCreateUserContext();
   if (!ctx.selfContactId) {
@@ -118,8 +115,11 @@ If data is thin, say so in both fields and suggest what to capture next on Linke
     2,
   );
 
+  const routed = await getLlmConfigForFeature("user_profile", {
+    userChars: user.length,
+  });
   const rawText = await completeChat({
-    config: opts.settings,
+    config: routed.config,
     feature: "user_profile",
     system,
     user,

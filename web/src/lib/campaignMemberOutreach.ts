@@ -33,7 +33,7 @@ export async function loadMemberOutreachExtras(
   const rows = sqlite
     .prepare(
       `SELECT id, message_sent_at, message_reply_outcome, message_outcome_note,
-              closed_at, close_reason
+              closed_at, close_reason, invite_sent_at, connection_accepted_at, outreach_step
        FROM outreach_campaign_members WHERE id IN (${placeholders})`,
     )
     .all(...memberIds) as {
@@ -43,6 +43,9 @@ export async function loadMemberOutreachExtras(
     message_outcome_note: string | null;
     closed_at: number | null;
     close_reason: string | null;
+    invite_sent_at: number | null;
+    connection_accepted_at: number | null;
+    outreach_step: string | null;
   }[];
 
   for (const r of rows) {
@@ -53,6 +56,13 @@ export async function loadMemberOutreachExtras(
       messageOutcomeNote: r.message_outcome_note ?? null,
       closedAt: r.closed_at != null ? new Date(r.closed_at) : null,
       closeReason: r.close_reason ?? null,
+      inviteSentAt:
+        r.invite_sent_at != null ? new Date(r.invite_sent_at) : null,
+      connectionAcceptedAt:
+        r.connection_accepted_at != null
+          ? new Date(r.connection_accepted_at)
+          : null,
+      outreachStep: r.outreach_step ?? null,
     });
   }
   return map;
@@ -109,6 +119,8 @@ export function outreachNextReasonLabel(reason: string | null): string {
       return "Set this campaign active for extension to queue sends here.";
     case "daily_send_cap":
       return "Daily send cap reached.";
+    case "daily_invite_cap":
+      return "Daily invite cap reached.";
     case "pace_wait":
       return "Waiting for send pace gap.";
     case "no_ready_members":
@@ -130,16 +142,18 @@ export async function getCampaignOutreachPanel(
 
   const readyRow = sqlite
     .prepare(
-      `SELECT COUNT(*) AS c FROM outreach_campaign_members WHERE campaign_id = ? AND status = 'ready'`,
+      `SELECT COUNT(*) AS c FROM outreach_campaign_members
+       WHERE campaign_id = ? AND status IN ('ready', 'followup_ready')`,
     )
     .get(campaignId) as { c: number };
   const readyCount = readyRow?.c ?? 0;
 
   let nextReason: string | null = null;
-  if (isActive && settings.enabled) {
+  const runnerOn = settings.enabled || settings.inviteEnabled;
+  if (isActive && runnerOn) {
     const next = await getNextOutreachSendItem();
     if (!next.item) nextReason = next.reason;
-  } else if (!settings.enabled) {
+  } else if (!settings.enabled && !settings.inviteEnabled) {
     nextReason = "linkedin_outreach_disabled";
   } else if (!isActive) {
     nextReason = "not_active_campaign";

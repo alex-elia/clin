@@ -7,9 +7,9 @@ import type { ChatCompletionResult, CompleteChatParams } from "@/lib/llm/types";
 export async function completeChatOllama(
   params: CompleteChatParams,
 ): Promise<ChatCompletionResult> {
-  const { config, system, user, jsonMode, temperature, timeoutMs, numCtx } =
+  const { config, system, user, jsonMode, temperature, timeoutMs, numCtx, maxTokens } =
     params;
-  const timeout = timeoutMs ?? (jsonMode ? 120_000 : 90_000);
+  const timeout = timeoutMs ?? (jsonMode ? 240_000 : 120_000);
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeout);
   try {
@@ -18,6 +18,9 @@ export async function completeChatOllama(
     };
     if (numCtx != null && numCtx > 0) {
       options.num_ctx = numCtx;
+    }
+    if (maxTokens != null && maxTokens > 0) {
+      options.num_predict = maxTokens;
     }
     const body: Record<string, unknown> = {
       model: config.model,

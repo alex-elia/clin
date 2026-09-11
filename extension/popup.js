@@ -1,4 +1,4 @@
-const DEFAULT_BASE = "http://127.0.0.1:3000";
+const DEFAULT_BASE = "http://127.0.0.1:3100";
 const LIVE_STATUS_KEY = "clinExtensionLiveStatus";
 const LAST_PACE_KEY = "clin_last_pace_message";
 
@@ -1605,13 +1605,18 @@ function renderOutreachCard(it, base) {
       : it.source === "decision_queue"
         ? "Decisions"
         : "Ready";
-  h3.textContent = `${it.fullName || "Unknown"} · ${src}`;
+  h3.textContent = `${it.fullName || "Unknown"} · ${src}${
+    it.action === "invite" ? " · Invite" : it.action === "dm" ? " · DM" : ""
+  }`;
   card.appendChild(h3);
 
   const ta = document.createElement("textarea");
   ta.className = "card-draft";
   ta.readOnly = true;
-  ta.value = it.draftOutreach?.trim() || "(No draft)";
+  ta.value =
+    (it.action === "invite" ? it.draftInviteNote : null)?.trim() ||
+    it.draftOutreach?.trim() ||
+    "(No draft)";
   card.appendChild(ta);
 
   const row1 = document.createElement("div");
@@ -1622,7 +1627,10 @@ function renderOutreachCard(it, base) {
   copyBtn.className = "btn btn-secondary";
   copyBtn.textContent = "Copy draft";
   copyBtn.addEventListener("click", () => {
-    const text = it.draftOutreach || "";
+    const text =
+      (it.action === "invite" ? it.draftInviteNote : null) ||
+      it.draftOutreach ||
+      "";
     navigator.clipboard.writeText(text).catch(() => {
       window.prompt("Copy:", text);
     });
@@ -1644,7 +1652,8 @@ function renderOutreachCard(it, base) {
   const sentBtn = document.createElement("button");
   sentBtn.type = "button";
   sentBtn.className = "btn btn-primary";
-  sentBtn.textContent = "Mark sent (manual)";
+  sentBtn.textContent =
+    it.action === "invite" ? "Mark invite sent (manual)" : "Mark sent (manual)";
   sentBtn.addEventListener("click", async () => {
     sentBtn.disabled = true;
     try {
@@ -1652,7 +1661,11 @@ function renderOutreachCard(it, base) {
         const r = await fetch(`${base}/api/extension/outreach-queue/ack`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ memberId: it.memberId, outcome: "sent" }),
+          body: JSON.stringify({
+            memberId: it.memberId,
+            outcome: "sent",
+            action: it.action === "invite" ? "invite" : "dm",
+          }),
         });
         if (!r.ok) {
           const err = await r.text();
@@ -1920,8 +1933,9 @@ function renderCleaningRemovalCard(it, base) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ execId: it.execId, outcome: "disconnected" }),
       });
+      const body = await r.json().catch(() => ({}));
       if (!r.ok) {
-        setStatus(await r.text(), "err");
+        setStatus(body?.error || `Mark failed (${r.status})`, "err");
         doneBtn.disabled = false;
         return;
       }

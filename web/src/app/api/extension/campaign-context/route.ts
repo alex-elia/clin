@@ -18,9 +18,20 @@ export const dynamic = "force-dynamic";
  * Extension polls this (no server push). Used to attach `outreachCampaignId` to captures
  * and to show the user which campaign list they are filling.
  */
+function parseAttemptedMemberIds(raw: string | null): string[] {
+  if (!raw?.trim()) return [];
+  return raw
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+}
+
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const requestedCampaignId = url.searchParams.get("campaignId")?.trim() || null;
+  const attemptedMemberIds = parseAttemptedMemberIds(
+    url.searchParams.get("attemptedMemberIds"),
+  );
   const activeExtensionId = await getActiveOutreachCampaignId();
   const effectiveCampaignId = requestedCampaignId;
 
@@ -42,6 +53,7 @@ export async function GET(request: Request) {
     nextProfileUrl: string | null;
     nextProfileName: string | null;
     nextMemberId: string | null;
+    nextContactId: string | null;
     nextProfileDepth: string | null;
   } | null = null;
 
@@ -50,6 +62,7 @@ export async function GET(request: Request) {
     const enriched = await enrichCampaignMembers(rawMembers);
     const counts = countProfileDepths(enriched);
     const skipIds = await getCaptureQueueSkipMemberIds(effectiveCampaignId);
+    for (const id of attemptedMemberIds) skipIds.add(id);
     const next = pickNextProfileCaptureTarget(enriched, {
       skipMemberIds: skipIds,
     });
@@ -63,6 +76,7 @@ export async function GET(request: Request) {
       nextProfileUrl: next?.profileUrl ?? null,
       nextProfileName: next?.fullName ?? null,
       nextMemberId: next?.memberId ?? null,
+      nextContactId: next?.contactId ?? null,
       nextProfileDepth: next?.profileDepth ?? null,
     };
   }

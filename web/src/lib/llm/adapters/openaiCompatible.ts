@@ -4,6 +4,7 @@ import {
   parseHttpErrorBody,
 } from "@/lib/llm/errors";
 import { resolveOvhChatCompletionsUrl } from "@/lib/llm/ovhEnv";
+import { responseLooksLikeJsonObject } from "@/lib/outreachDraftParse";
 import type {
   ChatCompletionResult,
   CompleteChatParams,
@@ -37,11 +38,18 @@ function extractMessageContent(message: Record<string, unknown>): string {
   } else if (typeof content !== "string") {
     content = String(content ?? "");
   }
-  if (!content && (message.reasoning != null || message.reasoning_content != null)) {
-    const reasoning = message.reasoning ?? message.reasoning_content;
-    content = typeof reasoning === "string" ? reasoning : String(reasoning ?? "");
-  }
-  return typeof content === "string" ? content : String(content ?? "");
+  const contentText = typeof content === "string" ? content : String(content ?? "");
+  const reasoningRaw = message.reasoning ?? message.reasoning_content;
+  const reasoningText =
+    reasoningRaw == null
+      ? ""
+      : typeof reasoningRaw === "string"
+        ? reasoningRaw
+        : String(reasoningRaw);
+  if (responseLooksLikeJsonObject(contentText)) return contentText;
+  if (responseLooksLikeJsonObject(reasoningText)) return reasoningText;
+  if (contentText.trim()) return contentText;
+  return reasoningText;
 }
 
 function assertApiKey(config: LlmConfig): string {
@@ -118,74 +126,140 @@ async function postChatCompletionOnce(
   return { text: content, usage };
 }
 
+async function postChatCompletionWithTimeout(
+  url: string,
+  apiKey: string,
+  body: Record<string, unknown>,
+  config: LlmConfig,
+  timeoutMs: number,
+): Promise<ChatCompletionResult> {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await postChatCompletionOnce(
+      url,
+      apiKey,
+      body,
+      controller.signal,
+      config,
+    );
+  } catch (e) {
+    if (e instanceof Error && e.name === "AbortError") {
+      throw new Error(
+        `LLM (${config.provider}) timed out after ${Math.round(timeoutMs / 1000)}s.`,
+      );
+    }
+    throw e;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+function isTimeoutError(err: Error): boolean {
+  return (
+    err.name === "AbortError" || /timed out after/i.test(err.message)
+  );
+}
+
 export async function completeChatOpenAiCompatible(
   params: CompleteChatParams,
 ): Promise<ChatCompletionResult> {
-  const { config, system, user, jsonMode, temperature, timeoutMs } = params;
+  const {
+    config,
+    system,
+    user,
+    jsonMode,
+    jsonSchema,
+    temperature,
+    timeoutMs,
+    maxTokens,
+  } = params;
   const apiKey = assertApiKey(config);
   const url = resolveOvhChatCompletionsUrl({ baseUrl: config.baseUrl });
-  const timeout = timeoutMs ?? (jsonMode ? 180_000 : 120_000);
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeout);
+  const timeout = timeoutMs ?? (jsonMode ? 240_000 : 120_000);
+  const qwenNoThink =
+    /qwen/i.test(config.model) && Boolean(jsonMode)
+      ? `${user.trim()}\n\n/no_think`
+      : user;
 
-  const buildBody = (useJsonMode: boolean): Record<string, unknown> => {
+  const buildBody = (opts: {
+    useJsonMode: boolean;
+    useSchema: boolean;
+  }): Record<string, unknown> => {
     const body: Record<string, unknown> = {
       model: config.model,
       messages: [
         { role: "system", content: system },
-        { role: "user", content: user },
+        { role: "user", content: opts.useJsonMode ? qwenNoThink : user },
       ],
-      temperature: temperature ?? (useJsonMode ? 0.35 : 0.55),
-      max_tokens: useJsonMode ? 4096 : 2048,
+      temperature: temperature ?? (opts.useJsonMode ? 0.35 : 0.55),
+      max_tokens: maxTokens ?? (opts.useJsonMode ? 8192 : 2048),
     };
-    if (useJsonMode) {
+    if (opts.useJsonMode && opts.useSchema && jsonSchema) {
+      body.response_format = {
+        type: "json_schema",
+        json_schema: {
+          name: jsonSchema.name,
+          strict: true,
+          schema: jsonSchema.schema,
+        },
+      };
+    } else if (opts.useJsonMode) {
       body.response_format = { type: "json_object" };
     }
     return body;
   };
 
-  const attempts: { useJsonMode: boolean }[] = jsonMode
-    ? [{ useJsonMode: true }, { useJsonMode: false }]
-    : [{ useJsonMode: false }];
+  const attempts: { useJsonMode: boolean; useSchema: boolean }[] = jsonMode
+    ? [
+        ...(jsonSchema
+          ? [{ useJsonMode: true, useSchema: true }]
+          : []),
+        { useJsonMode: true, useSchema: false },
+        { useJsonMode: false, useSchema: false },
+      ]
+    : [{ useJsonMode: false, useSchema: false }];
 
   let lastError: Error | null = null;
 
-  try {
-    for (const attempt of attempts) {
-      for (let retry = 0; retry < 3; retry += 1) {
-        try {
-          const result = await postChatCompletionOnce(
-            url,
-            apiKey,
-            buildBody(attempt.useJsonMode),
-            controller.signal,
-            config,
-          );
-          const text = attempt.useJsonMode ? result.text : result.text.trim();
-          return { text, usage: result.usage };
-        } catch (e) {
-          if (e instanceof Error && e.name === "AbortError") {
-            throw new Error(
-              `LLM (${config.provider}) timed out after ${Math.round(timeout / 1000)}s.`,
-            );
-          }
-          const err = e instanceof Error ? e : new Error(String(e));
-          lastError = err;
-          const status = (err as Error & { httpStatus?: number }).httpStatus;
-          if (
-            typeof status === "number" &&
-            isRetryableCloudStatus(status) &&
-            retry < 2
-          ) {
-            await sleepMs(600 * (retry + 1) * (retry + 1));
-            continue;
-          }
+  for (const attempt of attempts) {
+    for (let retry = 0; retry < 3; retry += 1) {
+      try {
+        const result = await postChatCompletionWithTimeout(
+          url,
+          apiKey,
+          buildBody(attempt),
+          config,
+          timeout,
+        );
+        const text = attempt.useJsonMode ? result.text : result.text.trim();
+        if (
+          attempt.useJsonMode &&
+          jsonMode &&
+          !responseLooksLikeJsonObject(text)
+        ) {
+          lastError = new Error("Model returned no JSON object.");
           break;
         }
+        return { text, usage: result.usage };
+      } catch (e) {
+        const err = e instanceof Error ? e : new Error(String(e));
+        lastError = err;
+        if (isTimeoutError(err)) {
+          throw err;
+        }
+        const status = (err as Error & { httpStatus?: number }).httpStatus;
+        if (
+          typeof status === "number" &&
+          isRetryableCloudStatus(status) &&
+          retry < 2
+        ) {
+          await sleepMs(600 * (retry + 1) * (retry + 1));
+          continue;
+        }
+        break;
       }
     }
-    throw lastError ?? new Error("Cloud inference failed.");
-  } finally {
-    clearTimeout(t);
   }
+  throw lastError ?? new Error("Cloud inference failed.");
 }

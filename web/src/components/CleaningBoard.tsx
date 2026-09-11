@@ -16,25 +16,40 @@ import type {
   CleaningBoardData,
   CleaningContactCard,
 } from "@/lib/cleaningBoardTypes";
+import type { NetworkHygieneRow } from "@/lib/networkHygieneTypes";
+import {
+  countRemovalSignals,
+  filterUnstagedRemovalSignals,
+  type RemovalVerdictFilter,
+  type RemovalView,
+} from "@/lib/cleaningRemovalSignals";
 import { RecommendationPanel } from "@/components/RecommendationPanel";
 import { LinkedInActivityBadge } from "@/components/LinkedInActivityBadge";
+import {
+  cleaningCanDisconnect,
+  cleaningNeedsInvite,
+  cleaningNetworkLabel,
+} from "@/lib/cleaningNetwork";
 
 type BatchResult =
   | {
       contactId: string;
       ok: true;
-      effect?: "removal_exec" | "engage_exec" | "review_queue";
+      effect?: "removal_exec" | "engage_exec" | "review_queue" | "not_first_degree";
     }
   | { contactId: string; ok: false; error: string };
 
 type Props = {
   data: CleaningBoardData;
+  hygieneRows?: NetworkHygieneRow[];
 };
 
-export function CleaningBoard({ data }: Props) {
+export function CleaningBoard({ data, hygieneRows = [] }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const paramBucket = searchParams.get("bucket");
+  const removalViewParam = searchParams.get("removal");
+  const verdictParam = searchParams.get("verdict");
   const lowActivityFilter = searchParams.get("filter") === "low_activity";
   const defaultBucket =
     CLEANING_BUCKET_META.find((m) => (data.summary.bucketCounts[m.id] ?? 0) > 0)
@@ -47,6 +62,45 @@ export function CleaningBoard({ data }: Props) {
   const bucketMeta = CLEANING_BUCKET_META.find((m) => m.id === active);
   const cards = data.byBucket[active] ?? [];
   const count = data.summary.bucketCounts[active] ?? 0;
+  const removalCounts = countRemovalSignals(hygieneRows);
+  const removalView: RemovalView =
+    removalViewParam === "signals" ? "signals" : "bucket";
+  const verdictFilter: RemovalVerdictFilter =
+    verdictParam === "yes" || verdictParam === "maybe" || verdictParam === "all"
+      ? verdictParam
+      : removalView === "signals"
+        ? "maybe"
+        : "all";
+  const unstagedSignals = filterUnstagedRemovalSignals(
+    hygieneRows,
+    verdictFilter,
+  );
+
+  function pushCleaningParams(mutator: (params: URLSearchParams) => void) {
+    const params = new URLSearchParams(searchParams.toString());
+    mutator(params);
+    router.push(`/cleaning?${params.toString()}`, { scroll: false });
+  }
+
+  function pickRemovalView(next: RemovalView) {
+    pushCleaningParams((params) => {
+      params.set("bucket", "review_remove");
+      params.set("removal", next);
+      if (next === "signals" && !params.get("verdict")) {
+        params.set("verdict", "maybe");
+      }
+    });
+  }
+
+  function pickVerdictFilter(next: RemovalVerdictFilter) {
+    const scrollY = window.scrollY;
+    pushCleaningParams((params) => {
+      params.set("bucket", "review_remove");
+      params.set("removal", "signals");
+      params.set("verdict", next);
+    });
+    requestAnimationFrame(() => window.scrollTo(0, scrollY));
+  }
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -58,14 +112,20 @@ export function CleaningBoard({ data }: Props) {
     const params = new URLSearchParams(searchParams.toString());
     if (lowActivityFilter) params.delete("filter");
     else params.set("filter", "low_activity");
-    router.push(`/cleaning?${params.toString()}`);
+    router.push(`/cleaning?${params.toString()}`, { scroll: false });
   }
 
   function selectBucket(id: CleaningBucket) {
     setSelected(new Set());
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("bucket", id);
-    router.push(`/cleaning?${params.toString()}`);
+    pushCleaningParams((params) => {
+      params.set("bucket", id);
+      if (id !== "review_remove") {
+        params.delete("removal");
+        params.delete("verdict");
+      } else if (!params.get("removal")) {
+        params.set("removal", "bucket");
+      }
+    });
   }
 
   const toggleSelect = useCallback((contactId: string) => {
@@ -92,7 +152,8 @@ export function CleaningBoard({ data }: Props) {
       | "dismiss"
       | "defer"
       | "enqueue_review"
-      | "enqueue_engage",
+      | "enqueue_engage"
+      | "confirm_disconnected",
     bucket?: CleaningBucket,
   ) {
     const ids = [...selected];
@@ -119,6 +180,7 @@ export function CleaningBoard({ data }: Props) {
         const removals = ok.filter((r) => r.effect === "removal_exec").length;
         const engages = ok.filter((r) => r.effect === "engage_exec").length;
         const reviews = ok.filter((r) => r.effect === "review_queue").length;
+        const skipped = ok.filter((r) => r.effect === "not_first_degree").length;
         const parts: string[] = [];
         if (removals)
           parts.push(
@@ -129,11 +191,29 @@ export function CleaningBoard({ data }: Props) {
             `${engages} queued for engage — edit comments in Exec queues below`,
           );
         if (reviews) parts.push(`${reviews} sent to review queue`);
+        if (skipped)
+          parts.push(
+            `${skipped} not 1st degree, so not queued for disconnect`,
+          );
         if (parts.length) setSuccess(parts.join(". "));
       } else if (action === "enqueue_engage") {
         setSuccess(
           "Queued for engage — edit comments in Exec queues below, then use extension Cleaning tab.",
         );
+      } else if (action === "confirm_disconnected") {
+        const ok = results.filter((r) => r.ok);
+        const failed = results.filter((r): r is Extract<BatchResult, { ok: false }> => !r.ok);
+        if (ok.length) {
+          setSuccess(
+            `Marked ${ok.length} contact(s) as disconnected on LinkedIn.`,
+          );
+        }
+        if (failed.length) {
+          setError(
+            failed[0]?.error ||
+              `${failed.length} contact(s) could not be marked disconnected.`,
+          );
+        }
       }
       setSelected(new Set());
       router.refresh();
@@ -152,7 +232,8 @@ export function CleaningBoard({ data }: Props) {
       | "dismiss"
       | "defer"
       | "enqueue_review"
-      | "enqueue_engage",
+      | "enqueue_engage"
+      | "confirm_disconnected",
     bucket?: CleaningBucket,
   ) {
     setBusy(true);
@@ -179,6 +260,10 @@ export function CleaningBoard({ data }: Props) {
           setSuccess(
             "Queued for engage — edit the AI comment in Exec queues below.",
           );
+        } else if (result.effect === "not_first_degree") {
+          setSuccess(
+            "Not a 1st-degree connection. Removed from this cleaning list. You cannot disconnect them on LinkedIn.",
+          );
         } else {
           setSuccess("Accepted — added to review queue.");
         }
@@ -186,6 +271,8 @@ export function CleaningBoard({ data }: Props) {
         setSuccess(
           "Queued for engage — see Exec queues below to edit comments.",
         );
+      } else if (result?.ok && action === "confirm_disconnected") {
+        setSuccess("Marked as disconnected on LinkedIn.");
       } else if (!result?.ok && result?.error) {
         setError(result.error);
         return;
@@ -207,8 +294,8 @@ export function CleaningBoard({ data }: Props) {
     <div className="space-y-8">
       <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryStat
-          label="Ready for analysis"
-          value={data.summary.readyForAnalysis}
+          label="Open contacts"
+          value={data.summary.openContacts ?? data.summary.totalContacts}
         />
         <SummaryStat
           label="Waiting for AI run"
@@ -219,7 +306,7 @@ export function CleaningBoard({ data }: Props) {
           value={data.summary.needsProfileCapture}
         />
         <SummaryStat
-          label="Analyzed (recent)"
+          label="Analyzed (open network)"
           value={data.summary.analyzedInBoard}
         />
       </dl>
@@ -228,7 +315,9 @@ export function CleaningBoard({ data }: Props) {
         <h2 className="clin-section-title">Buckets</h2>
         <p className="mt-1 text-sm text-[var(--clin-muted)]">
           Contacts are grouped by recommended next step after extraction and AI
-          analysis. Counts reflect your most recently updated contacts.
+          analysis. Counts cover the full open network (all captured and imported
+          contacts except dismissed or disconnected). Each bucket lists the top{" "}
+          {data.summary.cardsPerBucketCap ?? 40} cards.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           {CLEANING_BUCKET_META.map((meta) => {
@@ -309,7 +398,32 @@ export function CleaningBoard({ data }: Props) {
       <section>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="clin-section-title">{bucketMeta?.title ?? active}</h2>
-          {cards.length > 0 ? (
+          {active === "review_remove" && hygieneRows.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => pickRemovalView("bucket")}
+                className={
+                  removalView === "bucket"
+                    ? "clin-btn-primary text-xs"
+                    : "clin-btn-secondary text-xs"
+                }
+              >
+                In bucket ({count})
+              </button>
+              <button
+                type="button"
+                onClick={() => pickRemovalView("signals")}
+                className={
+                  removalView === "signals"
+                    ? "clin-btn-primary text-xs"
+                    : "clin-btn-secondary text-xs"
+                }
+              >
+                AI signals ({removalCounts.unstagedSignals})
+              </button>
+            </div>
+          ) : cards.length > 0 ? (
             <button
               type="button"
               onClick={selectAllInBucket}
@@ -320,18 +434,51 @@ export function CleaningBoard({ data }: Props) {
           ) : null}
         </div>
         <p className="mt-1 text-sm text-[var(--clin-muted)]">
-          {bucketMeta?.description}
-          {count > cards.length ? (
+          {active === "review_remove" && removalView === "signals"
+            ? "Contacts Clin flagged for removal that are not in the Review removal bucket yet. Stage them, then Accept to queue disconnect on LinkedIn."
+            : bucketMeta?.description}
+          {active === "review_remove" && removalView === "bucket" && count > cards.length ? (
             <>
               {" "}
               Showing {cards.length} of {count} in this bucket.
             </>
           ) : null}
         </p>
-        {cards.length === 0 ? (
+
+        {active === "review_remove" && removalView === "signals" ? (
+          <RemovalSignalsPanel
+            rows={unstagedSignals}
+            verdictFilter={verdictFilter}
+            signalCounts={removalCounts}
+            busy={busy}
+            onPickVerdict={pickVerdictFilter}
+            onStage={(contactId) =>
+              runSingle(contactId, "override", "review_remove")
+            }
+            onMarkDisconnected={(contactId) =>
+              runSingle(contactId, "confirm_disconnected")
+            }
+          />
+        ) : cards.length === 0 ? (
           <p className="mt-4 text-sm text-[var(--clin-muted)]">
-            No contacts in this bucket among recent records. Run batch analysis or
-            import more profiles.
+            {active === "review_remove" ? (
+              <>
+                No contacts in this bucket yet.{" "}
+                {removalCounts.unstagedSignals > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => pickRemovalView("signals")}
+                    className="clin-link"
+                  >
+                    Review {removalCounts.unstagedSignals} AI signal(s)
+                  </button>
+                ) : (
+                  "Run batch analysis or import more profiles."
+                )}
+              </>
+            ) : (
+              "No contacts in this bucket in the open network. Run batch analysis or import more profiles."
+            )}
           </p>
         ) : (
           <ul className="mt-4 space-y-3">
@@ -468,6 +615,135 @@ function SummaryStat({ label, value }: { label: string; value: number }) {
   );
 }
 
+function RemovalSignalsPanel({
+  rows,
+  verdictFilter,
+  signalCounts,
+  busy,
+  onPickVerdict,
+  onStage,
+  onMarkDisconnected,
+}: {
+  rows: NetworkHygieneRow[];
+  verdictFilter: RemovalVerdictFilter;
+  signalCounts: ReturnType<typeof countRemovalSignals>;
+  busy: boolean;
+  onPickVerdict: (next: RemovalVerdictFilter) => void;
+  onStage: (contactId: string) => void;
+  onMarkDisconnected: (contactId: string) => void;
+}) {
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-[var(--clin-muted)]">
+          Verdict
+        </span>
+        {(
+          [
+            ["yes", `Yes (${signalCounts.yes})`],
+            ["maybe", `Maybe (${signalCounts.maybe})`],
+            ["all", `All (${signalCounts.all})`],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => onPickVerdict(id)}
+            className={
+              verdictFilter === id
+                ? "clin-btn-primary text-xs"
+                : "clin-btn-secondary text-xs"
+            }
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="text-sm text-[var(--clin-muted)]">
+          No unstaged {verdictFilter} signals. Switch verdict or check the In
+          bucket tab.
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {rows.slice(0, 40).map((row) => (
+            <li
+              key={row.contactId}
+              className="rounded-lg border border-[var(--clin-border)] p-3"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link
+                      href={`/contacts/${row.contactId}`}
+                      className="font-medium clin-link"
+                    >
+                      {row.fullName ?? row.contactId.slice(0, 8)}
+                    </Link>
+                    <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-[var(--clin-muted)]">
+                      {row.removeVerdict}
+                    </span>
+                    <span className="text-xs text-[var(--clin-muted)]">
+                      {row.connectionDegree}
+                      {!row.canDisconnect ? " · cannot disconnect" : ""}
+                    </span>
+                  </div>
+                  {row.headline ? (
+                    <p className="mt-0.5 text-xs text-[var(--clin-muted)]">
+                      {row.headline}
+                    </p>
+                  ) : null}
+                  {row.reasons.length > 0 ? (
+                    <p className="mt-1 text-xs text-[var(--clin-muted)]">
+                      {row.reasons.join(" · ")}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {row.linkedinUrl && row.canDisconnect ? (
+                    <a
+                      href={row.linkedinUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="clin-btn-secondary text-xs px-2 py-1"
+                    >
+                      LinkedIn
+                    </a>
+                  ) : null}
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onStage(row.contactId)}
+                    className="clin-btn-secondary text-xs px-2 py-1 disabled:opacity-50"
+                  >
+                    Stage for removal
+                  </button>
+                  {row.canDisconnect ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => onMarkDisconnected(row.contactId)}
+                      className="clin-btn-primary text-xs px-2 py-1 disabled:opacity-50"
+                    >
+                      Mark disconnected
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {rows.length > 40 ? (
+        <p className="text-xs text-[var(--clin-muted)]">
+          Showing 40 of {rows.length}. Use Contacts drill-down for the full list.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function ContactBucketCard({
   card,
   activeBucket,
@@ -488,7 +764,8 @@ function ContactBucketCard({
       | "dismiss"
       | "defer"
       | "enqueue_review"
-      | "enqueue_engage",
+      | "enqueue_engage"
+      | "confirm_disconnected",
     bucket?: CleaningBucket,
   ) => void;
 }) {
@@ -504,6 +781,12 @@ function ContactBucketCard({
   const preferLinkedIn =
     activeBucket === "review_remove" || card.bucket === "review_remove";
   const linkedInHref = card.linkedinUrl?.trim() || null;
+  const canDisconnect = cleaningCanDisconnect(card.connectionDegree);
+  const needsInvite = cleaningNeedsInvite(card.connectionDegree);
+  const bucketLabel =
+    card.bucket === "reach_out_dm" && needsInvite
+      ? "Reach out (invite)"
+      : CLEANING_BUCKET_LABELS[card.bucket];
 
   return (
     <li className="clin-card p-4">
@@ -548,7 +831,15 @@ function ContactBucketCard({
             </div>
             <div className="flex flex-wrap gap-1.5">
               <span className="clin-pill text-xs">
-                {CLEANING_BUCKET_LABELS[card.bucket]}
+                {bucketLabel}
+              </span>
+              <span className="clin-pill text-xs">
+                Network: {cleaningNetworkLabel(card.connectionDegree)}
+                {card.bucket === "review_remove" && !canDisconnect
+                  ? " · cannot disconnect"
+                  : needsInvite
+                    ? " · invite first"
+                    : ""}
               </span>
               {card.userOverrideBucket ? (
                 <span className="clin-pill text-xs text-amber-800 dark:text-amber-200">
@@ -629,13 +920,27 @@ function ContactBucketCard({
               In Clin
             </Link>
             {card.bucket === "reach_out_dm" ? (
-              <Link href="/decisions" className="clin-link">
-                Decisions
-              </Link>
+              needsInvite ? (
+                <Link href="/campaigns" className="clin-link">
+                  Campaigns (invite)
+                </Link>
+              ) : (
+                <Link href="/decisions" className="clin-link">
+                  Decisions
+                </Link>
+              )
             ) : null}
             {card.bucket === "review_remove" ? (
               <span className="text-xs text-[var(--clin-muted)]">
-                Accept queues removal in extension
+                {canDisconnect
+                  ? "Accept queues removal, or confirm after you disconnect on LinkedIn"
+                  : "Not 1st degree: you cannot disconnect them. Dismiss this card."}
+              </span>
+            ) : null}
+            {card.bucket === "engage_comment" && needsInvite ? (
+              <span className="text-xs text-[var(--clin-muted)]">
+                Public comment is fine. Private next step is a connection invite,
+                not a DM.
               </span>
             ) : null}
           </div>
@@ -646,8 +951,20 @@ function ContactBucketCard({
               onClick={() => onAction("accept")}
               className="clin-btn-primary text-xs px-2 py-1 disabled:opacity-50"
             >
-              Accept
+              {card.bucket === "review_remove" && !canDisconnect
+                ? "Dismiss (cannot disconnect)"
+                : "Accept"}
             </button>
+            {card.bucket === "review_remove" && canDisconnect ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onAction("confirm_disconnected")}
+                className="clin-btn-secondary text-xs px-2 py-1 disabled:opacity-50"
+              >
+                I disconnected on LinkedIn
+              </button>
+            ) : null}
             {activeBucket === "engage_comment" ? (
               <button
                 type="button"

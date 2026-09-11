@@ -1,6 +1,7 @@
 import { getSqlite } from "@/db";
 import type { CleaningBucket } from "@/lib/cleaningBuckets";
 import { isCleaningBucket } from "@/lib/cleaningBuckets";
+import { chunkIds } from "@/lib/sqliteInChunks";
 
 export type ContactCleaningExtension = {
   cleaningUserBucket: CleaningBucket | null;
@@ -12,24 +13,26 @@ export function listContactCleaningExtensionsMap(
 ): Map<string, ContactCleaningExtension> {
   const map = new Map<string, ContactCleaningExtension>();
   if (contactIds.length === 0) return map;
-  const placeholders = contactIds.map(() => "?").join(",");
   try {
-    const rows = getSqlite()
-      .prepare(
-        `SELECT id, cleaning_user_bucket AS b, cleaning_dismissed_at AS d
-         FROM contacts WHERE id IN (${placeholders})`,
-      )
-      .all(...contactIds) as {
-      id: string;
-      b: string | null;
-      d: number | null;
-    }[];
-    for (const row of rows) {
-      map.set(row.id, {
-        cleaningUserBucket:
-          row.b && isCleaningBucket(row.b) ? row.b : null,
-        cleaningDismissedAt: row.d ?? null,
-      });
+    for (const chunk of chunkIds(contactIds)) {
+      const placeholders = chunk.map(() => "?").join(",");
+      const rows = getSqlite()
+        .prepare(
+          `SELECT id, cleaning_user_bucket AS b, cleaning_dismissed_at AS d
+           FROM contacts WHERE id IN (${placeholders})`,
+        )
+        .all(...chunk) as {
+        id: string;
+        b: string | null;
+        d: number | null;
+      }[];
+      for (const row of rows) {
+        map.set(row.id, {
+          cleaningUserBucket:
+            row.b && isCleaningBucket(row.b) ? row.b : null,
+          cleaningDismissedAt: row.d ?? null,
+        });
+      }
     }
   } catch {
     for (const id of contactIds) {

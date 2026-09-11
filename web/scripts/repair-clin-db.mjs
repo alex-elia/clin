@@ -3,6 +3,9 @@
  * Run from `clin/web`: `npm run db:repair`
  */
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { resolveClinDbPath } from "./lib/resolve-db-path.mjs";
 
@@ -408,4 +411,14 @@ try {
   console.log(`[clin] Repaired SQLite: ${file}`);
 } finally {
   db.close();
+}
+
+const webRoot = path.dirname(fileURLToPath(import.meta.url));
+const backfill = spawnSync(
+  process.platform === "win32" ? "npx.cmd" : "npx",
+  ["tsx", "scripts/backfill-connection-degrees.ts"],
+  { cwd: webRoot, stdio: "inherit", shell: process.platform === "win32" },
+);
+if (backfill.status !== 0) {
+  process.exit(backfill.status ?? 1);
 }

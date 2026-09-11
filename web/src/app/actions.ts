@@ -10,7 +10,7 @@ import {
   updateAutomationSettings,
   type AutomationSettingsPatch,
 } from "@/lib/automation";
-import { getLlmConfig, updateLlmConfig } from "@/lib/llm/completeChat";
+import { updateLlmConfig } from "@/lib/llm/completeChat";
 import { updatePaceSettings } from "@/lib/pace";
 import { SCORE_RULE_VERSION, scoreContact } from "@/lib/scoring";
 import { runSelfGoalsAndPositioningLlm } from "@/lib/userProfileLlm";
@@ -30,6 +30,7 @@ import {
 import { enqueueCampaignEngage, loadPendingEngageExecByMemberId } from "@/lib/campaignEngageQueue";
 import { generateOutreachDraftForMember } from "@/lib/outreachCampaignDraft";
 import { runCampaignPostCaptureWorkflow } from "@/lib/campaignPostCaptureWorkflow";
+import { icpFitForOutreachDraft } from "@/lib/campaignMemberIcpShared";
 import {
   enrichCampaignMembers,
   memberPipelineOpen,
@@ -45,9 +46,16 @@ import {
   setActiveOutreachCampaignId,
   setCaptureTargetCampaignId,
   updateMemberDraft,
+  updateMemberOutreachStep,
   updateMemberStatus,
   updateOutreachCampaign,
 } from "@/lib/outreachCampaigns";
+import {
+  isUsableOutreachCopy,
+  memberNeedsInviteBeforeDm,
+  needsInviteStep,
+} from "@/lib/outreachInviteWorkflow";
+import { markCampaignMemberConnected } from "@/lib/campaignInviteLifecycle";
 import { updateUserContext } from "@/lib/userContext";
 import {
   upsertInboxThreadState,
@@ -149,6 +157,7 @@ export async function saveLlmForm(formData: FormData) {
     cloudBaseUrl: readFormString(formData, "cloudBaseUrl"),
     cloudModel: readFormString(formData, "cloudModel"),
     cloudReasoningModel: readFormString(formData, "cloudReasoningModel"),
+    cloudVisualModel: readFormString(formData, "cloudVisualModel"),
   };
 
   const clearKey = formData.get("clearLlmApiKey") === "on";
@@ -277,10 +286,7 @@ export async function saveAutopilotForm(formData: FormData) {
 }
 
 export async function generateUserGoalsAndPositioningAction() {
-  const llm = await getLlmConfig();
-  const { goalsText, positioningSummary } = await runSelfGoalsAndPositioningLlm({
-    settings: llm,
-  });
+  const { goalsText, positioningSummary } = await runSelfGoalsAndPositioningLlm();
   await updateUserContext({ goalsText, positioningSummary });
   revalidatePath("/me");
   revalidatePath("/branding/setup");
@@ -302,9 +308,7 @@ export async function suggestVoiceSetupFromProfileAction(
   userBrief?: string,
 ): Promise<VoiceSetupSuggestActionResult> {
   try {
-    const llm = await getLlmConfig();
     const data = await runVoiceSetupFromProfileLlm({
-      settings: llm,
       userBrief: userBrief ?? null,
     });
     return { ok: true, ...data };
@@ -448,8 +452,15 @@ export async function orchestrateCampaignWorkflowAction(
   const targets = enriched
     .filter((m) => memberPipelineOpen(m))
     .filter((m) => {
-      const hasDraft = Boolean((m.member.draftOutreach ?? "").trim());
-      const fit = m.icpMatch === "strong" || m.icpMatch === "partial";
+      const invite = memberNeedsInviteBeforeDm({
+        connectionDegree: m.contact.connectionDegree,
+        outreachStep: m.member.outreachStep,
+        connectionAcceptedAt: m.member.connectionAcceptedAt,
+      });
+      const hasDraft = invite
+        ? isUsableOutreachCopy(m.member.draftInviteNote)
+        : isUsableOutreachCopy(m.member.draftOutreach);
+      const fit = icpFitForOutreachDraft(m.icpMatch);
       const needsIcp = !m.icpCheckedAt;
       const hasPendingEngage = pendingEngageExecByMemberId.has(m.member.id);
       const needsEngage =
@@ -488,7 +499,7 @@ export async function orchestrateCampaignWorkflowAction(
   revalidatePath(`/campaigns/${campaignId}`);
   return {
     ok: failed === 0,
-    message: `Workflow orchestration done: ${processed} processed, ${drafted} drafted, ${engaged} queued for engage, ${skipped} no-action decisions, ${failed} failed.`,
+    message: `Workflow orchestration done: ${processed} processed, ${drafted} drafted (invite note or DM), ${engaged} queued for engage, ${skipped} no-action decisions, ${failed} failed.`,
     processed,
     drafted,
     engaged,
@@ -589,7 +600,24 @@ export async function approveCampaignMemberReadyAction(formData: FormData) {
   const campaignId = String(formData.get("campaignId") ?? "").trim();
   const memberId = String(formData.get("memberId") ?? "").trim();
   if (!campaignId || !memberId) return;
-  await updateMemberStatus(memberId, "ready");
+  const m = await findMemberById(memberId);
+  if (!m || m.campaignId !== campaignId) return;
+  const db = getDb();
+  const contact = await db.query.contacts.findFirst({
+    where: eq(contacts.id, m.contactId),
+  });
+  const accepted = Boolean(m.connectionAcceptedAt);
+  if (
+    !accepted &&
+    (m.outreachStep === "invite" ||
+      needsInviteStep(contact?.connectionDegree))
+  ) {
+    await updateMemberOutreachStep(memberId, "invite");
+    await updateMemberStatus(memberId, "ready");
+  } else {
+    await updateMemberOutreachStep(memberId, "followup");
+    await updateMemberStatus(memberId, "followup_ready");
+  }
   revalidatePath(`/campaigns/${campaignId}`);
 }
 
@@ -608,9 +636,28 @@ export async function markCampaignMemberSentAction(formData: FormData) {
   if (!campaignId || !memberId) return;
   const m = await findMemberById(memberId);
   if (!m || m.campaignId !== campaignId) return;
-  await updateMemberStatus(memberId, "sent");
-  const { setMemberMessageSentAt } = await import("@/lib/campaignMemberOutreach");
-  await setMemberMessageSentAt(memberId);
+  if (m.outreachStep === "invite" && m.status !== "followup_ready") {
+    const { markCampaignMemberInviteSent } = await import(
+      "@/lib/campaignInviteLifecycle"
+    );
+    await markCampaignMemberInviteSent(memberId);
+  } else {
+    await updateMemberStatus(memberId, "sent");
+    const { setMemberMessageSentAt } = await import(
+      "@/lib/campaignMemberOutreach"
+    );
+    await setMemberMessageSentAt(memberId);
+  }
+  revalidatePath(`/campaigns/${campaignId}`);
+}
+
+export async function markCampaignMemberConnectedAction(formData: FormData) {
+  const campaignId = String(formData.get("campaignId") ?? "").trim();
+  const memberId = String(formData.get("memberId") ?? "").trim();
+  if (!campaignId || !memberId) return;
+  const m = await findMemberById(memberId);
+  if (!m || m.campaignId !== campaignId) return;
+  await markCampaignMemberConnected(memberId, { generateFollowup: true });
   revalidatePath(`/campaigns/${campaignId}`);
 }
 
@@ -861,6 +908,11 @@ export async function saveOutreachSendForm(formData: FormData) {
     minSecondsBetweenSends: readInt("minSecondsBetweenSends"),
     sendMaxPerDay: readInt("sendMaxPerDay"),
     sendJitterPercent: readInt("sendJitterPercent"),
+    inviteEnabled: formData.get("inviteEnabled") === "on",
+    inviteSendMode:
+      formData.get("inviteSendMode") === "auto" ? "auto" : "manual_confirm",
+    inviteMaxPerDay: readInt("inviteMaxPerDay"),
+    connectionScanIntervalMinutes: readInt("connectionScanIntervalMinutes"),
   };
   await updateOutreachSendSettings(patch);
   revalidatePath("/settings");

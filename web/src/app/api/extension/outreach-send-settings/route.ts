@@ -11,6 +11,8 @@ export const dynamic = "force-dynamic";
 const patchSchema = z.object({
   enabled: z.boolean().optional(),
   sendMode: z.enum(["auto", "manual_confirm"]).optional(),
+  inviteEnabled: z.boolean().optional(),
+  inviteSendMode: z.enum(["auto", "manual_confirm"]).optional(),
 });
 
 export async function GET() {

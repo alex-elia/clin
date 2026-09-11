@@ -2,17 +2,17 @@
 
 Companion to the local Clin web app: capture visible LinkedIn data, manage campaign context, run **cleaning engage/removal** todos, and run **optional paced automation** (list sprint, hygiene, outreach) when enabled in Clin **Settings**.
 
-**Current version:** see `manifest.json` (e.g. **0.2.58** — post origin detection, resilient capture pipeline).
+**Current version:** see `manifest.json` (e.g. **0.2.60** — normalized connection degree on profile capture, shared parse with list import).
 
 ## Load unpacked
 
-1. Run the web app from the repo root: `npm install && npm run dev` (fixed port **3000**; use `npm run dev:stop` in `web/` if a stale server is still running).
+1. Run the web app from the repo root: `npm install && npm run dev` (fixed port **3100**; use `npm run dev:stop` in `web/` if a stale server is still running).
 2. Chrome → **Extensions** → enable **Developer mode** → **Load unpacked** → select this `extension/` folder.
 3. Open LinkedIn, open the Clin popup, and connect to your local API.
 
 ## Settings
 
-- **Clin API base** — defaults to `http://127.0.0.1:3000`. Save after editing. Use **Ping** in Settings tab to verify `/api/health` (`db: true`, same `dbPath` as dashboard). Capture refuses to run if health fails.
+- **Clin API base** — defaults to `http://127.0.0.1:3100`. Save after editing. Use **Ping** in Settings tab to verify `/api/health` (`db: true`, same `dbPath` as dashboard). Capture refuses to run if health fails.
 
 ## Tabs
 

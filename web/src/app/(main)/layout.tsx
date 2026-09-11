@@ -13,7 +13,7 @@ export default function MainLayout({
       <EditorialQueueDrain />
       <DailyReminderBanner />
       <Nav />
-      <div className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">{children}</div>
+      <div className="flex-1 px-4 py-8 w-full">{children}</div>
       <SiteFooter />
     </div>
   );

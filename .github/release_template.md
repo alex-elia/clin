@@ -46,4 +46,4 @@ Desktop installers and the extension zip are **new and lightly tested**. If you 
 - [SPEC-0006](https://github.com/alex-elia/clin/blob/main/docs/specifications/SPEC-0006-cleaning-exec-campaign-engage.md) — cleaning exec + campaign engage (release reference).
 - Updated [SPEC-0001](https://github.com/alex-elia/clin/blob/main/docs/specifications/SPEC-0001-clin-system-specification.md) and [ADR-0011](https://github.com/alex-elia/clin/blob/main/docs/adr/0011-campaign-engage-shared-exec-queue.md).
 
-**Extension version:** 0.2.58+ recommended for post origin and pipeline improvements.
+**Extension version:** 0.2.59+ recommended (port 3100 default, outreach DM fixes, network hygiene pipeline on `/cleaning`).

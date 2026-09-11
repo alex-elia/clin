@@ -4,13 +4,24 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { outreachCampaignMembers } from "@/db/schema";
 import { generateOutreachDraftForMember } from "@/lib/outreachCampaignDraft";
-import { findMemberById, updateMemberDraft } from "@/lib/outreachCampaigns";
+import {
+  findMemberById,
+  updateMemberDraft,
+  updateMemberInviteNote,
+  updateMemberOutreachStep,
+} from "@/lib/outreachCampaigns";
+import {
+  clampInviteNote,
+  isInviteNoteTooLong,
+} from "@/lib/outreachInviteWorkflow";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 const patchSchema = z.object({
   draft: z.string(),
+  kind: z.enum(["invite", "followup"]).optional(),
 });
 
 export async function PATCH(
@@ -34,8 +45,17 @@ export async function PATCH(
     return NextResponse.json({ error: "Expected { draft }" }, { status: 400 });
   }
 
-  const draft = parsed.data.draft.trim();
-  await updateMemberDraft(memberId, draft || null);
+  const kind =
+    parsed.data.kind ??
+    (member.outreachStep === "invite" ? "invite" : "followup");
+  let draft = parsed.data.draft.trim();
+  if (kind === "invite") {
+    if (isInviteNoteTooLong(draft)) draft = clampInviteNote(draft);
+    await updateMemberInviteNote(memberId, draft || null);
+    await updateMemberOutreachStep(memberId, "invite");
+  } else {
+    await updateMemberDraft(memberId, draft || null);
+  }
 
   const db = getDb();
   const updated = await db.query.outreachCampaignMembers.findFirst({
@@ -44,12 +64,16 @@ export async function PATCH(
 
   return NextResponse.json({
     ok: true,
-    draft: updated?.draftOutreach?.trim() ?? "",
+    draft:
+      kind === "invite"
+        ? (updated?.draftInviteNote?.trim() ?? "")
+        : (updated?.draftOutreach?.trim() ?? ""),
+    kind,
   });
 }
 
 export async function POST(
-  _req: Request,
+  req: Request,
   ctx: { params: Promise<{ id: string; memberId: string }> },
 ) {
   const { id: campaignId, memberId } = await ctx.params;
@@ -58,7 +82,15 @@ export async function POST(
     return NextResponse.json({ error: "Member not found" }, { status: 404 });
   }
 
-  const result = await generateOutreachDraftForMember(memberId);
+  let kind: "invite" | "followup" | undefined;
+  try {
+    const json = (await req.json()) as { kind?: string };
+    if (json.kind === "invite" || json.kind === "followup") kind = json.kind;
+  } catch {
+    /* empty body is fine */
+  }
+
+  const result = await generateOutreachDraftForMember(memberId, { kind });
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 502 });
   }
@@ -67,9 +99,15 @@ export async function POST(
   const updated = await db.query.outreachCampaignMembers.findFirst({
     where: eq(outreachCampaignMembers.id, memberId),
   });
+  const resolvedKind =
+    kind ?? (updated?.outreachStep === "invite" ? "invite" : "followup");
 
   return NextResponse.json({
     ok: true,
-    draft: updated?.draftOutreach?.trim() ?? "",
+    draft:
+      resolvedKind === "invite"
+        ? (updated?.draftInviteNote?.trim() ?? "")
+        : (updated?.draftOutreach?.trim() ?? ""),
+    kind: resolvedKind,
   });
 }

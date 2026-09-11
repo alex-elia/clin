@@ -9,7 +9,10 @@ const webRoot = path.join(
   "..",
 );
 
-export const DEFAULT_DEV_PORT = 3000;
+/** Local `npm run dev` (avoids 3000, commonly taken by Gotenberg and other tools). */
+export const DEFAULT_DEV_PORT = 3100;
+/** Also scan this range for leftover Clin processes from older 3000 defaults. */
+export const LEGACY_DEV_SCAN_START = 3000;
 export const DEV_PORT_SCAN_MAX =
   Number(process.env.CLIN_DEV_SCAN_MAX) > 0
     ? Number(process.env.CLIN_DEV_SCAN_MAX)
@@ -117,11 +120,15 @@ export function webRootPath() {
   return webRoot;
 }
 
-/** Find Clin dev servers on 3000..CLIN_DEV_SCAN_MAX (catches orphaned :3001, etc.). */
+/** Find Clin dev servers on 3000..CLIN_DEV_SCAN_MAX plus the configured port. */
 export async function findClinDevListeners() {
   const found = [];
-  const end = Math.max(DEFAULT_DEV_PORT, DEV_PORT_SCAN_MAX);
-  for (let p = DEFAULT_DEV_PORT; p <= end; p++) {
+  const ports = new Set();
+  const end = Math.max(LEGACY_DEV_SCAN_START, DEV_PORT_SCAN_MAX);
+  for (let p = LEGACY_DEV_SCAN_START; p <= end; p++) ports.add(p);
+  ports.add(DEFAULT_DEV_PORT);
+  ports.add(devPort());
+  for (const p of [...ports].sort((a, b) => a - b)) {
     const pids = pidsOnPort(p);
     if (pids.length === 0) continue;
     const health = await fetchClinHealth(p, 1500);

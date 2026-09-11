@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CoachChatComposer } from "@/components/CoachChatComposer";
 import { CoachChatThread } from "@/components/CoachChatThread";
@@ -52,6 +52,11 @@ export type CoachDraftPayload = {
   language?: string;
 };
 
+export type CoachChatMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
 type PostWritingAssistantProps = {
   postId?: string;
   coachDraft?: CoachDraftPayload;
@@ -64,6 +69,9 @@ type PostWritingAssistantProps = {
   planningOnly?: boolean;
   /** Brand default language for studio quick prompts */
   brandLanguage?: string | null;
+  /** Server-hydrated thread (skip client fetch when provided, including empty). */
+  initialThreadId?: string | null;
+  initialMessages?: CoachChatMessage[];
 };
 
 export function PostWritingAssistant({
@@ -74,12 +82,18 @@ export function PostWritingAssistant({
   onApplyPatch,
   planningOnly = false,
   brandLanguage,
+  initialThreadId,
+  initialMessages,
 }: PostWritingAssistantProps) {
   const router = useRouter();
-  const [threadId, setThreadId] = useState<string | undefined>();
-  const [messages, setMessages] = useState<
-    { role: "user" | "assistant"; content: string }[]
-  >([]);
+  const serverHydrated = initialMessages !== undefined;
+  const [threadId, setThreadId] = useState<string | undefined>(
+    initialThreadId ?? undefined,
+  );
+  const [messages, setMessages] = useState<CoachChatMessage[]>(
+    initialMessages ?? [],
+  );
+  const [historyReady, setHistoryReady] = useState(serverHydrated);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -89,9 +103,46 @@ export function PostWritingAssistant({
   const [coachDebug, setCoachDebug] = useState<BrandCoachTurnDebug | null>(null);
   const [lastLlmRoute, setLastLlmRoute] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (serverHydrated) return;
+    let cancelled = false;
+    const scope = planningOnly ? "studio" : postId ? "post" : null;
+    if (!scope) {
+      setHistoryReady(true);
+      return;
+    }
+
+    async function hydrate() {
+      try {
+        const params = new URLSearchParams({ scope: scope! });
+        if (scope === "post" && postId) params.set("postId", postId);
+        const res = await fetch(`/api/branding/coach/history?${params}`);
+        const data = (await res.json()) as {
+          threadId?: string | null;
+          messages?: CoachChatMessage[];
+          error?: string;
+        };
+        if (cancelled || !res.ok) return;
+        setThreadId((current) => current ?? data.threadId ?? undefined);
+        setMessages((current) =>
+          current.length > 0 ? current : (data.messages ?? []),
+        );
+      } catch {
+        /* keep empty; user can still start a new thread */
+      } finally {
+        if (!cancelled) setHistoryReady(true);
+      }
+    }
+
+    void hydrate();
+    return () => {
+      cancelled = true;
+    };
+  }, [serverHydrated, planningOnly, postId]);
+
   const send = useCallback(async () => {
     const trimmed = input.trim();
-    if (trimmed.length < 2 || loading) return;
+    if (trimmed.length < 2 || loading || !historyReady) return;
     setLoading(true);
     setError(null);
     setCoachDebug(null);
@@ -128,6 +179,7 @@ export function PostWritingAssistant({
         error?: string;
         debug?: BrandCoachTurnDebug;
       };
+      if (data.threadId) setThreadId(data.threadId);
       if (!res.ok) {
         setError(data.error ?? `Failed (${res.status})`);
         if (data.debug) {
@@ -136,7 +188,6 @@ export function PostWritingAssistant({
         }
         return;
       }
-      if (data.threadId) setThreadId(data.threadId);
       if (data.debug) {
         setLastLlmRoute(llmRouteLabel(data.debug));
       }
@@ -244,7 +295,18 @@ export function PostWritingAssistant({
     } finally {
       setLoading(false);
     }
-  }, [input, loading, threadId, postId, planningOnly, coachDraft, getCoachDraft, onApplyPatch, router]);
+  }, [
+    input,
+    loading,
+    historyReady,
+    threadId,
+    postId,
+    planningOnly,
+    coachDraft,
+    getCoachDraft,
+    onApplyPatch,
+    router,
+  ]);
 
   const applyAll = useCallback(async () => {
     if (!pendingActions.length || loading) return;
@@ -278,13 +340,15 @@ export function PostWritingAssistant({
       );
       if (data.createdPostIds?.[0] && planningOnly) {
         window.location.href = `/branding/posts/${data.createdPostIds[0]}`;
+      } else {
+        router.refresh();
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Apply failed.");
     } finally {
       setLoading(false);
     }
-  }, [pendingActions, loading, onApplyPatch, postId, planningOnly]);
+  }, [pendingActions, loading, onApplyPatch, postId, planningOnly, router]);
 
   const quickPrompts = planningOnly
     ? brandLanguage === "fr"
@@ -331,7 +395,7 @@ export function PostWritingAssistant({
 
       <CoachChatThread
         messages={messages}
-        loading={loading}
+        loading={loading || !historyReady}
         assistantLabel={planningOnly ? "Planning" : "Assistant"}
       />
 
@@ -365,11 +429,11 @@ export function PostWritingAssistant({
         input={input}
         onInputChange={setInput}
         onSend={() => void send()}
-        loading={loading}
+        loading={loading || !historyReady}
         sendLabel="Ask"
         placeholder="Speak or type: voice note, full post request, or Q&A…"
         speechLanguage={speechLanguage ?? coachDraft?.language}
-        quickPrompts={messages.length === 0 ? quickPrompts : undefined}
+        quickPrompts={messages.length === 0 && historyReady ? quickPrompts : undefined}
         onQuickPrompt={setInput}
       />
     </section>

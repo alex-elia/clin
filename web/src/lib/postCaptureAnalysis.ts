@@ -5,6 +5,7 @@ import {
 } from "@/lib/contactAnalyzeRunner";
 import { runAndPersistMemberIcpCheck } from "@/lib/campaignMemberIcp";
 import { enqueueCampaignEngage } from "@/lib/campaignEngageQueue";
+import { shouldAutoDraftOutreach } from "@/lib/campaignMemberIcpShared";
 import { generateOutreachDraftForMember } from "@/lib/outreachCampaignDraft";
 import { getAutopilotSettings } from "@/lib/autopilot";
 import { buildContactContextBundle } from "@/lib/contactContextBundle";
@@ -183,13 +184,10 @@ export async function runPostCaptureAnalysis(opts: {
       });
       if (engage.ok) drafted = false;
     } else {
-      const shouldDraft =
-        icpResult.recommended_action !== "skip" &&
-        icpResult.recommended_action !== "review_remove" &&
-        (icpResult.icp_match === "strong" ||
-          (icpResult.icp_match === "partial" &&
-            (icpResult.recommended_action === "keep_and_draft" ||
-              icpResult.recommended_action === "keep")));
+      const shouldDraft = shouldAutoDraftOutreach({
+        icpMatch: icpResult.icp_match,
+        recommendedAction: icpResult.recommended_action,
+      });
       if (shouldDraft) {
         const draftResult = await generateOutreachDraftForMember(memberId);
         drafted = draftResult.ok;

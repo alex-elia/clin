@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { CoachChatComposer } from "@/components/CoachChatComposer";
 import { CoachChatThread } from "@/components/CoachChatThread";
 import { CoachDebugPanel } from "@/components/CoachDebugPanel";
@@ -9,22 +9,66 @@ import type { BrandCoachTurnDebug } from "@/lib/coachDebug";
 import type { CoachAction } from "@/lib/brandCoachTypes";
 import { HOME_COACH_QUICK_PROMPTS } from "@/lib/homeCoachPrompts";
 
-type HomeCoachPanelProps = {
-  brandLanguage?: string | null;
+type CoachChatMessage = {
+  role: "user" | "assistant";
+  content: string;
 };
 
-export function HomeCoachPanel({ brandLanguage }: HomeCoachPanelProps) {
+type HomeCoachPanelProps = {
+  brandLanguage?: string | null;
+  initialThreadId?: string | null;
+  initialMessages?: CoachChatMessage[];
+};
+
+export function HomeCoachPanel({
+  brandLanguage,
+  initialThreadId,
+  initialMessages,
+}: HomeCoachPanelProps) {
   const router = useRouter();
-  const [threadId, setThreadId] = useState<string | undefined>();
-  const [messages, setMessages] = useState<
-    { role: "user" | "assistant"; content: string }[]
-  >([]);
+  const serverHydrated = initialMessages !== undefined;
+  const [threadId, setThreadId] = useState<string | undefined>(
+    initialThreadId ?? undefined,
+  );
+  const [messages, setMessages] = useState<CoachChatMessage[]>(
+    initialMessages ?? [],
+  );
+  const [historyReady, setHistoryReady] = useState(serverHydrated);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingActions, setPendingActions] = useState<CoachAction[]>([]);
   const [statusLine, setStatusLine] = useState<string | null>(null);
   const [coachDebug, setCoachDebug] = useState<BrandCoachTurnDebug | null>(null);
+
+  useEffect(() => {
+    if (serverHydrated) return;
+    let cancelled = false;
+
+    async function hydrate() {
+      try {
+        const res = await fetch("/api/branding/coach/history?scope=home");
+        const data = (await res.json()) as {
+          threadId?: string | null;
+          messages?: CoachChatMessage[];
+        };
+        if (cancelled || !res.ok) return;
+        setThreadId((current) => current ?? data.threadId ?? undefined);
+        setMessages((current) =>
+          current.length > 0 ? current : (data.messages ?? []),
+        );
+      } catch {
+        /* empty history is fine */
+      } finally {
+        if (!cancelled) setHistoryReady(true);
+      }
+    }
+
+    void hydrate();
+    return () => {
+      cancelled = true;
+    };
+  }, [serverHydrated]);
 
   const quickPrompts =
     brandLanguage === "fr"
@@ -33,7 +77,7 @@ export function HomeCoachPanel({ brandLanguage }: HomeCoachPanelProps) {
 
   const send = useCallback(async () => {
     const trimmed = input.trim();
-    if (trimmed.length < 2 || loading) return;
+    if (trimmed.length < 2 || loading || !historyReady) return;
     setLoading(true);
     setError(null);
     setCoachDebug(null);
@@ -57,12 +101,12 @@ export function HomeCoachPanel({ brandLanguage }: HomeCoachPanelProps) {
         error?: string;
         debug?: BrandCoachTurnDebug;
       };
+      if (data.threadId) setThreadId(data.threadId);
       if (!res.ok) {
         setError(data.error ?? `Failed (${res.status})`);
         if (data.debug) setCoachDebug(data.debug);
         return;
       }
-      if (data.threadId) setThreadId(data.threadId);
       setMessages((m) => [
         ...m,
         { role: "assistant", content: data.reply ?? "" },
@@ -75,7 +119,7 @@ export function HomeCoachPanel({ brandLanguage }: HomeCoachPanelProps) {
     } finally {
       setLoading(false);
     }
-  }, [input, loading, threadId]);
+  }, [input, loading, historyReady, threadId]);
 
   const applyAll = useCallback(async () => {
     if (!pendingActions.length || loading) return;
@@ -124,10 +168,10 @@ export function HomeCoachPanel({ brandLanguage }: HomeCoachPanelProps) {
 
       <CoachChatThread
         messages={messages}
-        loading={loading}
+        loading={loading || !historyReady}
         assistantLabel="Clin"
         emptyHint={
-          messages.length === 0
+          messages.length === 0 && historyReady
             ? "Ask about your LinkedIn strategy, content pipeline, or what to do after importing contacts."
             : undefined
         }
@@ -170,10 +214,10 @@ export function HomeCoachPanel({ brandLanguage }: HomeCoachPanelProps) {
         input={input}
         onInputChange={setInput}
         onSend={() => void send()}
-        loading={loading}
+        loading={loading || !historyReady}
         placeholder="What should I focus on this week?"
         speechLanguage={brandLanguage}
-        quickPrompts={messages.length === 0 ? quickPrompts : undefined}
+        quickPrompts={messages.length === 0 && historyReady ? quickPrompts : undefined}
         onQuickPrompt={setInput}
       />
     </section>

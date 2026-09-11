@@ -1,3 +1,5 @@
+import type { LlmModelTier } from "@/lib/llm/llmModelRoute";
+
 /** Client-safe coach / autopilot debug shapes for UI. */
 
 export type CoachActionsParseDebug = {
@@ -14,8 +16,8 @@ export type BrandCoachTurnDebug = {
   llmLogId?: string;
   provider: string;
   model: string;
-  /** orchestrator (fast) vs reasoning (gpt-oss-120b, etc.) */
-  modelTier?: "orchestrator" | "reasoning";
+  /** Settings slot used: fast, reasoning, or visual. */
+  modelTier?: LlmModelTier;
   modelRouteReason?: string;
   autoswitched?: boolean;
   replyPreview: string;

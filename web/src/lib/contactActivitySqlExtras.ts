@@ -7,6 +7,7 @@ import {
   type LinkedInActivityTier,
   isLinkedInActivityTier,
 } from "@/lib/linkedinActivity";
+import { chunkIds } from "@/lib/sqliteInChunks";
 
 export type ContactActivityExtension = {
   activityTier: LinkedInActivityTier | null;
@@ -51,7 +52,6 @@ export function listContactActivityExtensionsMap(
 ): Map<string, ContactActivityExtension> {
   const map = new Map<string, ContactActivityExtension>();
   if (contactIds.length === 0) return map;
-  const placeholders = contactIds.map(() => "?").join(",");
   const empty: ContactActivityExtension = {
     activityTier: null,
     activityScore: null,
@@ -59,27 +59,30 @@ export function listContactActivityExtensionsMap(
     newestPostAgeLabel: null,
   };
   try {
-    const rows = getSqlite()
-      .prepare(
-        `SELECT id, activity_tier AS tier, activity_score AS score,
-                activity_computed_at AS computedAt, newest_post_age_label AS ageLabel
-         FROM contacts WHERE id IN (${placeholders})`,
-      )
-      .all(...contactIds) as {
-      id: string;
-      tier: string | null;
-      score: number | null;
-      computedAt: number | null;
-      ageLabel: string | null;
-    }[];
-    for (const row of rows) {
-      map.set(row.id, {
-        activityTier:
-          row.tier && isLinkedInActivityTier(row.tier) ? row.tier : null,
-        activityScore: row.score ?? null,
-        activityComputedAt: row.computedAt ?? null,
-        newestPostAgeLabel: row.ageLabel ?? null,
-      });
+    for (const chunk of chunkIds(contactIds)) {
+      const placeholders = chunk.map(() => "?").join(",");
+      const rows = getSqlite()
+        .prepare(
+          `SELECT id, activity_tier AS tier, activity_score AS score,
+                  activity_computed_at AS computedAt, newest_post_age_label AS ageLabel
+           FROM contacts WHERE id IN (${placeholders})`,
+        )
+        .all(...chunk) as {
+        id: string;
+        tier: string | null;
+        score: number | null;
+        computedAt: number | null;
+        ageLabel: string | null;
+      }[];
+      for (const row of rows) {
+        map.set(row.id, {
+          activityTier:
+            row.tier && isLinkedInActivityTier(row.tier) ? row.tier : null,
+          activityScore: row.score ?? null,
+          activityComputedAt: row.computedAt ?? null,
+          newestPostAgeLabel: row.ageLabel ?? null,
+        });
+      }
     }
     for (const id of contactIds) {
       if (!map.has(id)) map.set(id, { ...empty });

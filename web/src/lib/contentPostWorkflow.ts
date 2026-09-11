@@ -27,10 +27,10 @@ export const POST_MIN_BRIEF_CHARS = 24;
 
 /** Same default prompt as Writing assistant quick action #1 (English). */
 export const POST_COMPOSE_COACH_PROMPT_EN =
-  "From my brief: write a powerful LinkedIn post (hook + body + title). Use **bold** and *italic* sparingly on key phrases; tag people/companies from the mention roster when relevant. Suggest format and schedule.";
+  "From my brief: write a short, LinkedIn-native post (hook + body + title). Punchy, scannable, no name signature at the end. Use **bold** and *italic* sparingly; tag people/companies from the mention roster when relevant. Suggest format and schedule.";
 
 export const POST_COMPOSE_COACH_PROMPT_FR =
-  "À partir de mon brief : rédige un post LinkedIn percutant (accroche + corps + titre). Utilise **gras** et *italique* avec parcimonie ; mentionne les contacts de la liste quand c'est pertinent. Propose le format et un créneau.";
+  "À partir de mon brief : rédige un post LinkedIn court et naturel (accroche + corps + titre). Percutant, scannable, sans signature nominative à la fin. Utilise **gras** et *italique* avec parcimonie ; mentionne les contacts de la liste quand c'est pertinent. Propose le format et un créneau.";
 
 export const POST_WRITING_QUICK_PROMPTS_POST = {
   en: [

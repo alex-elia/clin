@@ -18,7 +18,7 @@ These look like “DB mismatch” but are **runtime identity** failures: wrong p
 ## Decision
 
 1. **Single writer per database** — at most one Clin API process per `clin.db` in local dev.
-2. **Fixed dev port** — `npm run dev` starts Next with `-p` from `CLIN_DEV_PORT` (default **3000**); refuse to start if the port is taken by Clin or another app.
+2. **Fixed dev port** — `npm run dev` starts Next with `-p` from `CLIN_DEV_PORT` (default **3100**, so it does not collide with Gotenberg and other tools on 3000); refuse to start if the port is taken by Clin or another app.
 3. **Dev lock file** — `web/data/.clin-dev.lock` records `{ pid, port, startedAt, node }`; removed on exit and by `npm run dev:stop`.
 4. **Health as contract** — `GET /api/health` returns `service`, `db`, `dbPath`, `apiRevision`, `port`, `nodeVersion`. Extension and scripts verify this before capture.
 5. **Native module preflight** — `predev` / `ensure-sqlite-native.mjs` rebuilds `better-sqlite3` when load fails for the current Node.

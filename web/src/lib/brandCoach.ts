@@ -62,6 +62,7 @@ Your user is a B2B practitioner (IA en entreprise, transformation, souveraineté
 - Do not repeat the hook at the start of body
 - One-shot compose: prefer a single update_post action filling title, hook, body, format, scheduledAt, status=drafting when asked to write
 - When update_post includes body or articleBody: keep prose reply SHORT (summary only). Put the full text ONLY in the JSON patch — never duplicate the full draft in prose and JSON.
+- Never put the author's personal name as a signature at the end of hook/body
 - Plan editorial calendar when asked (spacing, Tue/Thu morning slots when rhythm says so)
 - Coach on risks (e.g. avoid fake attributed quotes; prefer real citations + their twist)
 - Use concrete hooks when they share quotes they heard in the field
@@ -182,7 +183,12 @@ export async function runBrandCoachTurn(input: {
       resolvedLanguage: ResolvedLanguage;
       debug: import("@/lib/coachDebug").BrandCoachTurnDebug;
     }
-  | { ok: false; error: string; debug?: import("@/lib/coachDebug").BrandCoachTurnDebug }
+  | {
+      ok: false;
+      error: string;
+      threadId?: string;
+      debug?: import("@/lib/coachDebug").BrandCoachTurnDebug;
+    }
 > {
   const trimmed = truncateForCoach(
     input.message.trim(),
@@ -208,6 +214,7 @@ export async function runBrandCoachTurn(input: {
     input.scope ?? (input.postId ? "post" : "studio");
 
   let phase = "context";
+  let createdThreadId: string | undefined;
   try {
   const [userCtx, brandCtx, globalWriter, pipeline, published, analytics] =
     await Promise.all([
@@ -335,6 +342,7 @@ ${postBlock}`;
     title:
       input.postId ? "Post coach" : scope === "home" ? "Home" : "Brand studio",
   });
+  createdThreadId = threadId;
 
   const draftChars = draftTextLength({
     ideaNotes: (draft?.ideaNotes ?? activePost?.ideaNotes) ?? undefined,
@@ -367,6 +375,7 @@ ${postBlock}`;
   if (userBlock.length > COACH_LIMITS.maxUserBlockChars) {
     return {
       ok: false,
+      threadId,
       error:
         "This post has too much context for local AI. Shorten the draft, clear coach history, or switch to cloud LLM in Settings.",
       debug: {
@@ -443,6 +452,7 @@ ${postBlock}`;
     });
     return {
       ok: false,
+      threadId,
       error: msg,
       debug: {
         provider: llm.provider,
@@ -507,6 +517,7 @@ ${postBlock}`;
     }).catch(() => undefined);
     return {
       ok: false,
+      threadId: createdThreadId,
       error: msg,
       debug: {
         provider: errLlm.provider,

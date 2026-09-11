@@ -12,9 +12,10 @@ import { pickLatestAnalysisView } from "@/lib/contactLlmDisplay";
 import { selectContactLlmExtension } from "@/lib/contactSqlExtras";
 import { getLatestThreadAnalysisForContact } from "@/lib/inboxThreadAnalysisStore";
 import { extractJsonObjectFromModelText } from "@/lib/llmAnalysis";
-import { completeChat, getLlmConfig } from "@/lib/llm/completeChat";
+import { completeChat, getLlmConfigForFeature } from "@/lib/llm/completeChat";
 import { getLatestProfileContextForOutreach } from "@/lib/profileCaptureContext";
 import {
+  applySenderNameToDraft,
   buildSenderIdentityPromptBlock,
   getSenderIdentity,
 } from "@/lib/senderIdentity";
@@ -30,6 +31,7 @@ Rules:
 - 1–3 sentences, warm and specific — not a sales pitch or connection request.
 - Reference something concrete from their posts or profile when captures exist.
 - No hashtags, no "Great post!", no generic praise without substance.
+- Never sign with your name or a letter sign-off — LinkedIn already shows who commented.
 - Match the language of the post when obvious (French post → French comment).
 - ${POST_RECENCY_LLM_RULE}
 - ${POST_ORIGIN_LLM_RULE}
@@ -126,7 +128,9 @@ export async function generateEngageCommentForContact(
   let raw: string;
   try {
     raw = await completeChat({
-      config: await getLlmConfig(),
+      config: (await getLlmConfigForFeature("cleaning_engage_comment", {
+        userChars: user.length,
+      })).config,
       feature: "cleaning_engage_comment",
       system: ENGAGE_COMMENT_SYSTEM,
       user,
@@ -157,7 +161,7 @@ export async function generateEngageCommentForContact(
     return { ok: false, error: "Comment JSON missing required field." };
   }
 
-  const comment = out.data.comment.trim();
+  const comment = applySenderNameToDraft(out.data.comment.trim(), sender);
   if (!comment) return { ok: false, error: "Empty comment from model." };
 
   return { ok: true, comment };

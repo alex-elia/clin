@@ -27,6 +27,13 @@ export type CompleteChatParams = {
   jsonMode?: boolean;
   temperature?: number;
   timeoutMs?: number;
+  /** Cap completion length (OpenAI max_tokens / Ollama num_predict). */
+  maxTokens?: number;
+  /** When jsonMode is set, ask for this schema (OVH json_schema). Falls back to json_object. */
+  jsonSchema?: {
+    name: string;
+    schema: Record<string, unknown>;
+  };
   /** Ollama only: cap context window to limit RAM (default set per call site). */
   numCtx?: number;
   meta?: Record<string, string | number | boolean | null>;

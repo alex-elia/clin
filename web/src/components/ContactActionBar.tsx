@@ -73,6 +73,8 @@ export function ContactActionBar({
             campaignName: data.campaignName ?? "Campaign",
             status: "draft",
             draftOutreach: data.draft,
+            draftInviteNote: data.kind === "invite" ? data.draft : null,
+            outreachStep: data.kind === "invite" ? "invite" : "followup",
           },
           ...memberships,
         ]);

@@ -3,8 +3,7 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { extractJsonObjectFromModelText } from "@/lib/llmAnalysis";
-import { completeChat } from "@/lib/llm/completeChat";
-import type { LlmConfig } from "@/lib/llm/types";
+import { completeChat, getLlmConfigForFeature } from "@/lib/llm/completeChat";
 import { getOrCreateContentBrandContext } from "@/lib/contentBrandContext";
 import { getOrCreateUserContext } from "@/lib/userContext";
 import { getSelfProfileReadyForOllama } from "@/lib/userProfileLlm";
@@ -41,7 +40,6 @@ function weekdaysToFormValue(days: number[]): string {
  * from the linked self contact capture.
  */
 export async function runVoiceSetupFromProfileLlm(opts: {
-  settings: LlmConfig;
   userBrief?: string | null;
 }): Promise<VoiceSetupSuggest> {
   const db = getDb();
@@ -106,8 +104,11 @@ If capture is thin, state uncertainty in goals/positioning and keep doctrine gen
     2,
   );
 
+  const routed = await getLlmConfigForFeature("voice_setup", {
+    userChars: user.length,
+  });
   const rawText = await completeChat({
-    config: opts.settings,
+    config: routed.config,
     feature: "voice_setup",
     system,
     user,

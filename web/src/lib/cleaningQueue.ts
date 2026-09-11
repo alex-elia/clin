@@ -65,6 +65,7 @@ export async function syncCleaningQueueFromAnalysis(
     bucket,
     view,
     threadAnalysis ?? null,
+    row.connectionDegree,
   );
   const priority = bucketQueuePriority(bucket);
   const kind =

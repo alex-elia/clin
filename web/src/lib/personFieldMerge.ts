@@ -1,4 +1,5 @@
 import type { PersonExtract } from "@/lib/linkedinNormalize";
+import { normalizeConnectionDegree } from "@/lib/connectionDegree";
 
 /** Same signal as linkedinNormalize — name field polluted with a job title. */
 const TITLE_LEAD =
@@ -97,10 +98,12 @@ export function mergePersonFields(
         incoming.location,
       ) ?? undefined,
     connectionDegree:
-      mergeScalar(
-        "connectionDegree",
-        clean(existing.connectionDegree),
-        incoming.connectionDegree,
+      normalizeConnectionDegree(
+        mergeScalar(
+          "connectionDegree",
+          clean(existing.connectionDegree),
+          incoming.connectionDegree,
+        ) ?? undefined,
       ) ?? undefined,
   };
 }

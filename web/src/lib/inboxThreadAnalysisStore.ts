@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getSqlite } from "@/db";
+import { chunkIds } from "@/lib/sqliteInChunks";
 import type {
   InboxThreadAnalysis,
   StoredThreadAnalysis,
@@ -120,6 +121,42 @@ export function isThreadAnalysisStale(
 ): boolean {
   if (!stored) return true;
   return stored.messageCount !== currentMessageCount;
+}
+
+/** Latest inbox analysis per contact (chunked IN queries). */
+export function loadLatestThreadAnalysesByContactIds(
+  contactIds: string[],
+): Map<string, InboxThreadAnalysis | null> {
+  const map = new Map<string, InboxThreadAnalysis | null>();
+  if (contactIds.length === 0) return map;
+  const sqlite = getSqlite();
+  try {
+    for (const chunk of chunkIds(contactIds)) {
+      const placeholders = chunk.map(() => "?").join(",");
+      const rows = sqlite
+        .prepare(
+          `SELECT contact_id, analysis_json
+           FROM inbox_thread_analysis
+           WHERE contact_id IN (${placeholders})
+           ORDER BY analyzed_at DESC`,
+        )
+        .all(...chunk) as { contact_id: string; analysis_json: string }[];
+      for (const row of rows) {
+        if (map.has(row.contact_id)) continue;
+        try {
+          map.set(
+            row.contact_id,
+            JSON.parse(row.analysis_json) as InboxThreadAnalysis,
+          );
+        } catch {
+          map.set(row.contact_id, null);
+        }
+      }
+    }
+  } catch {
+    /* table missing */
+  }
+  return map;
 }
 
 /** Most recent stored analysis for a contact (any thread key). */

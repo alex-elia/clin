@@ -263,7 +263,7 @@ export const outreachCampaigns = sqliteTable("outreach_campaigns", {
 });
 
 /**
- * Member of a campaign. status: draft → ready | engage → sent | skipped | closed (campaign ended).
+ * Member of a campaign. status: draft → ready | invite_sent | followup_ready | engage → sent | skipped | closed.
  */
 export const outreachCampaignMembers = sqliteTable(
   "outreach_campaign_members",
@@ -276,6 +276,14 @@ export const outreachCampaignMembers = sqliteTable(
       .notNull()
       .references(() => contacts.id, { onDelete: "cascade" }),
     draftOutreach: text("draft_outreach"),
+    /** Step 1 LinkedIn connection note (free account hard cap 200 chars). */
+    draftInviteNote: text("draft_invite_note"),
+    /** Active send step: invite | followup */
+    outreachStep: text("outreach_step").notNull().default("followup"),
+    inviteSentAt: integer("invite_sent_at", { mode: "timestamp_ms" }),
+    connectionAcceptedAt: integer("connection_accepted_at", {
+      mode: "timestamp_ms",
+    }),
     status: text("status").notNull().default("draft"),
     icpMatch: text("icp_match"),
     icpRationale: text("icp_rationale"),

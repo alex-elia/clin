@@ -37,3 +37,26 @@ export function icpMatchBadgeClass(match: CampaignMemberIcpMatch): string {
       return "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200";
   }
 }
+
+/** Strong or partial fit: eligible for invite note / DM drafting. */
+export function icpFitForOutreachDraft(
+  match: CampaignMemberIcpMatch | string | null | undefined,
+): boolean {
+  return match === "strong" || match === "partial";
+}
+
+/** After ICP analysis: write an invite note or follow-up DM. */
+export function shouldAutoDraftOutreach(input: {
+  icpMatch: string | null | undefined;
+  recommendedAction?: string | null;
+}): boolean {
+  const action = input.recommendedAction;
+  if (
+    action === "skip" ||
+    action === "review_remove" ||
+    action === "engage_comment"
+  ) {
+    return false;
+  }
+  return icpFitForOutreachDraft(input.icpMatch);
+}

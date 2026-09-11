@@ -80,3 +80,19 @@ export async function listAllAppEvents(): Promise<AppEvent[]> {
     return [];
   }
 }
+
+export async function listAppEvents(opts?: {
+  action?: string;
+  errorsOnly?: boolean;
+  limit?: number;
+}): Promise<AppEvent[]> {
+  let rows = await listAllAppEvents();
+  if (opts?.action) {
+    rows = rows.filter((e) => e.action === opts.action);
+  }
+  if (opts?.errorsOnly) {
+    rows = rows.filter((e) => !e.ok);
+  }
+  const limit = Math.min(200, Math.max(1, opts?.limit ?? 50));
+  return rows.slice(0, limit);
+}

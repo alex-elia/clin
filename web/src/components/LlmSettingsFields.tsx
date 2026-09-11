@@ -632,7 +632,7 @@ function CloudFields({
         name="cloudModel"
         model={cloud.model}
         label="Default model (fast)"
-        description="Used for planning, light edits, and contact analysis."
+        description="Router uses this for invite notes, DMs, ICP, and typical analysis. Use a fast instruct model (Mistral Small on OVH today). If this is the same as the visual Qwen id, Clin falls back to the default instruct model for copy."
         required={required}
       />
 
@@ -640,7 +640,15 @@ function CloudFields({
         name="cloudReasoningModel"
         model={cloud.reasoningModel ?? "gpt-oss-120b"}
         label="Reasoning model (auto)"
-        description="Clin switches here for long posts, articles, and heavy coach context."
+        description="Router switches here for long posts, articles, campaign prep, and oversized analysis. Independent of the fast slot."
+        required={false}
+      />
+
+      <CloudModelField
+        name="cloudVisualModel"
+        model={cloud.visualModel ?? "Qwen3.8-27B"}
+        label="Visual model (image prompts)"
+        description="Router uses this only for image prompt drafting (multimodal). Keep this off the fast slot."
         required={false}
       />
 

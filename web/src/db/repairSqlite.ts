@@ -165,6 +165,22 @@ export function repairClinSqliteSchema(db: Database.Database): void {
       db,
       "ALTER TABLE outreach_campaign_members ADD COLUMN icp_checked_at integer",
     );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaign_members ADD COLUMN draft_invite_note text",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaign_members ADD COLUMN outreach_step text NOT NULL DEFAULT 'followup'",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaign_members ADD COLUMN invite_sent_at integer",
+    );
+    addColumnOrExists(
+      db,
+      "ALTER TABLE outreach_campaign_members ADD COLUMN connection_accepted_at integer",
+    );
   }
 
   if (!tableExists(db, "inbox_thread_state")) {

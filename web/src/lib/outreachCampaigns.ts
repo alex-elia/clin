@@ -13,6 +13,14 @@ import {
   outreachCampaignMembers,
   outreachCampaigns,
 } from "@/db/schema";
+import { icpFitForOutreachDraft } from "@/lib/campaignMemberIcpShared";
+import {
+  isUsableOutreachCopy,
+  memberHasSendableFollowup,
+  memberHasSendableInvite,
+  memberNeedsInviteBeforeDm,
+  needsInviteStep,
+} from "@/lib/outreachInviteWorkflow";
 
 const ACTIVE_CAMPAIGN_KEY = "extension.active_outreach_campaign_id";
 const CAPTURE_TARGET_CAMPAIGN_KEY = "extension.capture_target_campaign_id";
@@ -159,6 +167,8 @@ export type ContactCampaignMembership = {
   campaignName: string;
   status: string;
   draftOutreach: string | null;
+  draftInviteNote: string | null;
+  outreachStep: string | null;
 };
 
 /** Campaigns this contact belongs to (for contact detail actions). */
@@ -182,6 +192,8 @@ export async function listCampaignMembershipsForContact(
     campaignName: r.outreach_campaigns.name,
     status: r.outreach_campaign_members.status,
     draftOutreach: r.outreach_campaign_members.draftOutreach,
+    draftInviteNote: r.outreach_campaign_members.draftInviteNote,
+    outreachStep: r.outreach_campaign_members.outreachStep,
   }));
 }
 
@@ -213,11 +225,12 @@ export async function listCampaignMembersForExtension(
   const onlyReady = opts?.onlyReady === true;
 
   const statusFilter = onlyReady
-    ? eq(outreachCampaignMembers.status, "ready")
+    ? inArray(outreachCampaignMembers.status, ["ready", "followup_ready"])
     : and(
         ne(outreachCampaignMembers.status, "sent"),
         ne(outreachCampaignMembers.status, "skipped"),
         ne(outreachCampaignMembers.status, "engage"),
+        ne(outreachCampaignMembers.status, "closed"),
       );
 
   const rows = await db
@@ -228,13 +241,34 @@ export async function listCampaignMembersForExtension(
       and(eq(outreachCampaignMembers.campaignId, campaignId), statusFilter),
     )
     .orderBy(
-      sql`CASE WHEN ${outreachCampaignMembers.status} = 'ready' THEN 0 ELSE 1 END`,
+      sql`CASE WHEN ${outreachCampaignMembers.status} IN ('ready', 'followup_ready') THEN 0 ELSE 1 END`,
       desc(outreachCampaignMembers.updatedAt),
     )
     .limit(lim);
 
   return rows
-    .filter((r) => (r.outreach_campaign_members.draftOutreach ?? "").trim().length > 0)
+    .filter((r) => {
+      const m = r.outreach_campaign_members;
+      if (onlyReady) {
+        return (
+          memberHasSendableInvite({
+            status: m.status,
+            outreachStep: m.outreachStep,
+            draftInviteNote: m.draftInviteNote,
+            connectionAcceptedAt: m.connectionAcceptedAt,
+          }) ||
+          memberHasSendableFollowup({
+            status: m.status,
+            outreachStep: m.outreachStep,
+            draftOutreach: m.draftOutreach,
+          })
+        );
+      }
+      return (
+        isUsableOutreachCopy(m.draftOutreach) ||
+        isUsableOutreachCopy(m.draftInviteNote)
+      );
+    })
     .map((r) => ({
       memberId: r.outreach_campaign_members.id,
       contactId: r.contacts.id,
@@ -242,14 +276,29 @@ export async function listCampaignMembersForExtension(
       headline: r.contacts.headline,
       company: r.contacts.company,
       linkedinUrl: r.contacts.linkedinUrlCanonical,
+      connectionDegree: r.contacts.connectionDegree,
       draftOutreach: r.outreach_campaign_members.draftOutreach ?? "",
+      draftInviteNote: r.outreach_campaign_members.draftInviteNote ?? "",
+      outreachStep: r.outreach_campaign_members.outreachStep ?? "followup",
+      inviteSentAt: r.outreach_campaign_members.inviteSentAt,
+      connectionAcceptedAt: r.outreach_campaign_members.connectionAcceptedAt,
       status: r.outreach_campaign_members.status,
     }));
 }
 
+export type CampaignMemberStatusValue =
+  | "draft"
+  | "ready"
+  | "invite_sent"
+  | "followup_ready"
+  | "engage"
+  | "sent"
+  | "skipped"
+  | "closed";
+
 export async function updateMemberStatus(
   memberId: string,
-  status: "draft" | "ready" | "engage" | "sent" | "skipped" | "closed",
+  status: CampaignMemberStatusValue,
 ) {
   const db = getDb();
   const now = new Date();
@@ -268,6 +317,30 @@ export async function updateMemberDraft(memberId: string, draft: string | null) 
     .where(eq(outreachCampaignMembers.id, memberId));
 }
 
+export async function updateMemberInviteNote(
+  memberId: string,
+  note: string | null,
+) {
+  const db = getDb();
+  const now = new Date();
+  await db
+    .update(outreachCampaignMembers)
+    .set({ draftInviteNote: note, updatedAt: now })
+    .where(eq(outreachCampaignMembers.id, memberId));
+}
+
+export async function updateMemberOutreachStep(
+  memberId: string,
+  outreachStep: "invite" | "followup",
+) {
+  const db = getDb();
+  const now = new Date();
+  await db
+    .update(outreachCampaignMembers)
+    .set({ outreachStep, updatedAt: now })
+    .where(eq(outreachCampaignMembers.id, memberId));
+}
+
 export async function findMemberById(memberId: string) {
   const db = getDb();
   return db.query.outreachCampaignMembers.findFirst({
@@ -282,14 +355,33 @@ export async function listMembersNeedingDraft(
 ) {
   const db = getDb();
   const lim = Math.min(25, Math.max(1, limit));
-  const rows = await db.query.outreachCampaignMembers.findMany({
-    where: and(
-      eq(outreachCampaignMembers.campaignId, campaignId),
-      eq(outreachCampaignMembers.status, "draft"),
-    ),
-    limit: lim * 8,
-  });
-  const emptyDraft = rows.filter((r) => !(r.draftOutreach ?? "").trim());
+  const rows = await db
+    .select()
+    .from(outreachCampaignMembers)
+    .innerJoin(contacts, eq(outreachCampaignMembers.contactId, contacts.id))
+    .where(
+      and(
+        eq(outreachCampaignMembers.campaignId, campaignId),
+        eq(outreachCampaignMembers.status, "draft"),
+      ),
+    )
+    .limit(lim * 8);
+
+  const emptyDraft = rows
+    .filter((r) => {
+      const m = r.outreach_campaign_members;
+      if (!icpFitForOutreachDraft(m.icpMatch)) return false;
+      const invite = memberNeedsInviteBeforeDm({
+        connectionDegree: r.contacts.connectionDegree,
+        outreachStep: m.outreachStep,
+        connectionAcceptedAt: m.connectionAcceptedAt,
+      });
+      if (invite) {
+        return !isUsableOutreachCopy(m.draftInviteNote);
+      }
+      return !isUsableOutreachCopy(m.draftOutreach);
+    })
+    .map((r) => r.outreach_campaign_members);
   const minDepth = opts?.minProfileDepth;
   if (!minDepth || minDepth === "missing") {
     return emptyDraft.slice(0, lim);
@@ -345,6 +437,8 @@ export async function addContactsToCampaign(
       campaignId,
       contactId,
       draftOutreach: null,
+      draftInviteNote: null,
+      outreachStep: needsInviteStep(c.connectionDegree) ? "invite" : "followup",
       status: "draft",
       createdAt: now,
       updatedAt: now,

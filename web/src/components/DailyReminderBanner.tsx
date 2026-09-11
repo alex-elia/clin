@@ -46,7 +46,7 @@ export function DailyReminderBanner() {
       role="region"
       aria-label="Today's tasks"
     >
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="mx-auto flex w-full max-w-[90rem] flex-col gap-3 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1 space-y-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-[var(--clin-accent)]">

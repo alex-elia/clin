@@ -1,7 +1,7 @@
 import type { CoachThreadScope } from "@/lib/contentCoachThreads";
 import type { CopyField } from "@/lib/copyAssistantShared";
 
-export type LlmModelTier = "orchestrator" | "reasoning";
+export type LlmModelTier = "orchestrator" | "reasoning" | "visual";
 
 export type ModelRouteDecision = {
   tier: LlmModelTier;
@@ -16,6 +16,53 @@ const LIGHT_TOUCH_RE =
 
 const PLAN_CALENDAR_RE =
   /\b(plan|calendar|schedule|week|month|horizon|pipeline|create_post|tue|thu)\b|calendrier|planif|semaine|mois|créneau/i;
+
+const HEAVY_ANALYZE_CHARS = 20_000;
+
+/**
+ * Map a Clin LLM feature onto a settings slot (fast / reasoning / visual).
+ * Never pin a vendor model ID here. When OVH retires Mistral Small, change
+ * the fast slot in Settings.
+ */
+export function routeClinFeature(
+  feature: string,
+  opts?: { kind?: string; userChars?: number },
+): ModelRouteDecision {
+  const featureKey = feature.trim();
+  const kind = opts?.kind?.trim();
+  const userChars = opts?.userChars ?? 0;
+
+  if (featureKey === "post_image_prompt") {
+    return { tier: "visual", reason: "image prompt drafting" };
+  }
+
+  if (
+    featureKey === "campaign_prep_plan" ||
+    featureKey === "campaign_prep_suggest"
+  ) {
+    return { tier: "reasoning", reason: featureKey };
+  }
+
+  if (
+    (featureKey === "contact_analyze" ||
+      featureKey === "contact_analyze_retry" ||
+      featureKey === "inbox_thread_analyze" ||
+      featureKey === "inbox_thread_analyze_retry") &&
+    userChars >= HEAVY_ANALYZE_CHARS
+  ) {
+    return { tier: "reasoning", reason: "heavy analysis context" };
+  }
+
+  if (featureKey === "outreach_draft" && kind === "invite") {
+    return { tier: "orchestrator", reason: "short invite note" };
+  }
+
+  if (featureKey === "outreach_draft") {
+    return { tier: "orchestrator", reason: "short outreach copy" };
+  }
+
+  return { tier: "orchestrator", reason: `${featureKey || "llm"} default` };
+}
 
 /** Pick orchestrator vs reasoning for cloud post-generation features. */
 export function routeBrandCoachModel(input: {
@@ -83,18 +130,48 @@ export function routeCopyAssistantModel(field: CopyField): ModelRouteDecision {
   return { tier: "orchestrator", reason: "copy assistant default" };
 }
 
+/** OVH visual Qwen IDs are slow at short JSON copy. Do not use them as the fast slot. */
+export function isVisualClassModel(
+  modelId: string | null | undefined,
+  visualSlot?: string | null,
+): boolean {
+  const m = modelId?.trim() ?? "";
+  if (!m) return false;
+  const visual = visualSlot?.trim();
+  if (visual && m === visual) return true;
+  return /^Qwen3\.8/i.test(m);
+}
+
 export function resolveTierModelId(
   orchestratorModel: string,
   reasoningModel: string | null | undefined,
   tier: LlmModelTier,
+  visualModel?: string | null,
+  instructFallback?: string | null,
 ): { model: string; tier: LlmModelTier; autoswitched: boolean } {
+  const orchestrator = orchestratorModel.trim();
   const reasoning = reasoningModel?.trim();
-  if (
-    tier === "reasoning" &&
-    reasoning &&
-    reasoning !== orchestratorModel.trim()
-  ) {
+  const visual = visualModel?.trim();
+  const fallback = instructFallback?.trim();
+
+  if (tier === "visual" && visual && visual !== orchestrator) {
+    return { model: visual, tier: "visual", autoswitched: true };
+  }
+  if (tier === "visual") {
+    return { model: orchestrator, tier: "orchestrator", autoswitched: false };
+  }
+
+  if (tier === "reasoning" && reasoning && reasoning !== orchestrator) {
     return { model: reasoning, tier: "reasoning", autoswitched: true };
   }
-  return { model: orchestratorModel, tier: "orchestrator", autoswitched: false };
+
+  if (
+    fallback &&
+    fallback !== orchestrator &&
+    isVisualClassModel(orchestrator, visual)
+  ) {
+    return { model: fallback, tier: "orchestrator", autoswitched: true };
+  }
+
+  return { model: orchestrator, tier: "orchestrator", autoswitched: false };
 }

@@ -1,8 +1,9 @@
 import { desc } from "drizzle-orm";
-import { getDb, getSqlite } from "@/db";
+import { getDb } from "@/db";
 import { contacts } from "@/db/schema";
 import { loadLatestProfileCapturesByContactId } from "@/lib/campaignMemberReadiness";
 import { profileDepthForContact } from "@/lib/enrichment";
+import { loadMessagingCaptureFlags } from "@/lib/messagingCaptureFlags";
 import type {
   ContactReadiness,
   ExtractionReadiness,
@@ -76,36 +77,12 @@ export function assessContactReadiness(
   };
 }
 
-export function loadMessagingCaptureFlags(contactIds: string[]): Set<string> {
-  const set = new Set<string>();
-  if (contactIds.length === 0) return set;
-  const placeholders = contactIds.map(() => "?").join(",");
-  try {
-    const rows = getSqlite()
-      .prepare(
-        `SELECT DISTINCT contact_id AS id
-         FROM capture_sessions
-         WHERE page_type = 'messaging'
-           AND contact_id IN (${placeholders})`,
-      )
-      .all(...contactIds) as { id: string }[];
-    for (const r of rows) set.add(r.id);
-  } catch {
-    /* table missing in ancient DB */
-  }
-  return set;
-}
+export { loadMessagingCaptureFlags } from "@/lib/messagingCaptureFlags";
 
-/** Batch readiness for cleaning board (recent contacts). */
-export async function assessRecentContactsReadiness(
-  limit = 400,
+/** Batch readiness for the given contact rows (full graph, not a recency window). */
+export async function assessContactsReadinessForRows(
+  rows: (typeof contacts.$inferSelect)[],
 ): Promise<Map<string, ContactReadiness>> {
-  const db = getDb();
-  const rows = await db
-    .select()
-    .from(contacts)
-    .orderBy(desc(contacts.lastUpdatedAt))
-    .limit(limit);
   if (rows.length === 0) return new Map();
 
   const ids = rows.map((r) => r.id);
@@ -120,4 +97,17 @@ export async function assessRecentContactsReadiness(
     );
   }
   return map;
+}
+
+/** Batch readiness for cleaning board (recent contacts). */
+export async function assessRecentContactsReadiness(
+  limit = 400,
+): Promise<Map<string, ContactReadiness>> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(contacts)
+    .orderBy(desc(contacts.lastUpdatedAt))
+    .limit(limit);
+  return assessContactsReadinessForRows(rows);
 }

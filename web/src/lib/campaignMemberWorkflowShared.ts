@@ -8,6 +8,8 @@ import type { MergedMessagingThread } from "@/lib/messagingTypes";
 export type CampaignMemberStatus =
   | "draft"
   | "ready"
+  | "invite_sent"
+  | "followup_ready"
   | "engage"
   | "sent"
   | "skipped"
@@ -16,6 +18,10 @@ export type CampaignMemberStatus =
 export type CampaignWorkflowPhase =
   | "prep"
   | "ready_for_send"
+  | "invite_ready"
+  | "invite_sent"
+  | "awaiting_connection"
+  | "followup_ready"
   | "engage_queued"
   | "message_sent"
   | "awaiting_reply"
@@ -35,11 +41,15 @@ export type CampaignCloseReason =
 export const WORKFLOW_PHASE_LABELS: Record<CampaignWorkflowPhase, string> = {
   prep: "Preparing outreach",
   ready_for_send: "Ready to send",
+  invite_ready: "Ready to invite",
+  invite_sent: "Invite sent",
+  awaiting_connection: "Awaiting connection",
+  followup_ready: "Ready for follow-up DM",
   engage_queued: "Engage queued",
   message_sent: "Message sent",
   awaiting_reply: "Awaiting their reply",
   in_conversation: "In conversation",
-  ghosted: "Ghosted — consider ending",
+  ghosted: "Ghosted. Consider ending",
   skipped: "Skipped",
   campaign_ended: "Campaign ended",
 };
@@ -64,12 +74,17 @@ export function deriveMemberWorkflowPhase(input: {
   extras?: MemberOutreachExtras | null;
   thread?: MergedMessagingThread | null;
   threadAnalysis?: InboxThreadAnalysis | null;
+  outreachStep?: string | null;
 }): CampaignWorkflowPhase {
   const st = input.memberStatus;
   if (st === "closed") return "campaign_ended";
   if (st === "skipped") return "skipped";
   if (st === "engage") return "engage_queued";
-  if (st === "ready") return "ready_for_send";
+  if (st === "invite_sent") return "awaiting_connection";
+  if (st === "followup_ready") return "followup_ready";
+  if (st === "ready") {
+    return input.outreachStep === "invite" ? "invite_ready" : "ready_for_send";
+  }
   if (st === "draft") return "prep";
 
   if (st !== "sent") return "prep";
@@ -168,7 +183,12 @@ export function workflowPhaseBadgeClass(phase: CampaignWorkflowPhase): string {
     case "awaiting_reply":
       return "bg-violet-100 text-violet-900 dark:bg-violet-950/50 dark:text-violet-100";
     case "ready_for_send":
+    case "invite_ready":
+    case "followup_ready":
       return "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-100";
+    case "invite_sent":
+    case "awaiting_connection":
+      return "bg-orange-100 text-orange-900 dark:bg-orange-950/50 dark:text-orange-100";
     case "engage_queued":
       return "bg-fuchsia-100 text-fuchsia-900 dark:bg-fuchsia-950/50 dark:text-fuchsia-100";
     case "skipped":

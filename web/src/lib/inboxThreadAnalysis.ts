@@ -3,8 +3,10 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { contacts, outreachCampaignMembers, outreachCampaigns } from "@/db/schema";
 import { getGlobalWriterInstructions } from "@/lib/brand";
-import { extractJsonObjectFromModelText } from "@/lib/llmAnalysis";
-import { completeChat, getLlmConfig } from "@/lib/llm/completeChat";
+import {
+  parseModelJsonObject,
+} from "@/lib/llmAnalysis";
+import { completeChat, getLlmConfigForFeature } from "@/lib/llm/completeChat";
 import type { LlmConfig } from "@/lib/llm/types";
 import {
   formatMessagingMessagesForContext,
@@ -24,6 +26,7 @@ import {
   inferSalesMotion,
 } from "@/lib/salesCoachPlaybook";
 import {
+  applySenderNameToDraft,
   buildSenderIdentityPromptBlock,
   getSenderIdentity,
 } from "@/lib/senderIdentity";
@@ -276,7 +279,6 @@ export async function runInboxThreadAnalysis(input: {
     messageCount = estimatePastedMessageCount(pasted);
   }
 
-  const settings = input.settings ?? (await getLlmConfig());
   const sender = await getSenderIdentity();
   const ownerCtx = await getUserContextForLlm();
   const profileCtx = await getLatestProfileContextForOutreach(input.contactId);
@@ -303,35 +305,51 @@ export async function runInboxThreadAnalysis(input: {
   const playbookBlock = buildSalesCoachPlaybookBlock(motion);
 
   const threadTextForModel = threadText;
-
-  const rawText = await completeChat({
-    config: settings,
-    feature: "inbox_thread_analyze",
-    system: INBOX_THREAD_ANALYSIS_SYSTEM_PROMPT,
-    user: buildUserPayload({
-      contact,
-      threadText: threadTextForModel,
-      replyState,
-      profileBlock: profileCtx?.trim() ?? "",
-      senderBlock: buildSenderIdentityPromptBlock(sender),
-      ownerBlock,
-      campaignBlock,
-      globalWriterBlock,
-      playbookBlock,
-    }),
-    jsonMode: true,
-    timeoutMs: 120_000,
-    meta: { contactId: input.contactId, threadKey: resolvedThreadKey },
+  const userPayload = buildUserPayload({
+    contact,
+    threadText: threadTextForModel,
+    replyState,
+    profileBlock: profileCtx?.trim() ?? "",
+    senderBlock: buildSenderIdentityPromptBlock(sender),
+    ownerBlock,
+    campaignBlock,
+    globalWriterBlock,
+    playbookBlock,
   });
+  const jsonRetrySuffix =
+    "\n\nIMPORTANT: Reply with one JSON object only. No preamble, markdown, reasoning text, or code fences.";
+  const threadTimeoutMs = 240_000;
+  const routed = await getLlmConfigForFeature("inbox_thread_analyze", {
+    userChars: userPayload.length,
+  });
+  const settings = routed.config;
 
-  const jsonStr = extractJsonObjectFromModelText(rawText);
+  const callThreadModel = (user: string, feature: string) =>
+    completeChat({
+      config: settings,
+      feature,
+      system: INBOX_THREAD_ANALYSIS_SYSTEM_PROMPT,
+      user,
+      jsonMode: true,
+      timeoutMs: threadTimeoutMs,
+      temperature: 0.2,
+      meta: { contactId: input.contactId, threadKey: resolvedThreadKey },
+    });
+
   let parsed: unknown;
   try {
-    parsed = JSON.parse(jsonStr);
-  } catch {
-    throw new Error(
-      `Model did not return valid JSON. First 400 chars: ${jsonStr.slice(0, 400)}`,
-    );
+    const rawText = await callThreadModel(userPayload, "inbox_thread_analyze");
+    parsed = parseModelJsonObject(rawText);
+  } catch (firstErr) {
+    try {
+      const retryText = await callThreadModel(
+        userPayload + jsonRetrySuffix,
+        "inbox_thread_analyze_retry",
+      );
+      parsed = parseModelJsonObject(retryText);
+    } catch {
+      throw firstErr instanceof Error ? firstErr : new Error(String(firstErr));
+    }
   }
 
   const out = inboxThreadAnalysisSchema.safeParse(parsed);
@@ -341,18 +359,29 @@ export async function runInboxThreadAnalysis(input: {
     );
   }
 
+  const analysis = { ...out.data };
+  if (analysis.suggested_reply?.trim()) {
+    analysis.suggested_reply = applySenderNameToDraft(
+      analysis.suggested_reply.trim(),
+      sender,
+    );
+    if (!analysis.suggested_reply) {
+      analysis.suggested_reply = null;
+    }
+  }
+
   if (input.persist !== false) {
     await saveThreadAnalysis({
       contactId: input.contactId,
       threadKey: resolvedThreadKey,
-      analysis: out.data,
+      analysis,
       messageCount,
       model: settings.model,
     });
   }
 
   return {
-    analysis: out.data,
+    analysis,
     threadKey: resolvedThreadKey,
     messageCount,
     replyState,

@@ -4,6 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import type { CleaningExecListItem } from "@/lib/cleaningExecQueueList";
+import {
+  cleaningCanDisconnect,
+  cleaningNeedsInvite,
+  cleaningNetworkLabel,
+} from "@/lib/cleaningNetwork";
 
 type Props = {
   initialEngage: CleaningExecListItem[];
@@ -47,6 +52,7 @@ export function CleaningExecQueuePanel({
       suggestedComment?: string;
       skip?: boolean;
       regenerateComment?: boolean;
+      markDisconnected?: boolean;
     },
   ) {
     setBusyId(execId);
@@ -102,6 +108,9 @@ export function CleaningExecQueuePanel({
         items={removal}
         busyId={busyId}
         onSkip={(execId) => patchItem(execId, { skip: true })}
+        onConfirmDisconnected={(execId) =>
+          patchItem(execId, { markDisconnected: true })
+        }
       />
     </section>
   );
@@ -157,6 +166,12 @@ function EngageQueueSection({
                     >
                       {item.fullName ?? "Unknown"}
                     </Link>
+                    <p className="text-xs text-[var(--clin-muted)]">
+                      Network: {cleaningNetworkLabel(item.connectionDegree)}
+                      {cleaningNeedsInvite(item.connectionDegree)
+                        ? " · invite after comment, not DM"
+                        : " · DM after comment"}
+                    </p>
                     {item.headline ? (
                       <p className="text-xs text-[var(--clin-muted)]">
                         {item.headline}
@@ -252,16 +267,22 @@ function RemovalQueueSection({
   items,
   busyId,
   onSkip,
+  onConfirmDisconnected,
 }: {
   items: CleaningExecListItem[];
   busyId: string | null;
   onSkip: (execId: string) => void;
+  onConfirmDisconnected: (execId: string) => void;
 }) {
   return (
     <div className="clin-card space-y-4 p-5">
       <h3 className="font-medium text-[var(--clin-text)]">
         Removal queue ({items.length})
       </h3>
+      <p className="text-xs text-[var(--clin-muted)]">
+        After disconnecting on LinkedIn, confirm here or in the extension
+        Cleaning tab.
+      </p>
 
       {items.length === 0 ? (
         <p className="text-sm text-[var(--clin-muted)]">
@@ -284,6 +305,12 @@ function RemovalQueueSection({
                     >
                       {item.fullName ?? "Unknown"}
                     </Link>
+                    <p className="text-xs text-[var(--clin-muted)]">
+                      Network: {cleaningNetworkLabel(item.connectionDegree)}
+                      {cleaningCanDisconnect(item.connectionDegree)
+                        ? " · disconnect on LinkedIn"
+                        : " · cannot disconnect"}
+                    </p>
                     {item.rationale ? (
                       <p className="mt-1 text-sm text-[var(--clin-muted)]">
                         {item.rationale}
@@ -301,14 +328,26 @@ function RemovalQueueSection({
                     </a>
                   ) : null}
                 </div>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => onSkip(item.execId)}
-                  className="clin-btn-secondary mt-3 text-xs px-2 py-1 disabled:opacity-50"
-                >
-                  Remove from queue
-                </button>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {cleaningCanDisconnect(item.connectionDegree) ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => onConfirmDisconnected(item.execId)}
+                      className="clin-btn-primary text-xs px-2 py-1 disabled:opacity-50"
+                    >
+                      I disconnected on LinkedIn
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onSkip(item.execId)}
+                    className="clin-btn-secondary text-xs px-2 py-1 disabled:opacity-50"
+                  >
+                    Remove from queue
+                  </button>
+                </div>
               </li>
             );
           })}

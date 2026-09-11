@@ -6,7 +6,33 @@ import {
   defaultAutopilotAnalyzeBody,
   executeContactAnalysis,
 } from "@/lib/contactAnalyzeRunner";
+import { backfillContactFieldsFromLatestProfileCapture } from "@/lib/contactProfileBackfill";
 import { getLlmConfig } from "@/lib/llm/completeChat";
+
+/** Shared WHERE for contacts eligible for LLM batch (profile capture + analyzable text). */
+const PENDING_LLM_WHERE_SQL = `
+  EXISTS (
+    SELECT 1 FROM capture_sessions s
+    WHERE s.contact_id = c.id AND s.page_type = 'profile'
+  )
+  AND trim(coalesce(c.llm_provisional_json, '')) = ''
+  AND trim(coalesce(c.llm_refined_json, '')) = ''
+  AND (
+    trim(coalesce(c.full_name, '')) != ''
+    OR trim(coalesce(c.headline, '')) != ''
+    OR EXISTS (
+      SELECT 1 FROM capture_sessions s2
+      WHERE s2.contact_id = c.id AND s2.page_type = 'profile'
+      AND (
+        length(trim(coalesce(json_extract(s2.extracted_json, '$.fullName'), ''))) > 1
+        OR length(trim(coalesce(json_extract(s2.extracted_json, '$.headline'), ''))) > 1
+      )
+    )
+  )`;
+
+const PENDING_LLM_OPEN_SQL = `${PENDING_LLM_WHERE_SQL}
+  AND c.cleaning_dismissed_at IS NULL
+  AND lower(trim(coalesce(c.connection_degree, ''))) != 'disconnected'`;
 
 export const AUTOPILOT_KEYS = {
   analyzeAfterProfileCapture: "autopilot.analyze_after_profile_capture",
@@ -184,48 +210,82 @@ export function countContactsPendingLlmAnalysis(): number {
       .prepare(
         `SELECT COUNT(*) AS n
          FROM contacts c
-         WHERE EXISTS (
-           SELECT 1 FROM capture_sessions s
-           WHERE s.contact_id = c.id AND s.page_type = 'profile'
-         )
-         AND (trim(coalesce(c.full_name, '')) != '' OR trim(coalesce(c.headline, '')) != '')
-         AND trim(coalesce(c.llm_provisional_json, '')) = ''
-         AND trim(coalesce(c.llm_refined_json, '')) = ''`,
+         WHERE ${PENDING_LLM_OPEN_SQL}`,
       )
       .get() as { n: number } | undefined;
     return Number(row?.n) || 0;
   } catch {
-    return 0;
+    try {
+      const row = getSqlite()
+        .prepare(
+          `SELECT COUNT(*) AS n
+           FROM contacts c
+           WHERE ${PENDING_LLM_WHERE_SQL}`,
+        )
+        .get() as { n: number } | undefined;
+      return Number(row?.n) || 0;
+    } catch {
+      return 0;
+    }
   }
 }
 
-export function listContactIdsPendingLlmAnalysisRaw(limit: number): string[] {
+export function listContactIdsPendingLlmAnalysisRaw(
+  limit: number,
+  excludeContactIds: string[] = [],
+): string[] {
   const lim = clampBatch(limit);
+  const exclude = [...new Set(excludeContactIds.filter(Boolean))];
   try {
+    const excludeSql =
+      exclude.length > 0
+        ? `AND c.id NOT IN (${exclude.map(() => "?").join(",")})`
+        : "";
     const stmt = getSqlite().prepare(
       `SELECT c.id AS id
        FROM contacts c
-       WHERE EXISTS (
-         SELECT 1 FROM capture_sessions s
-         WHERE s.contact_id = c.id AND s.page_type = 'profile'
-       )
-       AND (trim(coalesce(c.full_name, '')) != '' OR trim(coalesce(c.headline, '')) != '')
-       AND trim(coalesce(c.llm_provisional_json, '')) = ''
-       AND trim(coalesce(c.llm_refined_json, '')) = ''
+       WHERE ${PENDING_LLM_OPEN_SQL}
+       ${excludeSql}
        ORDER BY c.last_updated_at DESC
        LIMIT ?`,
     );
-    const out = stmt.all(lim) as { id: string }[];
+    const out = (
+      exclude.length > 0
+        ? stmt.all(...exclude, lim)
+        : stmt.all(lim)
+    ) as { id: string }[];
     return out.map((r) => r.id);
   } catch {
-    return [];
+    try {
+      const excludeSql =
+        exclude.length > 0
+          ? `AND c.id NOT IN (${exclude.map(() => "?").join(",")})`
+          : "";
+      const stmt = getSqlite().prepare(
+        `SELECT c.id AS id
+         FROM contacts c
+         WHERE ${PENDING_LLM_WHERE_SQL}
+         ${excludeSql}
+         ORDER BY c.last_updated_at DESC
+         LIMIT ?`,
+      );
+      const out = (
+        exclude.length > 0
+          ? stmt.all(...exclude, lim)
+          : stmt.all(lim)
+      ) as { id: string }[];
+      return out.map((r) => r.id);
+    } catch {
+      return [];
+    }
   }
 }
 
-export async function resolvePendingLlmContactIds(limit: number): Promise<
-  string[]
-> {
-  return listContactIdsPendingLlmAnalysisRaw(limit);
+export async function resolvePendingLlmContactIds(
+  limit: number,
+  excludeContactIds: string[] = [],
+): Promise<string[]> {
+  return listContactIdsPendingLlmAnalysisRaw(limit, excludeContactIds);
 }
 
 export type BatchAnalyzeItemResult =
@@ -234,15 +294,20 @@ export type BatchAnalyzeItemResult =
 
 export async function runLlmAnalysisBatch(opts: {
   limit: number;
+  excludeContactIds?: string[];
 }): Promise<{ results: BatchAnalyzeItemResult[] }> {
   const db = getDb();
   const llm = await getLlmConfig();
-  const ids = await resolvePendingLlmContactIds(opts.limit);
+  const ids = await resolvePendingLlmContactIds(
+    opts.limit,
+    opts.excludeContactIds ?? [],
+  );
   const results: BatchAnalyzeItemResult[] = [];
   const body = defaultAutopilotAnalyzeBody();
 
   for (const contactId of ids) {
     try {
+      await backfillContactFieldsFromLatestProfileCapture(db, contactId);
       const { tier } = await executeContactAnalysis(db, contactId, body, llm);
       results.push({ contactId, ok: true, tier });
     } catch (e) {

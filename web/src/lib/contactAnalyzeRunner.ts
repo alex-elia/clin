@@ -98,7 +98,7 @@ export async function executeContactAnalysis(
   });
 
   const jsonStr = JSON.stringify(result.envelope);
-  persistLlmAnalysis(contactId, result.tier, jsonStr, llm.model);
+  persistLlmAnalysis(contactId, result.tier, jsonStr, result.model);
 
   await syncCleaningQueueFromAnalysis(
     contactId,

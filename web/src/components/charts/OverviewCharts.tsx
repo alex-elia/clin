@@ -9,11 +9,11 @@ import {
   LineChart,
   Pie,
   PieChart,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
+import { ClinChartFrame } from "@/components/charts/ClinChartFrame";
 
 const SEGMENT_COLORS: Record<string, string> = {
   active: "#16a34a",
@@ -59,133 +59,129 @@ export function OverviewCharts({
 
   return (
     <div className="space-y-10">
-      <section className="grid gap-6 lg:grid-cols-2">
+      <section className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
         <ChartCard title="Contacts by segment" subtitle="Distribution of relationship segments">
-          <div className="h-[280px] w-full">
-            {segmentChart.length === 0 ? (
+          {segmentChart.length === 0 ? (
+            <div className="flex h-[280px] items-center justify-center">
               <Empty />
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={segmentChart}
-                    dataKey="value"
-                    nameKey="name"
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={56}
-                    outerRadius={88}
-                    paddingAngle={2}
-                    label={({ name, percent }) =>
-                      `${name ?? ""} ${((percent ?? 0) * 100).toFixed(0)}%`
-                    }
-                  >
-                    {segmentChart.map((entry, i) => (
-                      <Cell key={i} fill={entry.fill} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    contentStyle={{
-                      borderRadius: 8,
-                      border: "1px solid #e4e4e7",
-                      fontSize: 12,
-                    }}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-          </div>
+            </div>
+          ) : (
+            <ClinChartFrame className="h-[280px] w-full min-h-0 min-w-0">
+              <PieChart>
+                <Pie
+                  data={segmentChart}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={56}
+                  outerRadius={88}
+                  paddingAngle={2}
+                  label={({ name, percent }) =>
+                    `${name ?? ""} ${((percent ?? 0) * 100).toFixed(0)}%`
+                  }
+                >
+                  {segmentChart.map((entry, i) => (
+                    <Cell key={i} fill={entry.fill} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={{
+                    borderRadius: 8,
+                    border: "1px solid #e4e4e7",
+                    fontSize: 12,
+                  }}
+                />
+              </PieChart>
+            </ClinChartFrame>
+          )}
         </ChartCard>
 
         <ChartCard
           title="Captures (last 14 days)"
           subtitle="How often you ingested profile data"
         >
-          <div className="h-[280px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={capturesSeries} margin={{ left: 0, right: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-clin-border" />
-                <XAxis
-                  dataKey="day"
-                  tick={{ fontSize: 10 }}
-                  tickFormatter={(v) => v.slice(5)}
-                />
-                <YAxis allowDecimals={false} width={32} tick={{ fontSize: 10 }} />
-                <Tooltip
-                  contentStyle={{
-                    borderRadius: 8,
-                    border: "1px solid #e4e4e7",
-                    fontSize: 12,
-                  }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="count"
-                  name="Captures"
-                  stroke="#4fc3a1"
-                  strokeWidth={2}
-                  dot={{ r: 3 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+          <ClinChartFrame className="h-[280px] w-full min-h-0 min-w-0">
+            <LineChart data={capturesSeries} margin={{ left: 0, right: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-clin-border" />
+              <XAxis
+                dataKey="day"
+                tick={{ fontSize: 10 }}
+                tickFormatter={(v) => v.slice(5)}
+              />
+              <YAxis allowDecimals={false} width={32} tick={{ fontSize: 10 }} />
+              <Tooltip
+                contentStyle={{
+                  borderRadius: 8,
+                  border: "1px solid #e4e4e7",
+                  fontSize: 12,
+                }}
+              />
+              <Line
+                type="monotone"
+                dataKey="count"
+                name="Captures"
+                stroke="#4fc3a1"
+                strokeWidth={2}
+                dot={{ r: 3 }}
+              />
+            </LineChart>
+          </ClinChartFrame>
         </ChartCard>
       </section>
 
-      <section className="grid gap-6 lg:grid-cols-2">
+      <section className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
         <ChartCard
           title="Relationship score bands"
           subtitle="Population across recency-style scores"
         >
-          <div className="h-[260px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={scoreBuckets} layout="vertical" margin={{ left: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-clin-border" />
-                <XAxis type="number" allowDecimals={false} tick={{ fontSize: 10 }} />
-                <YAxis
-                  type="category"
-                  dataKey="bucket"
-                  width={100}
-                  tick={{ fontSize: 10 }}
-                />
-                <Tooltip
-                  contentStyle={{
-                    borderRadius: 8,
-                    border: "1px solid #e4e4e7",
-                    fontSize: 12,
-                  }}
-                />
-                <Bar dataKey="count" name="Contacts" fill="#71717a" radius={[0, 4, 4, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          <ClinChartFrame className="h-[260px] w-full min-h-0 min-w-0">
+            <BarChart data={scoreBuckets} layout="vertical" margin={{ left: 8 }}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-clin-border" />
+              <XAxis type="number" allowDecimals={false} tick={{ fontSize: 10 }} />
+              <YAxis
+                type="category"
+                dataKey="bucket"
+                width={100}
+                tick={{ fontSize: 10 }}
+              />
+              <Tooltip
+                contentStyle={{
+                  borderRadius: 8,
+                  border: "1px solid #e4e4e7",
+                  fontSize: 12,
+                }}
+              />
+              <Bar dataKey="count" name="Contacts" fill="#71717a" radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ClinChartFrame>
         </ChartCard>
 
         <ChartCard
           title="Top business scores"
           subtitle="Highest opportunity signal (rule v1)"
         >
-          <div className="h-[260px] w-full">
-            {oppChart.length === 0 ? (
+          {oppChart.length === 0 ? (
+            <div className="flex h-[260px] items-center justify-center">
               <Empty />
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={oppChart} margin={{ left: 0, right: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-clin-border" />
-                  <XAxis dataKey="name" tick={{ fontSize: 9 }} interval={0} angle={-25} textAnchor="end" height={70} />
-                  <YAxis domain={[0, 100]} width={28} tick={{ fontSize: 10 }} />
-                  <Tooltip
-                    contentStyle={{
-                      borderRadius: 8,
-                      border: "1px solid #e4e4e7",
-                      fontSize: 12,
-                    }}
-                  />
-                  <Bar dataKey="score" name="Business" fill="#0d9488" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
+            </div>
+          ) : (
+            <ClinChartFrame className="h-[260px] w-full min-h-0 min-w-0">
+              <BarChart data={oppChart} margin={{ left: 0, right: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-clin-border" />
+                <XAxis dataKey="name" tick={{ fontSize: 9 }} interval={0} angle={-25} textAnchor="end" height={70} />
+                <YAxis domain={[0, 100]} width={28} tick={{ fontSize: 10 }} />
+                <Tooltip
+                  contentStyle={{
+                    borderRadius: 8,
+                    border: "1px solid #e4e4e7",
+                    fontSize: 12,
+                  }}
+                />
+                <Bar dataKey="score" name="Business" fill="#0d9488" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ClinChartFrame>
+          )}
         </ChartCard>
       </section>
 
