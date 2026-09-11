@@ -52,8 +52,9 @@ export function AutopilotBatchPanel({
       <p className="clin-body">
         Picks contacts that already have a{" "}
         <strong className="clin-strong">profile</strong> capture plus name or
-        headline, but no stored analysis yet. Runs inference sequentially (can take
-        several minutes). For ICP fit (reach out / skip), fill goals &amp; positioning on{" "}
+        headline, but no stored analysis yet, across the full open network
+        (not last month). Each run is capped at 30 because one LLM pass can
+        take 1 to 2 minutes per contact. For ICP fit (reach out / skip), fill{" "}
         <a href="/branding/setup?edit=1" className="clin-link">
           goals &amp; positioning
         </a>{" "}

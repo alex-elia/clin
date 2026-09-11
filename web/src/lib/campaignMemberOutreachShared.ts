@@ -6,4 +6,7 @@ export type MemberOutreachExtras = {
   messageOutcomeNote: string | null;
   closedAt: Date | null;
   closeReason: string | null;
+  inviteSentAt: Date | null;
+  connectionAcceptedAt: Date | null;
+  outreachStep: string | null;
 };

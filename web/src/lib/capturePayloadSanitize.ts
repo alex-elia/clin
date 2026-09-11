@@ -50,11 +50,9 @@ function truncateBullets(
 export function sanitizeCapturePayload(body: unknown): unknown {
   if (!body || typeof body !== "object") return body;
   const input = body as Record<string, unknown>;
-  const {
-    captureMethods: _captureMethods,
-    captureDiagnostics: _captureDiagnostics,
-    ...rest
-  } = input;
+  const rest = { ...input };
+  delete rest.captureMethods;
+  delete rest.captureDiagnostics;
 
   const out: Record<string, unknown> = { ...rest };
 

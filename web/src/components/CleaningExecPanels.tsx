@@ -97,8 +97,8 @@ export function CleaningExecPanels({
             : ""}
         </p>
         <p className="text-xs text-[var(--clin-muted)]">
-          Clin opens each profile — you disconnect on LinkedIn and confirm in the
-          extension todo list or removal run.
+          Clin opens each 1st-degree profile. You disconnect on LinkedIn and
+          confirm in the extension. 2nd and 3rd are not queued for disconnect.
         </p>
       </div>
 

@@ -7,7 +7,7 @@ import { persistMemberIcpCheck } from "@/lib/campaignMemberIcp";
 import { runCampaignAutopilot, type CampaignAutopilotItemResult } from "@/lib/campaignAutopilot";
 import type { AutopilotActionPolicy } from "@/lib/autopilotActions";
 import { extractJsonObjectFromModelText } from "@/lib/llmAnalysis";
-import { completeChat, getLlmConfig } from "@/lib/llm/completeChat";
+import { completeChat, getLlmConfigForFeature } from "@/lib/llm/completeChat";
 import { getUserContextForLlm, userContextHasLlmSignal } from "@/lib/userContext";
 import {
   addContactsToCampaign,
@@ -64,9 +64,9 @@ async function planCampaignFromBrief(
   existing: typeof outreachCampaigns.$inferSelect,
 ): Promise<CampaignPlanFromBrief> {
   const owner = await getUserContextForLlm();
-  const llm = await getLlmConfig();
+  const routed = await getLlmConfigForFeature("campaign_prep_plan");
   const raw = await completeChat({
-    config: llm,
+    config: routed.config,
     feature: "campaign_prep_plan",
     system: `You prepare a LinkedIn outreach campaign for Clin (local CRM).
 From the user's short brief (voice or text), output JSON only:
@@ -150,9 +150,9 @@ async function suggestContactsForCampaign(opts: {
   const candidates = await loadContactCandidates(opts.campaignId, 50);
   if (candidates.length === 0) return [];
 
-  const llm = await getLlmConfig();
+  const routed = await getLlmConfigForFeature("campaign_prep_suggest");
   const raw = await completeChat({
-    config: llm,
+    config: routed.config,
     feature: "campaign_prep_suggest",
     system: `Pick contacts from the provided list who fit the campaign ICP.
 JSON only:

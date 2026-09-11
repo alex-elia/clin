@@ -120,10 +120,15 @@ export async function POST(req: Request) {
   }
 
   const row = await findMemberById(member.id);
-  const draft = row?.draftOutreach?.trim() ?? "";
+  const kind = row?.outreachStep === "invite" ? "invite" : "followup";
+  const draft =
+    kind === "invite"
+      ? (row?.draftInviteNote?.trim() ?? "")
+      : (row?.draftOutreach?.trim() ?? "");
 
   return NextResponse.json({
     draft,
+    kind,
     memberId: member.id,
     contactId: contact.id,
     campaignId,

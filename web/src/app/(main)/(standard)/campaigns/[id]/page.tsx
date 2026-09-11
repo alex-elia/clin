@@ -22,14 +22,22 @@ import { pickContactPlaybookFromEnvelope } from "@/lib/contactPlaybook";
 import {
   ICP_ACTION_LABELS,
   ICP_MATCH_LABELS,
+  icpFitForOutreachDraft,
   icpMatchBadgeClass,
 } from "@/lib/campaignMemberIcpShared";
 import { loadPendingEngageExecByMemberId } from "@/lib/campaignEngageQueue";
 import { campaignMemberAnchorId } from "@/lib/campaignExecScroll";
+import {
+  memberNeedsInviteBeforeDm,
+  isUsableOutreachCopy,
+  statusLabelForMember,
+} from "@/lib/outreachInviteWorkflow";
+import { normalizeConnectionDegree } from "@/lib/connectionDegree";
 import { RemoveFromCampaignForm } from "@/components/RemoveFromCampaignForm";
 import {
   approveCampaignMemberReadyAction,
   clearCaptureTargetCampaignAction,
+  markCampaignMemberConnectedAction,
   markCampaignMemberSentAction,
   markCampaignMemberSkippedAction,
   queueCampaignMemberEngageAction,
@@ -93,26 +101,50 @@ function profileDepthBadgeClass(depth: "missing" | "thin" | "ok") {
   return "bg-red-100 text-red-900 dark:bg-red-950/50 dark:text-red-100";
 }
 
-const MEMBER_FILTER_CHIPS: { key: MemberReadinessFilter; label: string }[] = [
-  { key: "all", label: "All" },
-  { key: "need_profile", label: "Need profile" },
-  { key: "thin_profile", label: "Thin profile" },
-  { key: "profile_ok", label: "Profile OK" },
-  { key: "need_draft", label: "Need draft" },
-  { key: "review_draft", label: "Review draft" },
-  { key: "extension_ready", label: "Ready for extension" },
-  { key: "engage_queued", label: "Engage queued" },
-  { key: "done", label: "Sent / skipped" },
-  { key: "conversation_active", label: "In outreach" },
-  { key: "suggest_end", label: "Suggest end" },
-  { key: "campaign_ended", label: "Ended" },
-  { key: "needs_messaging_reply", label: "Awaiting reply" },
-  { key: "needs_thread_capture", label: "Need thread" },
-  { key: "icp_strong", label: "ICP strong" },
-  { key: "icp_partial", label: "ICP partial" },
-  { key: "icp_weak", label: "ICP weak" },
-  { key: "icp_unknown", label: "ICP unclear" },
-  { key: "icp_unchecked", label: "ICP not checked" },
+const MEMBER_FILTER_GROUPS: {
+  label: string;
+  chips: { key: MemberReadinessFilter; label: string }[];
+}[] = [
+  {
+    label: "Workflow",
+    chips: [
+      { key: "all", label: "All" },
+      { key: "invite_step", label: "Invite step" },
+      { key: "need_invite", label: "Need invite note" },
+      { key: "review_invite", label: "Review invite note" },
+      { key: "invite_ready", label: "Ready to invite" },
+      { key: "awaiting_connection", label: "Invite sent" },
+      { key: "followup_ready", label: "Ready for follow-up" },
+      { key: "extension_ready", label: "Ready for extension" },
+      { key: "engage_queued", label: "Engage queued" },
+      { key: "done", label: "Sent / skipped" },
+      { key: "conversation_active", label: "In outreach" },
+      { key: "suggest_end", label: "Suggest end" },
+      { key: "campaign_ended", label: "Ended" },
+      { key: "needs_messaging_reply", label: "Awaiting reply" },
+      { key: "needs_thread_capture", label: "Need thread" },
+    ],
+  },
+  {
+    label: "Prep",
+    chips: [
+      { key: "need_profile", label: "Need profile" },
+      { key: "thin_profile", label: "Thin profile" },
+      { key: "profile_ok", label: "Profile OK" },
+      { key: "need_draft", label: "Need draft" },
+      { key: "review_draft", label: "Review draft" },
+    ],
+  },
+  {
+    label: "ICP",
+    chips: [
+      { key: "icp_strong", label: "ICP strong" },
+      { key: "icp_partial", label: "ICP partial" },
+      { key: "icp_weak", label: "ICP weak" },
+      { key: "icp_unknown", label: "ICP unclear" },
+      { key: "icp_unchecked", label: "ICP not checked" },
+    ],
+  },
 ];
 
 export default async function CampaignDetailPage({
@@ -225,19 +257,32 @@ export default async function CampaignDetailPage({
   );
   const wfNeedProfile = openMembers.filter((m) => m.profileDepth !== "ok").length;
   const wfNeedIcp = openMembers.filter((m) => !m.icpCheckedAt).length;
-  const wfFitToDraft = openMembers.filter(
-    (m) => m.icpMatch === "strong" || m.icpMatch === "partial",
+  const wfFitToDraft = openMembers.filter((m) =>
+    icpFitForOutreachDraft(m.icpMatch),
   );
-  const wfNeedDraft = wfFitToDraft.filter(
-    (m) => !(m.member.draftOutreach ?? "").trim(),
-  ).length;
-  const wfReviewDraft = openMembers.filter(
-    (m) =>
-      (m.member.draftOutreach ?? "").trim().length > 0 &&
-      m.member.status !== "ready",
-  ).length;
+  const wfNeedDraft = wfFitToDraft.filter((m) => {
+    const invite = memberNeedsInviteBeforeDm({
+      connectionDegree: m.contact.connectionDegree,
+      outreachStep: m.member.outreachStep,
+      connectionAcceptedAt: m.member.connectionAcceptedAt,
+    });
+    return invite
+      ? !isUsableOutreachCopy(m.member.draftInviteNote)
+      : !isUsableOutreachCopy(m.member.draftOutreach);
+  }).length;
+  const wfReviewDraft = openMembers.filter((m) => {
+    const has =
+      isUsableOutreachCopy(m.member.draftInviteNote) ||
+      isUsableOutreachCopy(m.member.draftOutreach);
+    return (
+      has &&
+      m.member.status !== "ready" &&
+      m.member.status !== "followup_ready"
+    );
+  }).length;
   const wfExtensionReady = openMembers.filter(
-    (m) => m.member.status === "ready",
+    (m) =>
+      m.member.status === "ready" || m.member.status === "followup_ready",
   ).length;
 
   return (
@@ -403,14 +448,17 @@ export default async function CampaignDetailPage({
                   {wfNeedDraft}
                 </p>
               </div>
-              <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 dark:border-emerald-900 dark:bg-emerald-950/30">
+              <Link
+                href={memberFilterHref(id, "review_draft")}
+                className="rounded border border-emerald-200 bg-emerald-50 px-3 py-2 dark:border-emerald-900 dark:bg-emerald-950/30"
+              >
                 <p className="text-xs uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
                   Review draft
                 </p>
                 <p className="mt-1 text-lg font-semibold text-emerald-900 dark:text-emerald-100">
                   {wfReviewDraft}
                 </p>
-              </div>
+              </Link>
               <div className="rounded border border-violet-200 bg-violet-50 px-3 py-2 dark:border-violet-900 dark:bg-violet-950/30">
                 <p className="text-xs uppercase tracking-wide text-violet-700 dark:text-violet-300">
                   Ready for extension
@@ -427,6 +475,65 @@ export default async function CampaignDetailPage({
                   {openMembers.length}
                 </p>
               </div>
+            </div>
+            <div className="mt-2 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-5">
+              <Link
+                href={memberFilterHref(id, "need_invite")}
+                title="ICP strong or partial, invite path, empty connection note"
+                className="rounded border border-orange-200 bg-orange-50 px-3 py-2 dark:border-orange-900 dark:bg-orange-950/30"
+              >
+                <p className="text-xs uppercase tracking-wide text-orange-800 dark:text-orange-300">
+                  Need invite note
+                </p>
+                <p className="mt-1 text-lg font-semibold text-orange-950 dark:text-orange-100">
+                  {filterCounts.need_invite}
+                </p>
+              </Link>
+              <Link
+                href={memberFilterHref(id, "review_invite")}
+                title="Invite note drafted, still in draft. Review it, then click Ready to invite."
+                className="rounded border border-orange-200 bg-orange-50 px-3 py-2 dark:border-orange-900 dark:bg-orange-950/30"
+              >
+                <p className="text-xs uppercase tracking-wide text-orange-800 dark:text-orange-300">
+                  Review invite note
+                </p>
+                <p className="mt-1 text-lg font-semibold text-orange-950 dark:text-orange-100">
+                  {filterCounts.review_invite}
+                </p>
+              </Link>
+              <Link
+                href={memberFilterHref(id, "invite_ready")}
+                className="rounded border border-orange-200 bg-orange-50 px-3 py-2 dark:border-orange-900 dark:bg-orange-950/30"
+              >
+                <p className="text-xs uppercase tracking-wide text-orange-800 dark:text-orange-300">
+                  Ready to invite
+                </p>
+                <p className="mt-1 text-lg font-semibold text-orange-950 dark:text-orange-100">
+                  {filterCounts.invite_ready}
+                </p>
+              </Link>
+              <Link
+                href={memberFilterHref(id, "awaiting_connection")}
+                className="rounded border border-orange-200 bg-orange-50 px-3 py-2 dark:border-orange-900 dark:bg-orange-950/30"
+              >
+                <p className="text-xs uppercase tracking-wide text-orange-800 dark:text-orange-300">
+                  Invite sent
+                </p>
+                <p className="mt-1 text-lg font-semibold text-orange-950 dark:text-orange-100">
+                  {filterCounts.awaiting_connection}
+                </p>
+              </Link>
+              <Link
+                href={memberFilterHref(id, "followup_ready")}
+                className="rounded border border-sky-200 bg-sky-50 px-3 py-2 dark:border-sky-900 dark:bg-sky-950/30"
+              >
+                <p className="text-xs uppercase tracking-wide text-sky-800 dark:text-sky-300">
+                  Ready for follow-up
+                </p>
+                <p className="mt-1 text-lg font-semibold text-sky-950 dark:text-sky-100">
+                  {filterCounts.followup_ready}
+                </p>
+              </Link>
             </div>
             {membersEnriched.length > 0 ? (
               <div className="mt-3 space-y-2 text-xs text-clin-muted">
@@ -454,6 +561,26 @@ export default async function CampaignDetailPage({
                   ,{" "}
                   <strong className="text-clin-text">
                     {filterCounts.extension_ready} ready for extension
+                  </strong>
+                  . Invite:{" "}
+                  <strong className="text-clin-text">
+                    {filterCounts.need_invite} need note
+                  </strong>
+                  ,{" "}
+                  <strong className="text-clin-text">
+                    {filterCounts.review_invite} to review
+                  </strong>
+                  ,{" "}
+                  <strong className="text-clin-text">
+                    {filterCounts.invite_ready} ready to invite
+                  </strong>
+                  ,{" "}
+                  <strong className="text-clin-text">
+                    {filterCounts.awaiting_connection} invite sent
+                  </strong>
+                  ,{" "}
+                  <strong className="text-clin-text">
+                    {filterCounts.followup_ready} ready for follow-up
                   </strong>
                   .
                 </p>
@@ -514,15 +641,24 @@ export default async function CampaignDetailPage({
           </p>
         ) : null}
         {membersEnriched.length > 0 ? (
-          <div className="mt-2 flex flex-wrap gap-2">
-            {MEMBER_FILTER_CHIPS.map(({ key, label }) => (
-              <Link
-                key={key}
-                href={memberFilterHref(id, key)}
-                className={filterChipClass(memberFilter === key)}
-              >
-                {label} ({filterCounts[key]})
-              </Link>
+          <div className="mt-2 space-y-2">
+            {MEMBER_FILTER_GROUPS.map((group) => (
+              <div key={group.label}>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-clin-muted">
+                  {group.label}
+                </p>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {group.chips.map(({ key, label }) => (
+                    <Link
+                      key={key}
+                      href={memberFilterHref(id, key)}
+                      className={filterChipClass(memberFilter === key)}
+                    >
+                      {label} ({filterCounts[key]})
+                    </Link>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         ) : null}
@@ -538,7 +674,15 @@ export default async function CampaignDetailPage({
           {membersEnriched.length === 0 ? (
             <p className="text-sm text-clin-muted">No contacts in this campaign yet.</p>
           ) : members.length === 0 ? (
-            <p className="text-sm text-clin-muted">No members match this filter.</p>
+            <p className="text-sm text-clin-muted">
+              {memberFilter === "need_invite"
+                ? "Nobody is waiting for an empty invite note. After generate, they move to Review invite note. Ready to invite is only after you click Ready to invite on the card."
+                : memberFilter === "review_invite"
+                  ? "Nobody has an invite note waiting for review. Generate a note first, then mark Ready to invite when the text is good."
+                  : memberFilter === "invite_ready"
+                    ? "Nobody is marked ready to invite yet. Review the note, then click Ready to invite on the member card."
+                    : "No members match this filter."}
+            </p>
           ) : (
             members.map((row) => {
               const {
@@ -555,7 +699,17 @@ export default async function CampaignDetailPage({
                 newestPostAgeLabel,
               } = row;
               const draft = member.draftOutreach ?? "";
-              const hasDraft = draft.trim().length > 0;
+              const inviteNote = member.draftInviteNote ?? "";
+              const needsInvite = memberNeedsInviteBeforeDm({
+                connectionDegree: contact.connectionDegree,
+                outreachStep: member.outreachStep,
+                connectionAcceptedAt: member.connectionAcceptedAt,
+              });
+              const networkDegree =
+                normalizeConnectionDegree(contact.connectionDegree);
+              const hasInviteDraft = isUsableOutreachCopy(inviteNote);
+              const hasFollowupDraft = isUsableOutreachCopy(draft);
+              const hasDraft = needsInvite ? hasInviteDraft : hasFollowupDraft;
               const extras = outreachExtras.get(member.id);
               const llmExt = llmByContactId.get(contact.id);
               const contactPlaybook = pickContactPlaybookFromEnvelope(
@@ -581,6 +735,7 @@ export default async function CampaignDetailPage({
                 extras,
                 thread,
                 threadAnalysis: captureAnalysis,
+                outreachStep: member.outreachStep,
               });
               const isPostSend =
                 member.status === "sent" ||
@@ -590,7 +745,12 @@ export default async function CampaignDetailPage({
                 pendingEngageExecByMemberId.get(member.id) ?? null;
               const isEngagePath =
                 member.status === "engage" || Boolean(pendingEngageExecId);
-              const showWorkflowBadge = isPostSend || member.status === "engage";
+              const showWorkflowBadge =
+                isPostSend ||
+                member.status === "engage" ||
+                member.status === "invite_sent" ||
+                member.status === "followup_ready" ||
+                member.status === "ready";
               const activityEngageWarn =
                 linkedInActivityWarnBeforeEngage(activityTier);
               return (
@@ -608,13 +768,14 @@ export default async function CampaignDetailPage({
                         {contact.fullName || contact.id}
                       </Link>
                       <span className="clin-pill text-xs">
-                        {member.status === "ready"
-                          ? "ready for extension"
-                          : member.status === "engage"
-                            ? "engage queued"
-                            : member.status === "closed"
-                              ? "campaign ended"
-                              : member.status}
+                        {statusLabelForMember(member.status)}
+                      </span>
+                      <span
+                        className="clin-pill text-xs"
+                        title="LinkedIn network distance"
+                      >
+                        Network: {networkDegree ?? "unknown"}
+                        {needsInvite ? " · invite first" : ""}
                       </span>
                       {pendingEngageExecId && member.status !== "engage" ? (
                         <span className="clin-pill border-fuchsia-400/40 text-xs text-fuchsia-900 dark:text-fuchsia-100">
@@ -713,19 +874,71 @@ export default async function CampaignDetailPage({
                     />
                   ) : null}
                   {member.status !== "closed" ? (
-                    <CampaignMemberDraftForm
-                      campaignId={id}
-                      memberId={member.id}
-                      initialDraft={draft}
-                    />
-                  ) : draft.trim() ? (
-                    <CampaignMemberDraftForm
-                      campaignId={id}
-                      memberId={member.id}
-                      initialDraft={draft}
-                      readOnly
-                    />
-                  ) : null}
+                    <>
+                      <CampaignMemberDraftForm
+                        campaignId={id}
+                        memberId={member.id}
+                        kind="invite"
+                        label="Step 1: connection invite note"
+                        initialDraft={inviteNote}
+                        readOnly={!needsInvite && !hasInviteDraft}
+                        lockedHint={
+                          needsInvite
+                            ? null
+                            : hasInviteDraft
+                              ? "Invite note kept on file. This contact is 1st degree or already accepted."
+                              : "Already 1st degree: connection note is not used."
+                        }
+                      />
+                      <CampaignMemberDraftForm
+                        campaignId={id}
+                        memberId={member.id}
+                        kind="followup"
+                        label="Step 2: follow-up DM"
+                        initialDraft={draft}
+                        collapsed={
+                          needsInvite &&
+                          member.status !== "followup_ready" &&
+                          !member.connectionAcceptedAt
+                        }
+                        readOnly={
+                          needsInvite &&
+                          member.status !== "followup_ready" &&
+                          !member.connectionAcceptedAt
+                        }
+                        lockedHint={
+                          needsInvite &&
+                          member.status !== "followup_ready" &&
+                          !member.connectionAcceptedAt
+                            ? "Waiting until they accept. Do not send this as the invite note."
+                            : null
+                        }
+                      />
+                    </>
+                  ) : (
+                    <>
+                      {inviteNote.trim() ? (
+                        <CampaignMemberDraftForm
+                          campaignId={id}
+                          memberId={member.id}
+                          kind="invite"
+                          label="Invite note"
+                          initialDraft={inviteNote}
+                          readOnly
+                        />
+                      ) : null}
+                      {draft.trim() ? (
+                        <CampaignMemberDraftForm
+                          campaignId={id}
+                          memberId={member.id}
+                          kind="followup"
+                          label="Follow-up DM"
+                          initialDraft={draft}
+                          readOnly
+                        />
+                      ) : null}
+                    </>
+                  )}
                   {isEngagePath ? (
                     <p className="mt-3 text-sm text-[var(--clin-muted)]">
                       Engage comment queued — run from{" "}
@@ -735,6 +948,24 @@ export default async function CampaignDetailPage({
                       {pendingEngageExecId ? " (pending)" : ""}. You can still
                       draft a private message below and mark ready for extension
                       in parallel.
+                    </p>
+                  ) : null}
+                  {extras?.inviteSentAt ? (
+                    <p className="mt-2 text-xs text-clin-muted">
+                      Invite sent:{" "}
+                      {extras.inviteSentAt.toLocaleString(undefined, {
+                        dateStyle: "short",
+                        timeStyle: "short",
+                      })}
+                    </p>
+                  ) : null}
+                  {extras?.connectionAcceptedAt ? (
+                    <p className="mt-2 text-xs text-clin-muted">
+                      Connection accepted:{" "}
+                      {extras.connectionAcceptedAt.toLocaleString(undefined, {
+                        dateStyle: "short",
+                        timeStyle: "short",
+                      })}
                     </p>
                   ) : null}
                   {extras?.messageSentAt ? (
@@ -753,7 +984,28 @@ export default async function CampaignDetailPage({
                       campaignId={id}
                       memberId={member.id}
                     />
-                    {member.status !== "ready" ? (
+                    {needsInvite &&
+                    (member.status !== "ready" ||
+                      member.outreachStep !== "invite") &&
+                    member.status !== "followup_ready"
+                      ? (
+                      <CampaignScrollPreservingForm
+                        campaignId={id}
+                        action={approveCampaignMemberReadyAction}
+                      >
+                        <input type="hidden" name="campaignId" value={id} />
+                        <input type="hidden" name="memberId" value={member.id} />
+                        <button
+                          type="submit"
+                          disabled={!hasDraft}
+                          className="rounded-md bg-emerald-700 px-2 py-1 text-xs text-white disabled:opacity-40"
+                        >
+                          Ready to invite
+                        </button>
+                      </CampaignScrollPreservingForm>
+                    ) : !needsInvite &&
+                      member.status !== "ready" &&
+                      member.status !== "followup_ready" ? (
                       <CampaignScrollPreservingForm
                         campaignId={id}
                         action={approveCampaignMemberReadyAction}
@@ -783,7 +1035,8 @@ export default async function CampaignDetailPage({
                         </button>
                       </CampaignScrollPreservingForm>
                     )}
-                    {!pendingEngageExecId &&
+                    {!needsInvite &&
+                    !pendingEngageExecId &&
                     member.status !== "sent" &&
                     member.status !== "skipped" ? (
                       <CampaignScrollPreservingForm
@@ -806,8 +1059,25 @@ export default async function CampaignDetailPage({
                         {activityEngageWarn}
                       </p>
                     ) : null}
+                    {member.status === "invite_sent" ? (
+                      <CampaignScrollPreservingForm
+                        campaignId={id}
+                        action={markCampaignMemberConnectedAction}
+                      >
+                        <input type="hidden" name="campaignId" value={id} />
+                        <input type="hidden" name="memberId" value={member.id} />
+                        <button
+                          type="submit"
+                          className="rounded-md bg-orange-800 px-2 py-1 text-xs text-white dark:bg-orange-700"
+                          title="Use if the extension scan missed the accept"
+                        >
+                          Mark connected
+                        </button>
+                      </CampaignScrollPreservingForm>
+                    ) : null}
                     {member.status !== "sent" &&
-                    member.status !== "skipped" ? (
+                    member.status !== "skipped" &&
+                    member.status !== "invite_sent" ? (
                       <>
                         <CampaignScrollPreservingForm
                           campaignId={id}
@@ -820,7 +1090,9 @@ export default async function CampaignDetailPage({
                             className="rounded-md bg-sky-800 px-2 py-1 text-xs text-white dark:bg-sky-700"
                             title="Use after you send on LinkedIn (same as extension). Optional: save draft in Clin first for your records."
                           >
-                            Mark sent (manual)
+                            {needsInvite
+                              ? "Mark invite sent (manual)"
+                              : "Mark sent (manual)"}
                           </button>
                         </CampaignScrollPreservingForm>
                         <CampaignScrollPreservingForm

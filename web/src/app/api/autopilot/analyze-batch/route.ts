@@ -13,9 +13,12 @@ export const maxDuration = 300;
  * and stored name/headline but no LLM JSON yet. Local-only autopilot (no LinkedIn).
  */
 export async function POST(req: Request) {
-  let body: { limit?: unknown } = {};
+  let body: { limit?: unknown; excludeContactIds?: unknown } = {};
   try {
-    body = (await req.json()) as { limit?: unknown };
+    body = (await req.json()) as {
+      limit?: unknown;
+      excludeContactIds?: unknown;
+    };
   } catch {
     /* empty body ok */
   }
@@ -25,9 +28,14 @@ export async function POST(req: Request) {
       ? body.limit
       : defaults.batchDefaultLimit;
   const limit = Math.min(30, Math.max(1, Math.round(raw)));
+  const excludeContactIds = Array.isArray(body.excludeContactIds)
+    ? body.excludeContactIds.filter(
+        (id): id is string => typeof id === "string" && id.length > 0,
+      )
+    : [];
 
   try {
-    const { results } = await runLlmAnalysisBatch({ limit });
+    const { results } = await runLlmAnalysisBatch({ limit, excludeContactIds });
     const ok = results.filter((r) => r.ok).length;
     const fail = results.length - ok;
     return NextResponse.json({

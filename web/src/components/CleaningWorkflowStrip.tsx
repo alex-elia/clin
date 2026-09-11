@@ -21,8 +21,9 @@ export function CleaningWorkflowStrip({
     <section className="clin-card p-5">
       <h2 className="clin-section-title">Clean your network</h2>
       <p className="mt-1 text-sm text-[var(--clin-muted)]">
-        One path: analyze contacts, review buckets, then run paced work in the
-        extension Cleaning tab.
+        One path: analyze contacts, review buckets (disconnect only for 1st
+        degree; invite vs DM for outreach), then run paced work in the extension
+        Cleaning tab.
       </p>
       <ol className="mt-4 grid gap-3 lg:grid-cols-3">
         <li className="rounded-lg border border-[var(--clin-border)] p-4">

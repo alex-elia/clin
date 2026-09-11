@@ -13,7 +13,7 @@ import { OVH_AI_DEFAULT_REASONING_MODEL, OVH_AI_DEFAULT_VISUAL_MODEL } from "@/l
 import type {
   LlmModelTier,
 } from "@/lib/llm/llmModelRoute";
-import { resolveTierModelId } from "@/lib/llm/llmModelRoute";
+import { resolveTierModelId, routeClinFeature } from "@/lib/llm/llmModelRoute";
 import type { LlmConfig, LlmProvider } from "@/lib/llm/types";
 
 export type { LlmModelTier } from "@/lib/llm/llmModelRoute";
@@ -385,6 +385,8 @@ export async function getLlmConfigForTier(
     profiles.cloud.model,
     profiles.cloud.reasoningModel,
     tier,
+    profiles.cloud.visualModel,
+    ENV_CLOUD_MODEL,
   );
   return {
     config: { ...base, model: picked.model },
@@ -393,19 +395,24 @@ export async function getLlmConfigForTier(
   };
 }
 
+export async function getLlmConfigForFeature(
+  feature: string,
+  opts?: { kind?: string; userChars?: number },
+): Promise<{
+  config: LlmConfig;
+  modelTier: LlmModelTier;
+  autoswitched: boolean;
+  reason: string;
+}> {
+  const route = routeClinFeature(feature, opts);
+  const resolved = await getLlmConfigForTier(route.tier);
+  return { ...resolved, reason: route.reason };
+}
+
 /** Visual LLM for post image prompt drafting (cloud only). Falls back to orchestrator on Ollama. */
 export async function getLlmConfigForVisual(): Promise<LlmConfig> {
-  await seedLlmSettingsFromEnvOnce();
-  const profiles = await loadProfilesFromDb();
-  const base = activeConfig(profiles);
-  if (base.provider !== "openai_compatible") {
-    return base;
-  }
-  const visual = profiles.cloud.visualModel?.trim();
-  if (visual && visual !== base.model) {
-    return { ...base, model: visual };
-  }
-  return base;
+  const resolved = await getLlmConfigForTier("visual");
+  return resolved.config;
 }
 
 export async function getLlmConfigPublic(): Promise<LlmConfigPublic> {

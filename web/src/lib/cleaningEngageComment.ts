@@ -12,7 +12,7 @@ import { pickLatestAnalysisView } from "@/lib/contactLlmDisplay";
 import { selectContactLlmExtension } from "@/lib/contactSqlExtras";
 import { getLatestThreadAnalysisForContact } from "@/lib/inboxThreadAnalysisStore";
 import { extractJsonObjectFromModelText } from "@/lib/llmAnalysis";
-import { completeChat, getLlmConfig } from "@/lib/llm/completeChat";
+import { completeChat, getLlmConfigForFeature } from "@/lib/llm/completeChat";
 import { getLatestProfileContextForOutreach } from "@/lib/profileCaptureContext";
 import {
   applySenderNameToDraft,
@@ -128,7 +128,9 @@ export async function generateEngageCommentForContact(
   let raw: string;
   try {
     raw = await completeChat({
-      config: await getLlmConfig(),
+      config: (await getLlmConfigForFeature("cleaning_engage_comment", {
+        userChars: user.length,
+      })).config,
       feature: "cleaning_engage_comment",
       system: ENGAGE_COMMENT_SYSTEM,
       user,

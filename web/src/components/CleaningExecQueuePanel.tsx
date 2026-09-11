@@ -4,6 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import type { CleaningExecListItem } from "@/lib/cleaningExecQueueList";
+import {
+  cleaningCanDisconnect,
+  cleaningNeedsInvite,
+  cleaningNetworkLabel,
+} from "@/lib/cleaningNetwork";
 
 type Props = {
   initialEngage: CleaningExecListItem[];
@@ -161,6 +166,12 @@ function EngageQueueSection({
                     >
                       {item.fullName ?? "Unknown"}
                     </Link>
+                    <p className="text-xs text-[var(--clin-muted)]">
+                      Network: {cleaningNetworkLabel(item.connectionDegree)}
+                      {cleaningNeedsInvite(item.connectionDegree)
+                        ? " · invite after comment, not DM"
+                        : " · DM after comment"}
+                    </p>
                     {item.headline ? (
                       <p className="text-xs text-[var(--clin-muted)]">
                         {item.headline}
@@ -294,6 +305,12 @@ function RemovalQueueSection({
                     >
                       {item.fullName ?? "Unknown"}
                     </Link>
+                    <p className="text-xs text-[var(--clin-muted)]">
+                      Network: {cleaningNetworkLabel(item.connectionDegree)}
+                      {cleaningCanDisconnect(item.connectionDegree)
+                        ? " · disconnect on LinkedIn"
+                        : " · cannot disconnect"}
+                    </p>
                     {item.rationale ? (
                       <p className="mt-1 text-sm text-[var(--clin-muted)]">
                         {item.rationale}
@@ -312,14 +329,16 @@ function RemovalQueueSection({
                   ) : null}
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => onConfirmDisconnected(item.execId)}
-                    className="clin-btn-primary text-xs px-2 py-1 disabled:opacity-50"
-                  >
-                    I disconnected on LinkedIn
-                  </button>
+                  {cleaningCanDisconnect(item.connectionDegree) ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => onConfirmDisconnected(item.execId)}
+                      className="clin-btn-primary text-xs px-2 py-1 disabled:opacity-50"
+                    >
+                      I disconnected on LinkedIn
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     disabled={busy}

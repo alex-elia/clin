@@ -1,12 +1,13 @@
 import { and, asc, eq } from "drizzle-orm";
-import { getDb } from "@/db";
+import { getDb, getSqlite } from "@/db";
 import { cleaningExecQueue, contacts } from "@/db/schema";
 import {
   actionRequiredGapMs,
   countCleaningExecToday,
   getCleaningExecSettings,
 } from "@/lib/cleaningExecSettings";
-import { getSqlite } from "@/db";
+import { completeCleaningExec } from "@/lib/cleaningExecQueue";
+import { cleaningCanDisconnect } from "@/lib/cleaningNetwork";
 
 export type RemovalQueueItem = {
   execId: string;
@@ -52,33 +53,49 @@ export async function getNextRemovalItem(): Promise<
   }
 
   const db = getDb();
-  const row = await db.query.cleaningExecQueue.findFirst({
-    where: and(
-      eq(cleaningExecQueue.kind, "removal"),
-      eq(cleaningExecQueue.status, "pending"),
-    ),
-    orderBy: asc(cleaningExecQueue.createdAt),
-  });
-  if (!row) return { item: null, reason: "queue_empty" };
+  for (let i = 0; i < 40; i += 1) {
+    const row = await db.query.cleaningExecQueue.findFirst({
+      where: and(
+        eq(cleaningExecQueue.kind, "removal"),
+        eq(cleaningExecQueue.status, "pending"),
+      ),
+      orderBy: asc(cleaningExecQueue.createdAt),
+    });
+    if (!row) return { item: null, reason: "queue_empty" };
 
-  const contact = await db.query.contacts.findFirst({
-    where: eq(contacts.id, row.contactId),
-  });
-  if (!contact) {
-    return { item: null, reason: "contact_missing" };
+    const contact = await db.query.contacts.findFirst({
+      where: eq(contacts.id, row.contactId),
+    });
+    if (!contact) {
+      await completeCleaningExec({
+        id: row.id,
+        outcome: "skipped",
+        error: "contact_missing",
+      });
+      continue;
+    }
+    if (!cleaningCanDisconnect(contact.connectionDegree)) {
+      await completeCleaningExec({
+        id: row.id,
+        outcome: "skipped",
+        error: "not_1st_degree",
+      });
+      continue;
+    }
+
+    const payload = (row.payloadJson ?? {}) as Record<string, unknown>;
+    return {
+      item: {
+        execId: row.id,
+        contactId: row.contactId,
+        fullName: contact.fullName,
+        linkedinUrl: contact.linkedinUrlCanonical,
+        rationale:
+          typeof payload.rationale === "string" ? payload.rationale : null,
+        execMode: settings.removalExecMode,
+      },
+      waitMs: 0,
+    };
   }
-
-  const payload = (row.payloadJson ?? {}) as Record<string, unknown>;
-  return {
-    item: {
-      execId: row.id,
-      contactId: row.contactId,
-      fullName: contact.fullName,
-      linkedinUrl: contact.linkedinUrlCanonical,
-      rationale:
-        typeof payload.rationale === "string" ? payload.rationale : null,
-      execMode: settings.removalExecMode,
-    },
-    waitMs: 0,
-  };
+  return { item: null, reason: "queue_empty" };
 }

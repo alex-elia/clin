@@ -3,6 +3,7 @@ import { getDb } from "@/db";
 import { actionQueue, contacts } from "@/db/schema";
 import { setContactSegment } from "@/lib/autopilotActions";
 import { enqueueCleaningExec } from "@/lib/cleaningExecQueue";
+import { cleaningCanDisconnect } from "@/lib/cleaningNetwork";
 
 export function isRemovalQueueItem(input: {
   suggestedAction: string | null;
@@ -42,6 +43,11 @@ export async function approveRemovalForContact(
     where: eq(contacts.id, contactId),
   });
   if (!contact) throw new Error("Contact not found.");
+  if (!cleaningCanDisconnect(contact.connectionDegree)) {
+    throw new Error(
+      "Not a 1st-degree connection. LinkedIn disconnect is only for 1st.",
+    );
+  }
 
   await setContactSegment(contactId, "remove_candidate");
   const execId = await enqueueCleaningExec({

@@ -96,7 +96,7 @@ export function CampaignFormFields({
         </summary>
         <p className="mt-2 text-xs text-[var(--clin-muted)]">
           Replaces the default JSON instruction for per-contact drafts. Still require{" "}
-          <code className="clin-code">{"{\"message\":\"...\"}"}</code> only.
+          <code className="clin-code">{"{\"message\":\"the DM text\"}"}</code> only.
         </p>
         <textarea
           name="systemPromptOverride"

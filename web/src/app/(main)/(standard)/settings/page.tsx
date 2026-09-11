@@ -205,6 +205,58 @@ export default async function SettingsPage() {
             max={100}
           />
           </div>
+          <label className="flex cursor-pointer items-start gap-3 text-sm">
+            <input
+              type="checkbox"
+              name="inviteEnabled"
+              defaultChecked={outreachSend.inviteEnabled}
+              className="mt-1"
+            />
+            <span>
+              <span className="font-medium text-[var(--clin-text)]">
+                Enable connection invites with note
+              </span>
+              <span className="mt-1 block text-[var(--clin-muted)]">
+                High-risk LinkedIn action. Off by default. Free accounts can
+                usually send only a few personalized notes per day (often 3)
+                and 200 characters. Premium can go higher. Uses a separate
+                daily cap and defaults to manual confirm.
+              </span>
+            </span>
+          </label>
+          <label className="block text-sm">
+            <span className="font-medium text-[var(--clin-text)]">
+              Invite send mode
+            </span>
+            <select
+              name="inviteSendMode"
+              defaultValue={outreachSend.inviteSendMode}
+              className="mt-1 w-full rounded-md border border-[var(--clin-border)] px-3 py-2"
+            >
+              <option value="manual_confirm">
+                Manual: fill note, you click Send invitation
+              </option>
+              <option value="auto">Auto-send invitation (higher risk)</option>
+            </select>
+          </label>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              name="inviteMaxPerDay"
+              label="Max invites with note per day"
+              description="Free LinkedIn: keep this at 3. Raise it only if you have Premium and LinkedIn still allows the note field."
+              defaultValue={outreachSend.inviteMaxPerDay}
+              min={1}
+              max={20}
+            />
+            <Field
+              name="connectionScanIntervalMinutes"
+              label="Connection-scan interval (minutes)"
+              description="How often the extension checks sent invites for accepts."
+              defaultValue={outreachSend.connectionScanIntervalMinutes}
+              min={15}
+              max={180}
+            />
+          </div>
           <button type="submit" className="clin-btn-primary">
             Save outreach pacing
           </button>

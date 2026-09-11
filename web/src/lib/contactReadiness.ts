@@ -79,16 +79,10 @@ export function assessContactReadiness(
 
 export { loadMessagingCaptureFlags } from "@/lib/messagingCaptureFlags";
 
-/** Batch readiness for cleaning board (recent contacts). */
-export async function assessRecentContactsReadiness(
-  limit = 400,
+/** Batch readiness for the given contact rows (full graph, not a recency window). */
+export async function assessContactsReadinessForRows(
+  rows: (typeof contacts.$inferSelect)[],
 ): Promise<Map<string, ContactReadiness>> {
-  const db = getDb();
-  const rows = await db
-    .select()
-    .from(contacts)
-    .orderBy(desc(contacts.lastUpdatedAt))
-    .limit(limit);
   if (rows.length === 0) return new Map();
 
   const ids = rows.map((r) => r.id);
@@ -103,4 +97,17 @@ export async function assessRecentContactsReadiness(
     );
   }
   return map;
+}
+
+/** Batch readiness for cleaning board (recent contacts). */
+export async function assessRecentContactsReadiness(
+  limit = 400,
+): Promise<Map<string, ContactReadiness>> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(contacts)
+    .orderBy(desc(contacts.lastUpdatedAt))
+    .limit(limit);
+  return assessContactsReadinessForRows(rows);
 }

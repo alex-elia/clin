@@ -33,17 +33,6 @@ export function ContentPlanFiltersBar({
   const [pending, startTransition] = useTransition();
   const [searchDraft, setSearchDraft] = useState(filters.search);
 
-  const baseParams = {
-    y: year,
-    m: month,
-    view,
-    status:
-      filters.statuses.length > 0 ? filters.statuses.join(",") : undefined,
-    format: filters.format ?? undefined,
-    q: filters.search || undefined,
-    scheduled: filters.scheduled !== "all" ? filters.scheduled : undefined,
-  };
-
   const applyFilters = useCallback(
     (patch: Partial<ContentPlanSearchParams>) => {
       startTransition(() => {
@@ -52,15 +41,30 @@ export function ContentPlanFiltersBar({
             y: year,
             m: month,
             view,
-            status: patch.status ?? baseParams.status,
-            format: patch.format ?? baseParams.format,
-            q: patch.q ?? baseParams.q,
-            scheduled: patch.scheduled ?? baseParams.scheduled,
+            status:
+              patch.status ??
+              (filters.statuses.length > 0
+                ? filters.statuses.join(",")
+                : undefined),
+            format: patch.format ?? filters.format ?? undefined,
+            q: patch.q ?? (filters.search || undefined),
+            scheduled:
+              patch.scheduled ??
+              (filters.scheduled !== "all" ? filters.scheduled : undefined),
           }),
         );
       });
     },
-    [baseParams, month, router, view, year],
+    [
+      filters.format,
+      filters.scheduled,
+      filters.search,
+      filters.statuses,
+      month,
+      router,
+      view,
+      year,
+    ],
   );
 
   const statusValue =

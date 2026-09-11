@@ -4,7 +4,7 @@ import { z } from "zod";
 import * as schema from "@/db/schema";
 import { captureSessions, contacts } from "@/db/schema";
 import { parseScoreReasons } from "@/lib/scoreExplain";
-import { completeChat } from "@/lib/llm/completeChat";
+import { completeChat, getLlmConfigForFeature } from "@/lib/llm/completeChat";
 import type { LlmConfig } from "@/lib/llm/types";
 import {
   buildContactContextBundle,
@@ -120,22 +120,129 @@ function normalizeScores(raw: LlmAnalysisOutput): LlmAnalysisOutput {
   };
 }
 
-/** Strip DeepSeek-R1 / similar thinking blocks and fenced JSON. */
+/** Strip DeepSeek-R1 / Qwen / similar thinking blocks and fenced JSON. */
 export function extractJsonObjectFromModelText(text: string): string {
   let t = text.trim();
-  const thinkClose = t.lastIndexOf("</think>");
-  if (thinkClose !== -1) {
-    t = t.slice(thinkClose + "</think>".length).trim();
+  const thinkEnd = "<" + "/think>";
+  for (const tag of [thinkEnd, "</think>"] as const) {
+    const thinkClose = t.lastIndexOf(tag);
+    if (thinkClose !== -1) {
+      t = t.slice(thinkClose + tag.length).trim();
+      break;
+    }
   }
+  t = t.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  t = t.replace(/^`think`[\s\S]*?`\/think`\s*/i, "").trim();
   const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fence) return fence[1].trim();
-  const objStart = t.indexOf("{");
-  const objEnd = t.lastIndexOf("}");
-  if (objStart !== -1 && objEnd > objStart) {
-    return t.slice(objStart, objEnd + 1);
-  }
+  const balanced = extractBalancedJsonObject(t);
+  if (balanced) return balanced;
   return t;
 }
+
+/** First complete `{…}` object in text (string-aware). */
+export function extractBalancedJsonObject(text: string): string | null {
+  const start = text.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i]!;
+    if (inString) {
+      if (escape) escape = false;
+      else if (c === "\\") escape = true;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      continue;
+    }
+    if (c === "{") depth += 1;
+    if (c === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return text.slice(start);
+}
+
+function tryParseJsonWithBraceRepair(jsonStr: string): unknown | null {
+  try {
+    return JSON.parse(jsonStr);
+  } catch {
+    const open = (jsonStr.match(/\{/g) ?? []).length;
+    const close = (jsonStr.match(/\}/g) ?? []).length;
+    const missing = open - close;
+    if (missing > 0 && missing <= 12) {
+      try {
+        return JSON.parse(`${jsonStr}${"}".repeat(missing)}`);
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+}
+
+/** Recover scores when the model truncated mid-object (common with slow local models). */
+export function salvageTruncatedContactAnalysisJson(text: string): unknown | null {
+  const scoresMatch = text.match(
+    /"scores"\s*:\s*\{\s*"r"\s*:\s*([\d.]+)\s*,\s*"b"\s*:\s*([\d.]+)\s*,\s*"c"\s*:\s*([\d.]+)/,
+  );
+  if (!scoresMatch) return null;
+
+  const partialNote =
+    "Model response was truncated; re-run analysis for full rationale.";
+  return {
+    scores: {
+      r: Number(scoresMatch[1]),
+      b: Number(scoresMatch[2]),
+      c: Number(scoresMatch[3]),
+    },
+    rationale: {
+      relationship: partialNote,
+      business: partialNote,
+      cleanup: partialNote,
+    },
+    suggested_actions: ["none"],
+    data_gaps: [partialNote],
+    cleaning_plan: {
+      bucket: "needs_review",
+      confidence: "low",
+      rationale: partialNote,
+    },
+  };
+}
+
+/** Parse contact-analysis JSON from model text (preamble, fences, truncated objects). */
+export function parseModelJsonObject(text: string): unknown {
+  const trimmed = text.trim();
+  const candidates = [
+    extractJsonObjectFromModelText(trimmed),
+    extractBalancedJsonObject(trimmed),
+  ].filter((s): s is string => Boolean(s?.trim()));
+
+  const seen = new Set<string>();
+  for (const jsonStr of candidates) {
+    if (seen.has(jsonStr)) continue;
+    seen.add(jsonStr);
+    const parsed = tryParseJsonWithBraceRepair(jsonStr);
+    if (parsed !== null) return parsed;
+  }
+
+  const salvaged = salvageTruncatedContactAnalysisJson(trimmed);
+  if (salvaged !== null) return salvaged;
+
+  throw new Error(
+    `Model did not return valid JSON. First 400 chars: ${trimmed.slice(0, 400)}`,
+  );
+}
+
+const CONTACT_ANALYZE_TIMEOUT_MS = 240_000;
+const CONTACT_ANALYZE_JSON_RETRY_USER_SUFFIX =
+  "\n\nIMPORTANT: Reply with one JSON object only. No preamble, markdown, reasoning text, or code fences.";
 
 export async function inferAnalysisTier(
   db: Db,
@@ -232,9 +339,9 @@ If owner_context is absent or empty, omit "outreach_fit".
 You MUST include "cleaning_plan" on every response:
 - Pick exactly one bucket that best matches the user's next step.
 - enrich_first: list-only or missing About/Experience — user should capture more on LinkedIn first.
-- review_remove: stewardship or cleanup suggests pruning the connection.
-- reach_out_dm: strong outreach_fit reach_out with enough profile context for a DM.
-- engage_comment: nurture fit OR weak timing for DM but relationship worth a public comment/react first; prefer when PROFILE_AND_POSTS or posts_signals suggest a concrete hook from original posts within the last year. Reshares/news_share indicate interest only. Requires rule_activity tier active or occasional — if tier is lurker or dormant, use nurture_light or keep_passive instead.
+- review_remove: stewardship or cleanup suggests pruning. Use this ONLY when the contact is a 1st-degree connection (can disconnect). If they are 2nd, 3rd+, or unknown degree, do not pick review_remove; use keep_passive or needs_review instead.
+- reach_out_dm: strong outreach_fit. If 1st degree, the next private step is a DM. If 2nd/3rd+/unknown, the next private step is a LinkedIn connection invite with a short note, not a DM. Still use this bucket; playbook must say invite vs DM.
+- engage_comment: nurture fit OR weak timing for a private message but relationship worth a public comment/react first; prefer when PROFILE_AND_POSTS or posts_signals suggest a concrete hook from original posts within the last year. Reshares/news_share indicate interest only. Requires rule_activity tier active or occasional — if tier is lurker or dormant, use nurture_light or keep_passive instead. Playbook: if not 1st, next private step is invite, not DM.
 
 When rule_activity.tier is lurker or dormant, prefer outreach_fit nurture or skip (not reach_out) unless message_context shows an active private dialogue. Include activity_validation when you agree or disagree with rule_activity.
 
@@ -330,6 +437,7 @@ export async function runContactLlmAnalysis(
   tier: "provisional" | "refined";
   envelope: Record<string, unknown>;
   output: LlmAnalysisOutput;
+  model: string;
 }> {
   const contact = await db.query.contacts.findFirst({
     where: eq(contacts.id, input.contactId),
@@ -352,32 +460,49 @@ export async function runContactLlmAnalysis(
     input.contextBundle ??
     (await buildContactContextBundle(input.contactId));
 
+  const user = buildUserPayload({
+    tier: input.tier,
+    contact,
+    captureSummary,
+    messageContext: input.messageContext,
+    ownerContext,
+    contextBundle,
+    threadAnalysis: input.threadAnalysis,
+  });
+  const routed = await getLlmConfigForFeature("contact_analyze", {
+    userChars: user.length,
+  });
+  const config = routed.config;
+
   const rawText = await completeChat({
-    config: input.settings,
+    config,
     feature: "contact_analyze",
     system: buildSystemPrompt(includeOwner, input.salesCoachBlock),
-    user: buildUserPayload({
-      tier: input.tier,
-      contact,
-      captureSummary,
-      messageContext: input.messageContext,
-      ownerContext,
-      contextBundle,
-      threadAnalysis: input.threadAnalysis,
-    }),
+    user,
     jsonMode: true,
-    timeoutMs: 120_000,
+    timeoutMs: CONTACT_ANALYZE_TIMEOUT_MS,
     meta: input.llmMeta,
   });
 
-  const jsonStr = extractJsonObjectFromModelText(rawText);
   let parsed: unknown;
   try {
-    parsed = JSON.parse(jsonStr);
-  } catch {
-    throw new Error(
-      `Model did not return valid JSON. First 400 chars: ${jsonStr.slice(0, 400)}`,
-    );
+    parsed = parseModelJsonObject(rawText);
+  } catch (firstErr) {
+    const retryText = await completeChat({
+      config,
+      feature: "contact_analyze_retry",
+      system: buildSystemPrompt(includeOwner, input.salesCoachBlock),
+      user: user + CONTACT_ANALYZE_JSON_RETRY_USER_SUFFIX,
+      jsonMode: true,
+      timeoutMs: CONTACT_ANALYZE_TIMEOUT_MS,
+      temperature: 0.2,
+      meta: input.llmMeta,
+    });
+    try {
+      parsed = parseModelJsonObject(retryText);
+    } catch {
+      throw firstErr instanceof Error ? firstErr : new Error(String(firstErr));
+    }
   }
 
   const out = llmAnalysisOutputSchema.safeParse(parsed);
@@ -390,7 +515,7 @@ export async function runContactLlmAnalysis(
   const output = normalizeScores(out.data);
   const envelope = {
     tier: input.tier,
-    model: input.settings.model,
+    model: config.model,
     at: new Date().toISOString(),
     rule_scores: {
       r: contact.relationshipScore,
@@ -401,5 +526,5 @@ export async function runContactLlmAnalysis(
     output,
   };
 
-  return { tier: input.tier, envelope, output };
+  return { tier: input.tier, envelope, output, model: config.model };
 }

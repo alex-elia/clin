@@ -27,6 +27,7 @@ import { enqueueCleaningExec } from "@/lib/cleaningExecQueue";
 import { generateEngageCommentForContact } from "@/lib/cleaningEngageComment";
 import { approveRemovalForContact } from "@/lib/cleaningRemovalApprove";
 import { confirmContactDisconnected } from "@/lib/cleaningRemovalAck";
+import { cleaningCanDisconnect } from "@/lib/cleaningNetwork";
 
 const QUEUE_BUCKETS = new Set<CleaningBucket>([
   "review_remove",
@@ -83,6 +84,7 @@ async function loadContactContext(contactId: string) {
     readiness,
     bucket,
     threadAnalysis,
+    connectionDegree: row.connectionDegree ?? null,
     rawOutput:
       (rawRefined as Record<string, unknown> | null) ??
       (rawProv as Record<string, unknown> | null),
@@ -102,6 +104,7 @@ export async function enqueueCleaningReviewForContact(
     bucket,
     analysis,
     threadAnalysis,
+    ctx.row.connectionDegree,
   );
   const priority = bucketQueuePriority(bucket);
   const kind = bucket === "reach_out_dm" ? "outreach_prep" : "review";
@@ -216,7 +219,8 @@ export async function enqueueEngageForContact(
 export type CleaningAcceptEffect =
   | "removal_exec"
   | "engage_exec"
-  | "review_queue";
+  | "review_queue"
+  | "not_first_degree";
 
 export async function acceptCleaningContact(
   contactId: string,
@@ -227,10 +231,15 @@ export async function acceptCleaningContact(
   }
 
   if (ctx.bucket === "review_remove") {
+    if (!cleaningCanDisconnect(ctx.connectionDegree)) {
+      await dismissCleaningContact(contactId);
+      return "not_first_degree";
+    }
     const rationale = bucketSuggestedQueueText(
       ctx.bucket,
       ctx.analysis,
       ctx.threadAnalysis,
+      ctx.connectionDegree,
     );
     await approveRemovalForContact(contactId, rationale);
     await dismissCleaningContact(contactId);
@@ -298,6 +307,11 @@ export async function runCleaningBatchAction(opts: {
           const ctx = await loadContactContext(contactId);
           if (!ctx || ctx.bucket !== "review_remove") {
             throw new Error("Contact is not in review_remove bucket.");
+          }
+          if (!cleaningCanDisconnect(ctx.connectionDegree)) {
+            throw new Error(
+              "Not a 1st-degree connection. LinkedIn disconnect is only for 1st.",
+            );
           }
           await approveRemovalForContact(
             contactId,

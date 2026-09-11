@@ -33,8 +33,8 @@ function SubmitButton() {
         className="text-[11px] text-clin-muted"
       >
         {pending
-          ? "Running ICP + draft decisions on eligible members. This can take up to a few minutes..."
-          : "Runs ICP checks and drafts for members that still need decisions."}
+          ? "Running ICP and writing invite notes or follow-up DMs. This can take a few minutes..."
+          : "Runs ICP, then drafts a connection invite note (not 1st) or a follow-up DM (1st) for members that still need one."}
       </p>
     </div>
   );

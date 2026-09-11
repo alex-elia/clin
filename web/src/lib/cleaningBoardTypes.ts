@@ -29,15 +29,20 @@ export type CleaningContactCard = {
   queueId: string | null;
   threadAnalysis: InboxThreadAnalysis | null;
   threadStageLabel: string | null;
+  connectionDegree: string | null;
 };
 
 export type CleaningBoardSummary = {
   totalContacts: number;
+  openContacts: number;
+  excludedCleaned: number;
+  scannedContacts: number;
   readyForAnalysis: number;
   readyForDecisions: number;
   pendingLlmAnalysis: number;
   needsProfileCapture: number;
   analyzedInBoard: number;
+  cardsPerBucketCap: number;
   bucketCounts: Record<CleaningBucket, number>;
 };
 

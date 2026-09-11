@@ -15,6 +15,7 @@ export type LanguageResolutionSource =
   | "brand"
   | "detected_post"
   | "detected_message"
+  | "campaign"
   | "default";
 
 export type ResolvedLanguage = {
@@ -124,6 +125,9 @@ export function languageResolutionHint(resolved: ResolvedLanguage): string {
   if (resolved.source === "detected_message") {
     return `Detected from your message: ${POST_LANGUAGE_LABELS[resolved.language]}`;
   }
+  if (resolved.source === "campaign") {
+    return `Campaign language: ${POST_LANGUAGE_LABELS[resolved.language]}`;
+  }
   return `Default: ${POST_LANGUAGE_LABELS[resolved.language]}`;
 }
 
@@ -171,7 +175,75 @@ export function recipientTextForOutreachLanguage(parts: {
     .join("\n\n");
 }
 
-/** Outreach DM language: brand default, writer notes, then recipient profile/posts. */
+const MATCH_RECIPIENT_LANGUAGE_RE =
+  /langue du contact|langue du destinataire|langue du profil|language of (the )?(contact|recipient|person)|their language|sa langue|profile language|write in (the )?contact'?s language|match (the )?contact/i;
+
+const AVOID_FRENCH_RE =
+  /pas en fran[cç]ais|not (in )?french|do not write in french|don't write in french|ne (pas |jamais )?(pas )?écris? en fran[cç]ais|anglais (plutôt|only|uniquement)/i;
+
+const FORCE_EN_RE =
+  /\b(english only|always (write )?in english|write in english|in english|en anglais( uniquement)?|anglais uniquement|langue\s*[:=]\s*en(glish)?)\b/i;
+
+const FORCE_FR_RE =
+  /\b(french only|always (write )?in french|write in french|in french|en fran[cç]ais( uniquement)?|fran[cç]ais uniquement|langue\s*[:=]\s*fr(an[cç]ais)?|\bfran[cç]ais\b)\b/i;
+
+const FR_LOCATION_RE =
+  /\b(france|paris|lyon|marseille|lille|toulouse|nantes|bordeaux|rennes|strasbourg|ile-de-france|île-de-france|hauts-de-france|belgique|wallonie|luxembourg|suisse romande|montreal|montréal|québec|quebec)\b/i;
+
+const EN_LOCATION_RE =
+  /\b(united kingdom|england|scotland|uk\b|london|manchester|berlin|munich|hamburg|amsterdam|rotterdam|stockholm|oslo|copenhagen|dublin|new york|usa|united states|singapore|dubai|zurich|geneva|vienna|warsaw|prague|netherlands|germany|sweden|norway|denmark|ireland)\b/i;
+
+const EN_TITLE_RE =
+  /\b(ceo|cto|cfo|coo|vp|vice president|head of|director of|manager|engineer|founder|partner|consultant|lead|officer)\b/i;
+
+const FR_TITLE_RE =
+  /\b(directeur|directrice|responsable|fondateur|fondatrice|ingénieur|consultant|consultante|président|présidente|gérant|gérante)\b/i;
+
+export function parseForcedOutreachLanguage(
+  text: string | null | undefined,
+): ResolvedPostLanguage | null {
+  const t = text?.trim() ?? "";
+  if (!t) return null;
+  if (MATCH_RECIPIENT_LANGUAGE_RE.test(t) || AVOID_FRENCH_RE.test(t)) {
+    return null;
+  }
+  if (FORCE_EN_RE.test(t)) return "en";
+  if (FORCE_FR_RE.test(t)) return "fr";
+  return null;
+}
+
+export function campaignWantsRecipientLanguage(
+  text: string | null | undefined,
+): boolean {
+  const t = text?.trim() ?? "";
+  if (!t) return false;
+  return MATCH_RECIPIENT_LANGUAGE_RE.test(t) || AVOID_FRENCH_RE.test(t);
+}
+
+/** Headline, About, location: contact language, not the sender's campaign copy. */
+export function detectRecipientOutreachLanguage(
+  text: string,
+): ResolvedPostLanguage | null {
+  const sample = text.trim();
+  if (!sample) return null;
+
+  const frLoc = FR_LOCATION_RE.test(sample);
+  const enLoc = EN_LOCATION_RE.test(sample);
+  if (frLoc && !enLoc) return "fr";
+  if (enLoc && !frLoc) return "en";
+
+  const fromText = detectPostLanguage(sample);
+  if (fromText) return fromText;
+
+  const frTitle = (sample.match(FR_TITLE_RE) ?? []).length;
+  const enTitle = (sample.match(EN_TITLE_RE) ?? []).length;
+  if (frTitle > enTitle) return "fr";
+  if (enTitle > frTitle) return "en";
+
+  return null;
+}
+
+/** Outreach DM language: recipient profile first, then explicit campaign lock. */
 export function resolveOutreachLanguage(input: {
   brandPreference: ContentLanguagePreference;
   marketRegion?: string | null;
@@ -179,35 +251,60 @@ export function resolveOutreachLanguage(input: {
   globalWriterInstructions?: string | null;
   recipientContext?: string;
 }): ResolvedLanguage {
-  const hints = [
-    input.campaignWriterInstructions,
-    input.globalWriterInstructions,
-  ]
-    .filter((s) => typeof s === "string" && s.trim())
-    .join("\n\n");
+  const campaignNotes = input.campaignWriterInstructions ?? "";
+  const matchRecipient = campaignWantsRecipientLanguage(campaignNotes);
+  const forced = parseForcedOutreachLanguage(campaignNotes);
+  const fromRecipient = detectRecipientOutreachLanguage(
+    input.recipientContext ?? "",
+  );
 
-  const defaultLanguage: ResolvedPostLanguage =
-    input.marketRegion === "en" ? "en" : "fr";
+  if (matchRecipient && fromRecipient) {
+    return { language: fromRecipient, source: "detected_post" };
+  }
+  if (forced) {
+    return { language: forced, source: "campaign" };
+  }
+  if (fromRecipient) {
+    return { language: fromRecipient, source: "detected_post" };
+  }
 
-  return resolveContentLanguage({
-    brandPreference: input.brandPreference,
-    userMessage: hints,
-    postText: input.recipientContext,
-    defaultLanguage,
-  });
+  if (!matchRecipient && (input.brandPreference === "fr" || input.brandPreference === "en")) {
+    return { language: input.brandPreference, source: "brand" };
+  }
+
+  if (!matchRecipient) {
+    const hints = [campaignNotes, input.globalWriterInstructions]
+      .filter((s) => typeof s === "string" && s.trim())
+      .join("\n\n");
+    const fromHints = detectPostLanguage(hints);
+    if (fromHints) {
+      return { language: fromHints, source: "detected_message" };
+    }
+  }
+
+  return {
+    language: matchRecipient ? "en" : input.marketRegion === "en" ? "en" : "fr",
+    source: "default",
+  };
 }
 
 export function buildOutreachLanguageInstruction(
   resolved: ResolvedLanguage,
+  opts?: { matchRecipient?: boolean },
 ): string {
   const name = POST_LANGUAGE_LABELS[resolved.language];
   const sourceNote =
     resolved.source === "detected_post"
-      ? " (matched from recipient profile/posts)"
-      : resolved.source === "brand"
-        ? " (your Clin voice default)"
-        : "";
-  return `LANGUAGE: Write the entire message in ${name}${sourceNote}. Do not mix English and French unless the user explicitly asked. The Clin analysis blocks may be in English — still write the outreach message in ${name}.`;
+      ? " (from the recipient's headline, About, and location)"
+      : resolved.source === "campaign"
+        ? " (explicit campaign lock)"
+        : resolved.source === "brand"
+          ? " (your Clin voice default)"
+          : "";
+  const matchLine = opts?.matchRecipient
+    ? " Campaign instructions may be in French: that does not mean the note is in French. Mirror the recipient."
+    : "";
+  return `LANGUAGE (mandatory): Write every sentence of the JSON "message" value in ${name}${sourceNote}.${matchLine} Do not write in the other language. Campaign context, ICP, and analysis may be English: ignore that for the note language. Still write the outreach message in ${name}.`;
 }
 
 export function buildOutreachFormattingInstruction(

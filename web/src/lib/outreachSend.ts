@@ -8,6 +8,10 @@ import {
   listCampaignMembersForExtension,
 } from "@/lib/outreachCampaigns";
 import { nextRandomizedGapMs } from "@/lib/pace";
+import {
+  memberHasSendableFollowup,
+  memberHasSendableInvite,
+} from "@/lib/outreachInviteWorkflow";
 
 export const OUTREACH_SEND_KEYS = {
   enabled: "automation.linkedin_outreach_enabled",
@@ -16,9 +20,15 @@ export const OUTREACH_SEND_KEYS = {
   sendMaxPerDay: "pace.send_max_per_day",
   sendJitterPercent: "pace.send_jitter_percent",
   afterSendGapMs: "pace.after_send_gap_ms",
+  inviteEnabled: "automation.linkedin_invite_enabled",
+  inviteSendMode: "outreach.invite_send_mode",
+  inviteMaxPerDay: "pace.invite_max_per_day",
+  connectionScanIntervalMinutes: "outreach.connection_scan_interval_minutes",
+  lastConnectionScanAt: "outreach.last_connection_scan_at",
 } as const;
 
 export type OutreachSendMode = "manual_confirm" | "auto";
+export type OutreachQueueAction = "invite" | "dm";
 
 export type OutreachSendSettings = {
   enabled: boolean;
@@ -26,6 +36,10 @@ export type OutreachSendSettings = {
   minSecondsBetweenSends: number;
   sendMaxPerDay: number;
   sendJitterPercent: number;
+  inviteEnabled: boolean;
+  inviteSendMode: OutreachSendMode;
+  inviteMaxPerDay: number;
+  connectionScanIntervalMinutes: number;
 };
 
 const SEND_DEFAULTS: OutreachSendSettings = {
@@ -34,12 +48,18 @@ const SEND_DEFAULTS: OutreachSendSettings = {
   minSecondsBetweenSends: 120,
   sendMaxPerDay: 15,
   sendJitterPercent: 35,
+  inviteEnabled: false,
+  inviteSendMode: "manual_confirm",
+  inviteMaxPerDay: 3,
+  connectionScanIntervalMinutes: 45,
 };
 
 const SEND_BOUNDS = {
   minSecondsBetweenSends: { min: 60, max: 900 },
   sendMaxPerDay: { min: 1, max: 40 },
   sendJitterPercent: { min: 0, max: 100 },
+  inviteMaxPerDay: { min: 1, max: 20 },
+  connectionScanIntervalMinutes: { min: 15, max: 180 },
 } as const;
 
 function clampSend(
@@ -93,6 +113,9 @@ export async function getOutreachSendSettings(): Promise<OutreachSendSettings> {
   const modeRaw = map.get(OUTREACH_SEND_KEYS.sendMode);
   const sendMode: OutreachSendMode =
     modeRaw === "auto" ? "auto" : "manual_confirm";
+  const inviteModeRaw = map.get(OUTREACH_SEND_KEYS.inviteSendMode);
+  const inviteSendMode: OutreachSendMode =
+    inviteModeRaw === "auto" ? "auto" : "manual_confirm";
   return {
     enabled: parseBool(map.get(OUTREACH_SEND_KEYS.enabled), SEND_DEFAULTS.enabled),
     sendMode,
@@ -117,6 +140,25 @@ export async function getOutreachSendSettings(): Promise<OutreachSendSettings> {
         SEND_DEFAULTS.sendJitterPercent,
       ),
     ),
+    inviteEnabled: parseBool(
+      map.get(OUTREACH_SEND_KEYS.inviteEnabled),
+      SEND_DEFAULTS.inviteEnabled,
+    ),
+    inviteSendMode,
+    inviteMaxPerDay: clampSend(
+      "inviteMaxPerDay",
+      parseStored(
+        map.get(OUTREACH_SEND_KEYS.inviteMaxPerDay),
+        SEND_DEFAULTS.inviteMaxPerDay,
+      ),
+    ),
+    connectionScanIntervalMinutes: clampSend(
+      "connectionScanIntervalMinutes",
+      parseStored(
+        map.get(OUTREACH_SEND_KEYS.connectionScanIntervalMinutes),
+        SEND_DEFAULTS.connectionScanIntervalMinutes,
+      ),
+    ),
   };
 }
 
@@ -139,6 +181,15 @@ export async function updateOutreachSendSettings(
     "sendJitterPercent",
     next.sendJitterPercent,
   );
+  if (patch.inviteSendMode) {
+    next.inviteSendMode =
+      patch.inviteSendMode === "auto" ? "auto" : "manual_confirm";
+  }
+  next.inviteMaxPerDay = clampSend("inviteMaxPerDay", next.inviteMaxPerDay);
+  next.connectionScanIntervalMinutes = clampSend(
+    "connectionScanIntervalMinutes",
+    next.connectionScanIntervalMinutes,
+  );
 
   await upsertAppSetting(
     OUTREACH_SEND_KEYS.enabled,
@@ -157,12 +208,38 @@ export async function updateOutreachSendSettings(
     OUTREACH_SEND_KEYS.sendJitterPercent,
     String(next.sendJitterPercent),
   );
+  await upsertAppSetting(
+    OUTREACH_SEND_KEYS.inviteEnabled,
+    next.inviteEnabled ? "1" : "0",
+  );
+  await upsertAppSetting(
+    OUTREACH_SEND_KEYS.inviteSendMode,
+    next.inviteSendMode,
+  );
+  await upsertAppSetting(
+    OUTREACH_SEND_KEYS.inviteMaxPerDay,
+    String(next.inviteMaxPerDay),
+  );
+  await upsertAppSetting(
+    OUTREACH_SEND_KEYS.connectionScanIntervalMinutes,
+    String(next.connectionScanIntervalMinutes),
+  );
   return next;
 }
 
-export async function countSendsToday(): Promise<number> {
+export async function countSendsToday(
+  action?: OutreachQueueAction,
+): Promise<number> {
   const sqlite = (await import("@/db")).getSqlite();
   const dayStart = startOfLocalDay().getTime();
+  if (action) {
+    const row = sqlite
+      .prepare(
+        `SELECT COUNT(*) AS c FROM outreach_send_log WHERE created_at >= ? AND outcome = 'sent' AND action = ?`,
+      )
+      .get(dayStart, action) as { c: number } | undefined;
+    return row?.c ?? 0;
+  }
   const row = sqlite
     .prepare(
       `SELECT COUNT(*) AS c FROM outreach_send_log WHERE created_at >= ? AND outcome = 'sent'`,
@@ -226,25 +303,44 @@ export type OutreachQueueNextItem = {
   fullName: string | null;
   linkedinUrl: string | null;
   draftOutreach: string | null;
+  draftInviteNote: string | null;
+  draftText: string | null;
+  action: OutreachQueueAction;
+  outreachStep: "invite" | "followup";
+  connectionDegree: string | null;
   status: string;
   campaignId: string;
   campaignName: string;
   sendMode: OutreachSendMode;
 };
 
+export async function getLastConnectionScanAt(): Promise<number | null> {
+  const db = getDb();
+  const row = await db.query.appSettings.findFirst({
+    where: eq(appSettings.key, OUTREACH_SEND_KEYS.lastConnectionScanAt),
+  });
+  const n = row?.value !== undefined ? Number(row.value) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+export async function setLastConnectionScanAt(atMs = Date.now()): Promise<void> {
+  await upsertAppSetting(OUTREACH_SEND_KEYS.lastConnectionScanAt, String(atMs));
+}
+
 export async function getNextOutreachSendItem(): Promise<
   | { item: OutreachQueueNextItem; waitMs: number }
   | { item: null; reason: string; waitMs?: number }
 > {
   const settings = await getOutreachSendSettings();
-  if (!settings.enabled) {
+  if (!settings.enabled && !settings.inviteEnabled) {
     return { item: null, reason: "linkedin_outreach_disabled" };
   }
 
-  const sentToday = await countSendsToday();
-  if (sentToday >= settings.sendMaxPerDay) {
-    return { item: null, reason: "daily_send_cap" };
-  }
+  const dmToday = await countSendsToday("dm");
+  const inviteToday = await countSendsToday("invite");
+  const dmCapHit = settings.enabled && dmToday >= settings.sendMaxPerDay;
+  const inviteCapHit =
+    settings.inviteEnabled && inviteToday >= settings.inviteMaxPerDay;
 
   const waitMs = await sendRequiredGapMs(settings);
   const sqlite = (await import("@/db")).getSqlite();
@@ -272,12 +368,49 @@ export async function getNextOutreachSendItem(): Promise<
   const items = await listCampaignMembersForExtension(campaignId, 50, {
     onlyReady: true,
   });
-  const ready = items.find((i) => i.status === "ready" && i.draftOutreach);
+  const campaign = await getOutreachCampaign(campaignId);
+
+  const inviteCandidate =
+    settings.inviteEnabled && !inviteCapHit
+      ? items.find((i) =>
+          memberHasSendableInvite({
+            status: i.status,
+            outreachStep: i.outreachStep,
+            draftInviteNote: i.draftInviteNote,
+            connectionAcceptedAt: i.connectionAcceptedAt,
+          }),
+        )
+      : undefined;
+
+  const dmCandidate =
+    settings.enabled && !dmCapHit
+      ? items.find((i) =>
+          memberHasSendableFollowup({
+            status: i.status,
+            outreachStep: i.outreachStep,
+            draftOutreach: i.draftOutreach,
+          }),
+        )
+      : undefined;
+
+  const ready = inviteCandidate ?? dmCandidate;
   if (!ready) {
+    if (inviteCapHit && !dmCandidate) {
+      return { item: null, reason: "daily_invite_cap" };
+    }
+    if (dmCapHit && !inviteCandidate) {
+      return { item: null, reason: "daily_send_cap" };
+    }
     return { item: null, reason: "no_ready_members" };
   }
 
-  const campaign = await getOutreachCampaign(campaignId);
+  const action: OutreachQueueAction = inviteCandidate ? "invite" : "dm";
+  const draftText =
+    action === "invite"
+      ? ready.draftInviteNote || null
+      : ready.draftOutreach || null;
+  const sendMode =
+    action === "invite" ? settings.inviteSendMode : settings.sendMode;
 
   return {
     item: {
@@ -286,10 +419,15 @@ export async function getNextOutreachSendItem(): Promise<
       fullName: ready.fullName ?? null,
       linkedinUrl: ready.linkedinUrl ?? null,
       draftOutreach: ready.draftOutreach ?? null,
+      draftInviteNote: ready.draftInviteNote ?? null,
+      draftText,
+      action,
+      outreachStep: action === "invite" ? "invite" : "followup",
+      connectionDegree: ready.connectionDegree ?? null,
       status: ready.status,
       campaignId,
       campaignName: campaign?.name ?? "Campaign",
-      sendMode: settings.sendMode,
+      sendMode,
     },
     waitMs: 0,
   };

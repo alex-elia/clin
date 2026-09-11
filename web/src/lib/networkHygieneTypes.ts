@@ -47,6 +47,9 @@ export type NetworkHygieneMetrics = {
   withPostsCapture: number;
   withMessagingCapture: number;
   withLlmAnalysis: number;
+  alreadyCleaned: number;
+  capturedOpen: number;
+  openContacts: number;
   adviceConfidenceHigh: number;
   adviceConfidenceMedium: number;
   adviceConfidenceLow: number;

@@ -30,7 +30,7 @@ export default function DataHubPage() {
           href: "/cleaning",
           title: "Cleaning",
           description:
-            "Extraction readiness, AI buckets (remove, nurture, comment, DM), and batch analysis.",
+            "Buckets and network KPIs for remove, comment, invite, or DM, using the full captured graph (except already cleaned).",
         },
         {
           href: "/autopilot",

@@ -1,6 +1,7 @@
 import { enqueueCampaignEngage } from "@/lib/campaignEngageQueue";
 import { runAndPersistMemberIcpCheck } from "@/lib/campaignMemberIcp";
 import type { CampaignMemberIcpRecommendedAction } from "@/lib/campaignMemberIcpShared";
+import { shouldAutoDraftOutreach } from "@/lib/campaignMemberIcpShared";
 import { generateOutreachDraftForMember } from "@/lib/outreachCampaignDraft";
 import { findMemberByCampaignAndContact } from "@/lib/outreachCampaigns";
 
@@ -14,7 +15,12 @@ export type CampaignPostCaptureWorkflowResult = {
   skippedDraftReason: string | null;
 };
 
-const BLOCKED_STATUSES = new Set(["sent", "skipped", "closed"]);
+const BLOCKED_STATUSES = new Set([
+  "sent",
+  "skipped",
+  "closed",
+  "invite_sent",
+]);
 
 /**
  * After a profile capture linked to a campaign member:
@@ -84,13 +90,10 @@ export async function runCampaignPostCaptureWorkflow(opts: {
     };
   }
 
-  const shouldDraft =
-    check.recommended_action !== "skip" &&
-    check.recommended_action !== "review_remove" &&
-    (check.icp_match === "strong" ||
-      (check.icp_match === "partial" &&
-        (check.recommended_action === "keep_and_draft" ||
-          check.recommended_action === "keep")));
+  const shouldDraft = shouldAutoDraftOutreach({
+    icpMatch: check.icp_match,
+    recommendedAction: check.recommended_action,
+  });
 
   if (!shouldDraft) {
     return {

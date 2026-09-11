@@ -429,6 +429,7 @@ async function setLastOutreachMemberContext(item) {
       contactId: item.contactId,
       linkedinUrl: item.linkedinUrl,
       fullName: item.fullName,
+      action: item.action || "dm",
       at: Date.now(),
     },
   });
@@ -660,6 +661,7 @@ function isConnectionsListPageUrl(url) {
     const p = u.pathname.toLowerCase();
     if (p.includes("/mynetwork/invite-connect/connections")) return true;
     if (p.includes("/mynetwork/connection-manager")) return true;
+    if (p.includes("/mynetwork/invitation-manager")) return true;
     if (p.includes("/search/results/people")) return true;
     if (p.includes("/search/results/all") && /people/i.test(u.search)) return true;
     if (p.includes("/sales/search/people")) return true;
@@ -671,6 +673,41 @@ function isConnectionsListPageUrl(url) {
 
 /** Page world — is a messaging thread UI visible (full page or overlay). */
 function isMessagingDomVisiblePage() {
+  function findMessagingScrollContainer() {
+    const selectors = [
+      "ul.msg-s-message-list",
+      ".msg-s-message-list",
+      "[class*='msg-s-message-list']",
+      ".msg-thread__message-list",
+      "[class*='msg-thread'] [role='log']",
+      "[class*='msg-overlay-conversation'] [role='log']",
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el instanceof HTMLElement) return el;
+    }
+    const bubble =
+      document.querySelector(".msg-overlay-conversation-bubble") ||
+      document.querySelector("[class*='msg-overlay-conversation']") ||
+      document.querySelector(".msg-convo-wrapper");
+    if (bubble instanceof HTMLElement) {
+      const scrollables = bubble.querySelectorAll(
+        "[style*='overflow'], [class*='scrollable'], [class*='scroll']",
+      );
+      for (const el of scrollables) {
+        if (el instanceof HTMLElement && el.scrollHeight > el.clientHeight + 20) {
+          return el;
+        }
+      }
+      for (const el of bubble.querySelectorAll("[role='log'], [role='list']")) {
+        if (el instanceof HTMLElement && el.querySelector("li, [class*='message']")) {
+          return el;
+        }
+      }
+    }
+    return null;
+  }
+
   const list = findMessagingScrollContainer();
   const header =
     document.querySelector(".msg-overlay-conversation-bubble-header") ||
@@ -1253,6 +1290,41 @@ async function captureMessagingBundleInPage() {
  * Page world — scroll thread to load older messages before scrape.
  */
 async function prepMessagingThreadForScrape(maxMs) {
+  function findMessagingScrollContainer() {
+    const selectors = [
+      "ul.msg-s-message-list",
+      ".msg-s-message-list",
+      "[class*='msg-s-message-list']",
+      ".msg-thread__message-list",
+      "[class*='msg-thread'] [role='log']",
+      "[class*='msg-overlay-conversation'] [role='log']",
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el instanceof HTMLElement) return el;
+    }
+    const bubble =
+      document.querySelector(".msg-overlay-conversation-bubble") ||
+      document.querySelector("[class*='msg-overlay-conversation']") ||
+      document.querySelector(".msg-convo-wrapper");
+    if (bubble instanceof HTMLElement) {
+      const scrollables = bubble.querySelectorAll(
+        "[style*='overflow'], [class*='scrollable'], [class*='scroll']",
+      );
+      for (const el of scrollables) {
+        if (el instanceof HTMLElement && el.scrollHeight > el.clientHeight + 20) {
+          return el;
+        }
+      }
+      for (const el of bubble.querySelectorAll("[role='log'], [role='list']")) {
+        if (el instanceof HTMLElement && el.querySelector("li, [class*='message']")) {
+          return el;
+        }
+      }
+    }
+    return null;
+  }
+
   const deadline = Date.now() + (maxMs || 8000);
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const list = findMessagingScrollContainer();
@@ -1532,6 +1604,10 @@ async function scrapeMessagingFromTab(tabId) {
   };
 
   const runCapture = async () => {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["pageWorldMessagingDom.js"],
+    });
     const injected = await chrome.scripting.executeScript({
       target: { tabId },
       func: captureMessagingBundleInPage,
@@ -4245,6 +4321,21 @@ function scrapeConnectionsList() {
     return t.length ? t : undefined;
   }
 
+  function parseConnectionDegree(text) {
+    const t = clean(text);
+    if (!t) return undefined;
+    if (/\b1er\b/i.test(t) || /\b1\s*(?:er|re|st)\b/i.test(t) || /\b1st\b/i.test(t)) {
+      return "1st";
+    }
+    if (/\b2e\b/i.test(t) || /\b2\s*(?:e|nd)\b/i.test(t) || /\b2nd\b/i.test(t)) {
+      return "2nd";
+    }
+    if (/\b3e\b/i.test(t) || /\b3\s*(?:e|rd)?\+?\b/i.test(t) || /\b3rd/i.test(t)) {
+      return "3rd+";
+    }
+    return undefined;
+  }
+
   function stripDegreeFromName(name) {
     const t = clean(name);
     if (!t) return undefined;
@@ -4369,10 +4460,14 @@ function scrapeConnectionsList() {
       "li.reusable-search__result-container",
       ".reusable-search__result-container",
       'div[data-view-name="search-entity-result-universal-template"]',
+      'li[data-view-name="search-entity-result-universal-template"]',
+      '[data-view-name="search-entity-result-card"]',
       "div.entity-result",
       ".mn-connection-card",
       "[data-chameleon-result-urn]",
       '[data-view-name="search-result"]',
+      '[data-view-name="people-search-result"]',
+      "ul.reusable-search__entity-result-list > li",
     ];
     const cards = [];
     const seenEl = new WeakSet();
@@ -4541,6 +4636,8 @@ function scrapeConnectionsList() {
 
 const PENDING_SELF_ALARM = "clin-pending-self-capture";
 const PENDING_SELF_LOCK_KEY = "clin_pending_self_capture_lock_ms";
+const CONNECTION_SCAN_ALARM = "clin-connection-scan";
+const CONNECTION_SCAN_LOCK_KEY = "clin_connection_scan_lock_ms";
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -6479,6 +6576,87 @@ function ensurePendingSelfAlarm() {
   });
 }
 
+async function pollConnectionScan() {
+  const base = await getApiBase();
+  const root = base.replace(/\/$/, "");
+  const now = Date.now();
+  const { [CONNECTION_SCAN_LOCK_KEY]: lockUntil } = await chrome.storage.local.get(
+    CONNECTION_SCAN_LOCK_KEY,
+  );
+  if (typeof lockUntil === "number" && lockUntil > now) return;
+
+  let jobRes;
+  try {
+    jobRes = await fetch(`${root}/api/extension/pending-connection-scan`);
+  } catch {
+    return;
+  }
+  if (!jobRes.ok) return;
+  const job = await jobRes.json();
+  if (!job?.due || !job.pendingCount) return;
+
+  await chrome.storage.local.set({
+    [CONNECTION_SCAN_LOCK_KEY]: now + 180_000,
+  });
+
+  const allRows = [];
+  try {
+    const tabs = await chrome.tabs.query({
+      url: ["https://www.linkedin.com/*", "https://linkedin.com/*"],
+    });
+    let tabId = tabs[0]?.id;
+    if (typeof tabId !== "number") {
+      const created = await chrome.tabs.create({
+        url: job.sentInvitationsUrl,
+        active: false,
+      });
+      tabId = created.id;
+    }
+    if (typeof tabId !== "number") return;
+
+    async function scrapeUrl(pageUrl) {
+      await chrome.tabs.update(tabId, { url: pageUrl });
+      await sleep(4500);
+      try {
+        const [{ result }] = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: scrapeConnectionStatusListPage,
+        });
+        if (Array.isArray(result?.rows)) allRows.push(...result.rows);
+      } catch {
+        /* ignore scrape errors */
+      }
+    }
+
+    if (job.sentInvitationsUrl) await scrapeUrl(job.sentInvitationsUrl);
+    if (job.connectionsUrl) await scrapeUrl(job.connectionsUrl);
+
+    if (allRows.length) {
+      await fetch(`${root}/api/ingest/connection-status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: allRows }),
+      });
+    }
+    await fetch(`${root}/api/extension/pending-connection-scan/ack`, {
+      method: "POST",
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await chrome.storage.local.set({ [LAST_ERROR_KEY]: msg });
+  } finally {
+    await chrome.storage.local.remove(CONNECTION_SCAN_LOCK_KEY);
+  }
+}
+
+function ensureConnectionScanAlarm() {
+  chrome.alarms.get(CONNECTION_SCAN_ALARM, (a) => {
+    if (!a) {
+      chrome.alarms.create(CONNECTION_SCAN_ALARM, { periodInMinutes: 15 });
+    }
+  });
+}
+
 /** Toolbar icon opens the docked side panel (stays visible while you use the page). */
 function ensureSidePanelOpensOnToolbarClick() {
   if (!chrome.sidePanel?.setPanelBehavior) return;
@@ -6492,19 +6670,26 @@ ensureSidePanelOpensOnToolbarClick();
 chrome.runtime.onInstalled.addListener(() => {
   ensureSidePanelOpensOnToolbarClick();
   ensurePendingSelfAlarm();
+  ensureConnectionScanAlarm();
   void clearStaleCaptureLiveStatus();
   pollPendingSelfCapture();
+  void pollConnectionScan();
   void resumePipelineIfNeeded();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   void clearStaleCaptureLiveStatus();
   void resumePipelineIfNeeded();
+  ensureConnectionScanAlarm();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === PENDING_SELF_ALARM) {
     pollPendingSelfCapture();
+    return;
+  }
+  if (alarm.name === CONNECTION_SCAN_ALARM) {
+    void pollConnectionScan();
     return;
   }
   if (alarm.name === PIPELINE_ALARM) {
@@ -8068,6 +8253,436 @@ function isOutreachComposerReadyPage() {
 }
 
 /**
+ * Page world — click Connect on the open profile only (never similar-profile cards).
+ */
+function clickProfileConnectButton(expectedName, expectedVanity) {
+  function labelOf(el) {
+    if (!(el instanceof HTMLElement)) return "";
+    return (
+      el.getAttribute("aria-label") ||
+      el.getAttribute("title") ||
+      el.textContent ||
+      ""
+    ).trim();
+  }
+  function vanityFromLocation() {
+    const m = (location.pathname || "").match(/\/in\/([^/]+)/i);
+    return m ? decodeURIComponent(m[1]).toLowerCase() : "";
+  }
+  function headerName() {
+    const h1 =
+      document.querySelector("main h1") ||
+      document.querySelector("h1");
+    return (h1?.textContent || "").replace(/\s+/g, " ").trim();
+  }
+  function identityMismatch() {
+    const wantVanity = String(expectedVanity || "")
+      .replace(/^https?:\/\/[^/]+\/in\//i, "")
+      .replace(/\/.*$/, "")
+      .toLowerCase();
+    const gotVanity = vanityFromLocation();
+    if (wantVanity && gotVanity && wantVanity !== gotVanity) return true;
+    const wantName = String(expectedName || "").replace(/\s+/g, " ").trim().toLowerCase();
+    const gotName = headerName().toLowerCase();
+    if (!wantName || !gotName) return false;
+    const parts = wantName.split(" ").filter((p) => p.length > 2);
+    if (!parts.length) return false;
+    return !parts.some((p) => gotName.includes(p));
+  }
+  function isExcludedConnectContext(el) {
+    if (!(el instanceof HTMLElement)) return true;
+    if (el.closest("aside")) return true;
+    if (el.closest('[data-view-name*="browse-map"]')) return true;
+    if (el.closest(".pvs-browsemap-section, .pv-browsemap-section")) return true;
+    let node = el;
+    for (let i = 0; i < 10 && node; i += 1) {
+      const t = `${node.getAttribute?.("aria-label") || ""} ${(node.innerText || "").slice(0, 220)}`;
+      if (
+        /profils semblables|people also viewed|similar to|plus de profils pour vous|more profiles for you|people you may know/i.test(
+          t,
+        )
+      ) {
+        return true;
+      }
+      node = node.parentElement;
+    }
+    return false;
+  }
+  function isConnectEl(el) {
+    if (!(el instanceof HTMLElement)) return false;
+    if (isExcludedConnectContext(el)) return false;
+    const label = labelOf(el).toLowerCase();
+    if (!label) return false;
+    if (/\b(pending|en attente|follow|suivre|message|messager|inmail)\b/i.test(label)) {
+      return false;
+    }
+    return (
+      /\b(connect|connecter|inviter|invite|se connecter)\b/i.test(label) &&
+      !/\bconnected|connecté|déjà\b/i.test(label)
+    );
+  }
+  function isPendingEl(el) {
+    if (!(el instanceof HTMLElement) || isExcludedConnectContext(el)) return false;
+    return /\b(pending|en attente)\b/i.test(labelOf(el));
+  }
+  function activate(el) {
+    try {
+      const opts = { bubbles: true, cancelable: true, view: window };
+      for (const type of [
+        "pointerdown",
+        "mousedown",
+        "pointerup",
+        "mouseup",
+        "click",
+      ]) {
+        el.dispatchEvent(new MouseEvent(type, opts));
+      }
+      if (typeof el.click === "function") el.click();
+      return true;
+    } catch {
+      try {
+        el.click();
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+  if (identityMismatch()) {
+    return {
+      clicked: false,
+      wrongProfile: true,
+      headerName: headerName(),
+      vanity: vanityFromLocation(),
+    };
+  }
+
+  const roots = [
+    document.querySelector(".pvs-profile-actions"),
+    document.querySelector('[data-view-name="profile-actions"]'),
+    document.querySelector(".pv-top-card-v2-ctas"),
+    document.querySelector(".pv-top-card"),
+    document.querySelector('[data-view-name="profile-top-card"]'),
+    document.querySelector('[data-view-name*="profile-top-card"]'),
+  ].filter(Boolean);
+
+  const primary = roots[0] || null;
+  const searchRoots = primary ? [primary] : roots;
+
+  for (const root of searchRoots) {
+    for (const el of root.querySelectorAll("button, a, [role='button']")) {
+      if (isPendingEl(el)) return { clicked: false, alreadyPending: true };
+    }
+  }
+
+  for (const root of searchRoots) {
+    for (const el of root.querySelectorAll("button, a, [role='button']")) {
+      if (isConnectEl(el) && activate(el)) {
+        return { clicked: true, method: "direct" };
+      }
+    }
+  }
+
+  const moreCandidates = [];
+  for (const root of searchRoots.length ? searchRoots : roots) {
+    for (const el of root.querySelectorAll("button, [role='button']")) {
+      const l = labelOf(el).toLowerCase();
+      if (l === "more" || l === "plus" || /^plus d/i.test(l) || /more actions/i.test(l)) {
+        moreCandidates.push(el);
+      }
+    }
+  }
+  for (const more of moreCandidates) {
+    activate(more);
+  }
+
+  const menuRoots = [
+    document.querySelector(".artdeco-dropdown__content--is-open"),
+    document.querySelector('[role="menu"]'),
+    ...document.querySelectorAll(".artdeco-dropdown__content"),
+  ].filter(Boolean);
+  for (const menuRoot of menuRoots) {
+    if (isExcludedConnectContext(menuRoot)) continue;
+    for (const el of menuRoot.querySelectorAll("button, a, [role='button']")) {
+      if (isConnectEl(el) && activate(el)) {
+        return { clicked: true, method: "more_menu" };
+      }
+    }
+  }
+
+  for (const root of searchRoots) {
+    for (const el of root.querySelectorAll("button, a, [role='button']")) {
+      if (isPendingEl(el)) return { clicked: false, alreadyPending: true };
+    }
+  }
+  return { clicked: false };
+}
+
+/** Page world — invitation note modal visible. */
+function isInviteModalReadyPage() {
+  const selectors = [
+    "textarea#custom-message",
+    'textarea[name="message"]',
+    "textarea.send-invite__custom-message",
+    'textarea[id*="custom-message"]',
+    ".send-invite textarea",
+    '[role="dialog"] textarea',
+  ];
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (el instanceof HTMLTextAreaElement) return true;
+  }
+  const dialog = document.querySelector('[role="dialog"]');
+  if (dialog && /note|invitation|invit/i.test(dialog.textContent || "")) {
+    return true;
+  }
+  return false;
+}
+
+function inviteModalStatePage() {
+  const body = (document.body?.innerText || "").slice(0, 4000);
+  if (
+    /weekly invitation limit|limite hebdomadaire|you've reached the weekly|personalized invitation|invitations personnalisées|can't add a note|cannot add a note|plus d'invitations avec (une )?note/i.test(
+      body,
+    )
+  ) {
+    return { ready: false, blocked: "weekly_limit" };
+  }
+  if (isInviteModalReadyPage()) return { ready: true, blocked: null };
+  const pending = [...document.querySelectorAll("button, a, [role='button']")].some(
+    (el) => /\b(pending|en attente)\b/i.test((el.textContent || el.getAttribute("aria-label") || "")),
+  );
+  if (pending) return { ready: false, blocked: "already_pending" };
+  return { ready: false, blocked: null };
+}
+
+/**
+ * Page world — fill LinkedIn invite note modal (self-contained).
+ */
+async function clinOutreachFillInviteNote(draftText, autoSend) {
+  const text = String(draftText || "").slice(0, 200);
+  const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  function labelOf(el) {
+    return (
+      (el.getAttribute && (el.getAttribute("aria-label") || el.getAttribute("title"))) ||
+      el.textContent ||
+      ""
+    ).trim();
+  }
+  function activate(el) {
+    try {
+      el.click();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function findAddNoteButton() {
+    for (const el of document.querySelectorAll("button, [role='button']")) {
+      const l = labelOf(el).toLowerCase();
+      if (/add a note|ajouter une note|ajouter un message/i.test(l)) return el;
+    }
+    return null;
+  }
+
+  function findTextarea() {
+    const selectors = [
+      "textarea#custom-message",
+      'textarea[name="message"]',
+      "textarea.send-invite__custom-message",
+      'textarea[id*="custom-message"]',
+      ".send-invite textarea",
+      '[role="dialog"] textarea',
+    ];
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (el instanceof HTMLTextAreaElement) return el;
+    }
+    return null;
+  }
+
+  function findSendButton() {
+    for (const el of document.querySelectorAll("button")) {
+      const l = labelOf(el).toLowerCase();
+      if (
+        /send invitation|envoyer une invitation|send without a note|envoyer sans note/i.test(
+          l,
+        )
+      ) {
+        return el;
+      }
+      if (/^send$|^envoyer$/.test(l) && el.closest('[role="dialog"]')) return el;
+    }
+    return null;
+  }
+
+  const addNote = findAddNoteButton();
+  if (addNote) {
+    activate(addNote);
+    await delay(400);
+  }
+
+  let ta = findTextarea();
+  for (let i = 0; i < 8 && !ta; i += 1) {
+    await delay(250);
+    ta = findTextarea();
+  }
+  if (!ta) {
+    return { ok: false, step: "no_composer", error: "Invite note field not found." };
+  }
+
+  ta.focus();
+  ta.value = text;
+  ta.dispatchEvent(new Event("input", { bubbles: true }));
+  ta.dispatchEvent(new Event("change", { bubbles: true }));
+
+  if (!autoSend) {
+    return { ok: true, sent: false, filled: true };
+  }
+
+  const send = findSendButton();
+  if (!send || send.disabled) {
+    return {
+      ok: true,
+      sent: false,
+      filled: true,
+      error: "Send invitation button not ready.",
+    };
+  }
+  activate(send);
+  await delay(800);
+  return { ok: true, sent: true, filled: true };
+}
+
+function scrapeConnectionStatusListPage() {
+  function canonicalFromHref(href) {
+    try {
+      const u = new URL(href, location.origin);
+      const parts = u.pathname.split("/").filter(Boolean);
+      if (parts[0] === "in" && parts[1]) {
+        return `https://www.linkedin.com/in/${decodeURIComponent(parts[1]).toLowerCase()}`;
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+  const path = (location.pathname || "").toLowerCase();
+  const defaultState = path.includes("invitation-manager")
+    ? "pending"
+    : "connected";
+  const rows = [];
+  const seen = new Set();
+  for (const a of document.querySelectorAll('a[href*="/in/"]')) {
+    const url = canonicalFromHref(a.href);
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    const card =
+      a.closest(
+        "li, article, .invitation-card, .mn-connection-card, .entity-result, .reusable-search__result-container",
+      ) || a.parentElement;
+    const text = ((card && card.textContent) || "").toLowerCase();
+    let state = defaultState;
+    if (/\bpending\b|en attente/.test(text)) state = "pending";
+    if (/\b1st\b|\b1er\b|connected|connecté/.test(text)) state = "connected";
+    rows.push({ profileUrl: url, state });
+  }
+  return { rows, page: path, defaultState };
+}
+
+async function openConnectInviteForOutreach(tabId, expectedName, expectedVanity) {
+  async function waitForProfileActions(timeoutMs = 8000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const [{ result }] = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: isProfileActionsChromeReadyPage,
+        });
+        if (result?.ready) return true;
+      } catch {
+        /* ignore */
+      }
+      await sleep(400);
+    }
+    return false;
+  }
+
+  try {
+    await waitForLinkedInProfileTab(tabId, 25000);
+  } catch {
+    /* continue */
+  }
+  await waitForProfileActions(8000);
+  await sleep(800);
+
+  let clicked = false;
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: clickProfileConnectButton,
+      args: [expectedName || "", expectedVanity || ""],
+    });
+    if (result?.wrongProfile) {
+      return {
+        ok: false,
+        step: "wrong_profile",
+        error: `Opened the wrong profile (${result.headerName || result.vanity || "unknown"}). Did not click Connect on similar-profile cards.`,
+      };
+    }
+    if (result?.alreadyPending) {
+      return { ok: false, step: "already_pending", error: "Invite already pending." };
+    }
+    clicked = Boolean(result?.clicked);
+  } catch {
+    clicked = false;
+  }
+
+  if (!clicked) {
+    return {
+      ok: false,
+      step: "no_connect",
+      error: "Connect button not found on this profile (Pending or Message only). Did not click Connect on similar profiles.",
+    };
+  }
+
+  for (let i = 0; i < 16; i += 1) {
+    try {
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: inviteModalStatePage,
+      });
+      if (result?.blocked === "weekly_limit") {
+        return {
+          ok: false,
+          step: "weekly_limit",
+          error: "LinkedIn weekly invitation limit reached.",
+        };
+      }
+      if (result?.blocked === "already_pending") {
+        return {
+          ok: false,
+          step: "already_pending",
+          error: "Invite already pending.",
+        };
+      }
+      if (result?.ready) return { ok: true };
+    } catch {
+      /* ignore */
+    }
+    await sleep(350);
+  }
+
+  return {
+    ok: false,
+    step: "no_modal",
+    error: "Connect clicked but the invite note modal did not open.",
+  };
+}
+
+/**
  * Navigate from profile until the messaging composer is reachable for this contact.
  */
 async function openMessagingForOutreach(
@@ -8296,6 +8911,11 @@ async function outreachRunStep(tabId, base) {
   const contactLabel = item.fullName?.trim() || "contact";
   const url = item.linkedinUrl;
   const expectedVanity = linkedinVanityFromUrl(url);
+  const action = item.action === "invite" ? "invite" : "dm";
+  const draftText =
+    item.draftText ||
+    (action === "invite" ? item.draftInviteNote : item.draftOutreach) ||
+    "";
   if (!url) {
     await fetch(`${root}/api/extension/outreach-queue/ack`, {
       method: "POST",
@@ -8303,11 +8923,125 @@ async function outreachRunStep(tabId, base) {
       body: JSON.stringify({
         memberId: item.memberId,
         outcome: "failed",
-        action: "dm",
+        action,
         error: "missing_linkedin_url",
       }),
     });
     return { ok: true, skipped: true };
+  }
+
+  if (action === "invite") {
+    await setExtensionLiveStatus({
+      phase: "running",
+      scope: "outreach",
+      title: "Outreach run",
+      detail: `Opening ${contactLabel} to send a connection invite…`,
+      confirmMemberId: null,
+    });
+    await chrome.tabs.update(tabId, { url });
+    const opened = await openConnectInviteForOutreach(
+      tabId,
+      contactLabel,
+      expectedVanity,
+    );
+    if (!opened.ok) {
+      if (opened.step === "already_pending") {
+        await fetch(`${root}/api/extension/outreach-queue/ack`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            memberId: item.memberId,
+            outcome: "sent",
+            action: "invite",
+          }),
+        });
+        await setExtensionLiveStatus({
+          phase: "success",
+          scope: "outreach",
+          title: "Outreach — invite pending",
+          detail: `Invite already pending for ${contactLabel}.`,
+          confirmMemberId: null,
+        });
+        return { ok: true, item, sent: true };
+      }
+      await setExtensionLiveStatus({
+        phase: "waiting",
+        scope: "outreach",
+        title: "Outreach — invite",
+        detail: opened.error || "Could not open Connect with note.",
+        confirmMemberId: item.memberId,
+      });
+      return {
+        ok: true,
+        item,
+        needsConfirm: true,
+        step: opened.step || "open_connect",
+        hint: opened.error,
+      };
+    }
+    const autoSend = item.sendMode === "auto";
+    const [{ result: fill }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: clinOutreachFillInviteNote,
+      args: [draftText, autoSend],
+    });
+    if (!fill?.ok) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          world: "MAIN",
+          func: (text) => {
+            navigator.clipboard.writeText(String(text || "")).catch(() => {});
+          },
+          args: [draftText],
+        });
+      } catch {
+        /* ignore */
+      }
+      await setExtensionLiveStatus({
+        phase: "waiting",
+        scope: "outreach",
+        title: "Outreach — invite note",
+        detail:
+          (fill?.error || "Could not fill invite note.") +
+          " Note copied to clipboard.",
+        confirmMemberId: item.memberId,
+      });
+      return {
+        ok: true,
+        item,
+        needsConfirm: true,
+        step: fill?.step || "insert_failed",
+      };
+    }
+    if (fill.sent) {
+      await fetch(`${root}/api/extension/outreach-queue/ack`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          memberId: item.memberId,
+          outcome: "sent",
+          action: "invite",
+        }),
+      });
+      await setExtensionLiveStatus({
+        phase: "success",
+        scope: "outreach",
+        title: "Outreach — invite sent",
+        detail: `Invitation sent to ${contactLabel}. Waiting for pace gap.`,
+        confirmMemberId: null,
+      });
+      return { ok: true, item, sent: true };
+    }
+    await setExtensionLiveStatus({
+      phase: "waiting",
+      scope: "outreach",
+      title: "Outreach — confirm invite",
+      detail: `Note inserted for ${contactLabel}. Click Send invitation on LinkedIn, then Confirm below.`,
+      confirmMemberId: item.memberId,
+    });
+    return { ok: true, item, needsConfirm: true };
   }
 
   let threadAlreadyReady = false;
@@ -8393,7 +9127,7 @@ async function outreachRunStep(tabId, base) {
     target: { tabId },
     world: "MAIN",
     func: clinOutreachFillComposer,
-    args: [item.draftOutreach || "", autoSend, expectedVanity || ""],
+    args: [item.draftOutreach || draftText || "", autoSend, expectedVanity || ""],
   });
 
   if (!fill?.ok) {
@@ -8521,24 +9255,30 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse({ ok: false, error: "memberId required" });
           return;
         }
+        const ctx = await getLastOutreachMemberContext();
+        const action =
+          msg.action === "invite" || ctx?.action === "invite" ? "invite" : "dm";
         await fetch(`${root}/api/extension/outreach-queue/ack`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             memberId,
             outcome: "sent",
-            action: "dm",
+            action,
           }),
         });
         const tabId = await resolveOutreachRunTabId(msg.tabId);
-        if (typeof tabId === "number") {
+        if (typeof tabId === "number" && action === "dm") {
           void tryAutoCaptureMessagingThread(tabId, root);
         }
         await setExtensionLiveStatus({
           phase: "success",
           scope: "outreach",
-          title: "Outreach — sent",
-          detail: "Marked sent. Next contact after pace gap.",
+          title: action === "invite" ? "Outreach — invite sent" : "Outreach — sent",
+          detail:
+            action === "invite"
+              ? "Marked invite sent. Next contact after pace gap."
+              : "Marked sent. Next contact after pace gap.",
           confirmMemberId: null,
         });
         sendResponse({ ok: true });
@@ -9423,3 +10163,4 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 ensurePendingSelfAlarm();
+ensureConnectionScanAlarm();

@@ -9,6 +9,7 @@ const GET_ROUTES = [
   "/contacts",
   "/cleaning",
   "/campaigns",
+  "/campaigns/new",
   "/api/health",
 ];
 

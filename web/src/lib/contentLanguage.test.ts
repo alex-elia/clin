@@ -6,13 +6,14 @@ import {
 } from "./contentLanguage";
 
 describe("resolveOutreachLanguage", () => {
-  it("defaults to French for FR market when signals are thin", () => {
+  it("uses English from a short English headline instead of defaulting to French", () => {
     const r = resolveOutreachLanguage({
       brandPreference: "auto",
       marketRegion: "fr",
       recipientContext: "VP Sales at Acme",
     });
-    assert.equal(r.language, "fr");
+    assert.equal(r.language, "en");
+    assert.equal(r.source, "detected_post");
   });
 
   it("detects French from recipient profile text", () => {
@@ -26,14 +27,34 @@ describe("resolveOutreachLanguage", () => {
     assert.equal(r.source, "detected_post");
   });
 
-  it("respects explicit brand French preference", () => {
+  it("lets recipient English win over a French brand default", () => {
     const r = resolveOutreachLanguage({
       brandPreference: "fr",
       marketRegion: "en",
-      recipientContext: "CEO at startup",
+      recipientContext: "Head of Engineering in Berlin",
+    });
+    assert.equal(r.language, "en");
+    assert.equal(r.source, "detected_post");
+  });
+
+  it("lets a French location beat an English CEO headline", () => {
+    const r = resolveOutreachLanguage({
+      brandPreference: "en",
+      marketRegion: "en",
+      recipientContext: "CEO and Founder\nParis, France",
     });
     assert.equal(r.language, "fr");
-    assert.equal(r.source, "brand");
+  });
+
+  it("locks French from short campaign instructions", () => {
+    const r = resolveOutreachLanguage({
+      brandPreference: "en",
+      marketRegion: "en",
+      campaignWriterInstructions: "Notes d'invitation en français.",
+      recipientContext: "Head of Sales at Acme",
+    });
+    assert.equal(r.language, "fr");
+    assert.equal(r.source, "campaign");
   });
 });
 

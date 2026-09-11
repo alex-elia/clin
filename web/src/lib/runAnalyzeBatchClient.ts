@@ -23,7 +23,26 @@ export async function runAnalyzeBatchChunked(opts: {
   let succeeded = 0;
   let failed = 0;
   const allResults: BatchResult[] = [];
-  const seenContactIds = new Set<string>();
+  const excludeContactIds: string[] = [];
+
+  const upsertResult = (r: BatchResult) => {
+    const idx = allResults.findIndex((x) => x.contactId === r.contactId);
+    if (idx === -1) {
+      allResults.push(r);
+      if (r.ok) succeeded += 1;
+      else failed += 1;
+      if (!excludeContactIds.includes(r.contactId)) {
+        excludeContactIds.push(r.contactId);
+      }
+      return;
+    }
+    const prev = allResults[idx]!;
+    if (r.ok && !prev.ok) {
+      allResults[idx] = r;
+      failed -= 1;
+      succeeded += 1;
+    }
+  };
 
   const emit = () =>
     opts.onProgress({
@@ -42,7 +61,7 @@ export async function runAnalyzeBatchChunked(opts: {
     const res = await fetch("/api/autopilot/analyze-batch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ limit }),
+      body: JSON.stringify({ limit, excludeContactIds }),
       signal: opts.signal,
     });
     const data = await res.json().catch(() => ({}));
@@ -64,17 +83,13 @@ export async function runAnalyzeBatchChunked(opts: {
 
     let added = 0;
     for (const r of results) {
-      if (seenContactIds.has(r.contactId)) continue;
-      seenContactIds.add(r.contactId);
-      allResults.push(r);
-      if (r.ok) succeeded += 1;
-      else failed += 1;
-      added += 1;
-      if (allResults.length >= target) break;
+      const before = allResults.length;
+      upsertResult(r);
+      if (allResults.length > before) added += 1;
     }
 
     if (added === 0) {
-      // API returned only contacts we already tried (e.g. repeated failure).
+      // API returned only contacts we already tried.
       break;
     }
 

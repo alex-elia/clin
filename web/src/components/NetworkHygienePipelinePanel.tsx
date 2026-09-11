@@ -61,10 +61,16 @@ function recordToBars(
     .sort((a, b) => b.value - a.value);
 }
 
-export function NetworkHygienePipelinePanel() {
+export function NetworkHygienePipelinePanel({
+  initialSnapshot = null,
+}: {
+  initialSnapshot?: NetworkHygieneSnapshot | null;
+}) {
   const router = useRouter();
-  const [snapshot, setSnapshot] = useState<NetworkHygieneSnapshot | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [snapshot, setSnapshot] = useState<NetworkHygieneSnapshot | null>(
+    initialSnapshot,
+  );
+  const [loading, setLoading] = useState(!initialSnapshot);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -97,8 +103,9 @@ export function NetworkHygienePipelinePanel() {
   }, []);
 
   useEffect(() => {
+    if (initialSnapshot) return;
     void load(false);
-  }, [load]);
+  }, [load, initialSnapshot]);
 
   async function runAnalyzeBatch() {
     if (!snapshot) return;
@@ -214,6 +221,13 @@ export function NetworkHygienePipelinePanel() {
   const activityChart = recordToBars(m.byActivityTier, ACTIVITY_COLORS);
   const threadChart = recordToBars(m.byThreadStage);
   const verdictChart = recordToBars(m.byRemoveVerdict);
+  const zombieChart = recordToBars(m.byZombieLevel, {
+    high: "#dc2626",
+    medium: "#ca8a04",
+    low: "#71717a",
+    active: "#16a34a",
+  });
+  const bucketChart = recordToBars(m.byCleaningBucket);
   const analyzeEligible = m.pendingLlmAnalysis;
   const analyzeGap = snapshot.actHints.analyzeGapCount;
 
@@ -221,14 +235,15 @@ export function NetworkHygienePipelinePanel() {
     <section className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="clin-section-title">Network hygiene pipeline</h2>
+          <h2 className="clin-section-title">Network KPIs</h2>
           <p className="mt-1 text-sm text-[var(--clin-muted)]">
-            Gather → metrics → advise → act. Numbers come from your SQLite
-            captures only.
+            Full captured LinkedIn graph in Clin. Not last month, not a 400
+            contact window. Dismissed and disconnected people are excluded.
           </p>
           <p className="mt-1 text-xs text-[var(--clin-muted)]">
             Last scan: {new Date(snapshot.runAt).toLocaleString()} ·{" "}
-            {m.inPipelineScope} in scope (captured + known degree)
+            {m.capturedOpen ?? m.inPipelineScope} captured open ·{" "}
+            {m.alreadyCleaned ?? 0} already cleaned
           </p>
         </div>
         <button
@@ -241,12 +256,28 @@ export function NetworkHygienePipelinePanel() {
         </button>
       </div>
 
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <MetricTile
+          label="Captured (open)"
+          value={m.capturedOpen ?? m.inPipelineScope}
+        />
+        <MetricTile
+          label="Already cleaned (excluded)"
+          value={m.alreadyCleaned ?? 0}
+        />
+        <MetricTile label="1st degree (can disconnect)" value={m.firstDegreeCount} />
+        <MetricTile
+          label="LLM coverage"
+          value={m.withLlmAnalysis}
+        />
+      </div>
+
       {showLowConfidenceWarning ? (
         <div className="clin-callout border-amber-200 bg-amber-50 text-amber-950">
           <p className="text-sm">
             {lowConfidencePct}% of in-scope contacts have{" "}
             <strong className="clin-strong">low advice confidence</strong>{" "}
-            (list-only or missing LLM). Removal counts are provisional — enrich
+            (list-only or missing LLM). Removal counts are provisional. Enrich
             or run batch analyze first.
           </p>
         </div>
@@ -323,7 +354,7 @@ export function NetworkHygienePipelinePanel() {
           <div className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
             <ChartBlock
               title="Connection degree"
-              subtitle={`Only ${m.firstDegreeCount} 1st-degree can disconnect`}
+              subtitle={`${m.firstDegreeCount} 1st-degree can disconnect · unknown included`}
               data={degreeChart}
             />
             <ChartBlock
@@ -336,7 +367,7 @@ export function NetworkHygienePipelinePanel() {
           <div className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
             <ChartBlock
               title="LinkedIn activity tier"
-              subtitle={`${m.activityUnknown} unknown (no posts capture) — not counted as zombie`}
+              subtitle={`${m.activityUnknown} unknown (no posts capture), not counted as zombie`}
               data={activityChart}
             />
             <ChartBlock
@@ -351,9 +382,19 @@ export function NetworkHygienePipelinePanel() {
           </div>
           <div className="grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
             <ChartBlock
-              title="Remove verdict (in scope)"
+              title="Remove verdict (open captured)"
               subtitle={`${m.removableFirstYes} yes · ${m.removableFirstMaybe} maybe · queue pending ${m.removalQueuePending}`}
               data={verdictChart}
+            />
+            <ChartBlock
+              title="Zombie / activity risk"
+              subtitle="Heuristic on captured open contacts"
+              data={zombieChart}
+            />
+            <ChartBlock
+              title="Cleaning buckets"
+              subtitle="Recommended next step across the open network"
+              data={bucketChart}
             />
             <div className="clin-card p-4">
               <h3 className="text-sm font-medium">Score summary</h3>

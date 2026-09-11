@@ -56,10 +56,14 @@ export default async function CleaningPage({
         </p>
         <h1 className="clin-page-title">Cleaning</h1>
         <p className="clin-page-lead">
-          Analyze contacts, work through buckets, then run paced disconnects and
-          engage tasks from the extension Cleaning tab.
+          KPIs and charts use every LinkedIn capture in Clin, excluding people
+          you already dismissed or disconnected. Work the buckets below, then
+          run paced disconnects and engage tasks from the extension Cleaning
+          tab.
         </p>
       </div>
+
+      <NetworkHygienePipelinePanel initialSnapshot={hygiene} />
 
       <CleaningWorkflowStrip
         pendingAnalysis={pending}
@@ -94,19 +98,6 @@ export default async function CleaningPage({
           pendingCount={pending}
         />
       </div>
-
-      <details className="clin-card group">
-        <summary className="cursor-pointer list-none p-5 font-medium [&::-webkit-details-marker]:hidden">
-          <span className="clin-section-title">Network metrics (optional)</span>
-          <p className="mt-1 text-sm font-normal text-[var(--clin-muted)]">
-            Coverage charts and hygiene scan. Day-to-day cleaning uses the buckets
-            above.
-          </p>
-        </summary>
-        <div className="border-t border-[var(--clin-border)] px-5 pb-5 pt-4">
-          <NetworkHygienePipelinePanel />
-        </div>
-      </details>
 
       <p className="text-sm text-[var(--clin-muted)]">
         Campaign-specific autopilot (drafts + tags) lives on{" "}

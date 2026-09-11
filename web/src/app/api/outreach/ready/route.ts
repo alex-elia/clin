@@ -53,7 +53,14 @@ export async function GET() {
     contactId: r.contactId,
     fullName: r.fullName,
     linkedinUrl: r.linkedinUrl,
-    draftOutreach: r.draftOutreach,
+    draftOutreach:
+      r.outreachStep === "invite" && r.draftInviteNote
+        ? r.draftInviteNote
+        : r.draftOutreach,
+    draftInviteNote: r.draftInviteNote,
+    action: r.outreachStep === "invite" ? "invite" : "dm",
+    outreachStep: r.outreachStep,
+    connectionDegree: r.connectionDegree,
     campaignName: campaignMeta?.name,
   }));
 

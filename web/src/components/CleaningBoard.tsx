@@ -25,12 +25,17 @@ import {
 } from "@/lib/cleaningRemovalSignals";
 import { RecommendationPanel } from "@/components/RecommendationPanel";
 import { LinkedInActivityBadge } from "@/components/LinkedInActivityBadge";
+import {
+  cleaningCanDisconnect,
+  cleaningNeedsInvite,
+  cleaningNetworkLabel,
+} from "@/lib/cleaningNetwork";
 
 type BatchResult =
   | {
       contactId: string;
       ok: true;
-      effect?: "removal_exec" | "engage_exec" | "review_queue";
+      effect?: "removal_exec" | "engage_exec" | "review_queue" | "not_first_degree";
     }
   | { contactId: string; ok: false; error: string };
 
@@ -175,6 +180,7 @@ export function CleaningBoard({ data, hygieneRows = [] }: Props) {
         const removals = ok.filter((r) => r.effect === "removal_exec").length;
         const engages = ok.filter((r) => r.effect === "engage_exec").length;
         const reviews = ok.filter((r) => r.effect === "review_queue").length;
+        const skipped = ok.filter((r) => r.effect === "not_first_degree").length;
         const parts: string[] = [];
         if (removals)
           parts.push(
@@ -185,6 +191,10 @@ export function CleaningBoard({ data, hygieneRows = [] }: Props) {
             `${engages} queued for engage — edit comments in Exec queues below`,
           );
         if (reviews) parts.push(`${reviews} sent to review queue`);
+        if (skipped)
+          parts.push(
+            `${skipped} not 1st degree, so not queued for disconnect`,
+          );
         if (parts.length) setSuccess(parts.join(". "));
       } else if (action === "enqueue_engage") {
         setSuccess(
@@ -250,6 +260,10 @@ export function CleaningBoard({ data, hygieneRows = [] }: Props) {
           setSuccess(
             "Queued for engage — edit the AI comment in Exec queues below.",
           );
+        } else if (result.effect === "not_first_degree") {
+          setSuccess(
+            "Not a 1st-degree connection. Removed from this cleaning list. You cannot disconnect them on LinkedIn.",
+          );
         } else {
           setSuccess("Accepted — added to review queue.");
         }
@@ -280,8 +294,8 @@ export function CleaningBoard({ data, hygieneRows = [] }: Props) {
     <div className="space-y-8">
       <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryStat
-          label="Ready for analysis"
-          value={data.summary.readyForAnalysis}
+          label="Open contacts"
+          value={data.summary.openContacts ?? data.summary.totalContacts}
         />
         <SummaryStat
           label="Waiting for AI run"
@@ -292,7 +306,7 @@ export function CleaningBoard({ data, hygieneRows = [] }: Props) {
           value={data.summary.needsProfileCapture}
         />
         <SummaryStat
-          label="Analyzed (recent)"
+          label="Analyzed (open network)"
           value={data.summary.analyzedInBoard}
         />
       </dl>
@@ -301,7 +315,9 @@ export function CleaningBoard({ data, hygieneRows = [] }: Props) {
         <h2 className="clin-section-title">Buckets</h2>
         <p className="mt-1 text-sm text-[var(--clin-muted)]">
           Contacts are grouped by recommended next step after extraction and AI
-          analysis. Counts reflect your most recently updated contacts.
+          analysis. Counts cover the full open network (all captured and imported
+          contacts except dismissed or disconnected). Each bucket lists the top{" "}
+          {data.summary.cardsPerBucketCap ?? 40} cards.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           {CLEANING_BUCKET_META.map((meta) => {
@@ -461,7 +477,7 @@ export function CleaningBoard({ data, hygieneRows = [] }: Props) {
                 )}
               </>
             ) : (
-              "No contacts in this bucket among recent records. Run batch analysis or import more profiles."
+              "No contacts in this bucket in the open network. Run batch analysis or import more profiles."
             )}
           </p>
         ) : (
@@ -765,6 +781,12 @@ function ContactBucketCard({
   const preferLinkedIn =
     activeBucket === "review_remove" || card.bucket === "review_remove";
   const linkedInHref = card.linkedinUrl?.trim() || null;
+  const canDisconnect = cleaningCanDisconnect(card.connectionDegree);
+  const needsInvite = cleaningNeedsInvite(card.connectionDegree);
+  const bucketLabel =
+    card.bucket === "reach_out_dm" && needsInvite
+      ? "Reach out (invite)"
+      : CLEANING_BUCKET_LABELS[card.bucket];
 
   return (
     <li className="clin-card p-4">
@@ -809,7 +831,15 @@ function ContactBucketCard({
             </div>
             <div className="flex flex-wrap gap-1.5">
               <span className="clin-pill text-xs">
-                {CLEANING_BUCKET_LABELS[card.bucket]}
+                {bucketLabel}
+              </span>
+              <span className="clin-pill text-xs">
+                Network: {cleaningNetworkLabel(card.connectionDegree)}
+                {card.bucket === "review_remove" && !canDisconnect
+                  ? " · cannot disconnect"
+                  : needsInvite
+                    ? " · invite first"
+                    : ""}
               </span>
               {card.userOverrideBucket ? (
                 <span className="clin-pill text-xs text-amber-800 dark:text-amber-200">
@@ -890,14 +920,27 @@ function ContactBucketCard({
               In Clin
             </Link>
             {card.bucket === "reach_out_dm" ? (
-              <Link href="/decisions" className="clin-link">
-                Decisions
-              </Link>
+              needsInvite ? (
+                <Link href="/campaigns" className="clin-link">
+                  Campaigns (invite)
+                </Link>
+              ) : (
+                <Link href="/decisions" className="clin-link">
+                  Decisions
+                </Link>
+              )
             ) : null}
             {card.bucket === "review_remove" ? (
               <span className="text-xs text-[var(--clin-muted)]">
-                Accept queues removal, or confirm after you disconnect on
-                LinkedIn
+                {canDisconnect
+                  ? "Accept queues removal, or confirm after you disconnect on LinkedIn"
+                  : "Not 1st degree: you cannot disconnect them. Dismiss this card."}
+              </span>
+            ) : null}
+            {card.bucket === "engage_comment" && needsInvite ? (
+              <span className="text-xs text-[var(--clin-muted)]">
+                Public comment is fine. Private next step is a connection invite,
+                not a DM.
               </span>
             ) : null}
           </div>
@@ -908,9 +951,11 @@ function ContactBucketCard({
               onClick={() => onAction("accept")}
               className="clin-btn-primary text-xs px-2 py-1 disabled:opacity-50"
             >
-              Accept
+              {card.bucket === "review_remove" && !canDisconnect
+                ? "Dismiss (cannot disconnect)"
+                : "Accept"}
             </button>
-            {card.bucket === "review_remove" ? (
+            {card.bucket === "review_remove" && canDisconnect ? (
               <button
                 type="button"
                 disabled={busy}

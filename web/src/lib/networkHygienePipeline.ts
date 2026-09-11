@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { desc, eq } from "drizzle-orm";
 import { getDb, getSqlite } from "@/db";
-import { captureSessions, cleaningExecQueue, contacts } from "@/db/schema";
+import { cleaningExecQueue, contacts } from "@/db/schema";
 import { countContactsPendingLlmAnalysis } from "@/lib/autopilot";
 import { assessContactReadiness } from "@/lib/contactReadiness";
 import { listContactActivityExtensionsMap } from "@/lib/contactActivitySqlExtras";
@@ -18,10 +18,12 @@ import {
   type LlmAnalysisView,
 } from "@/lib/contactLlmDisplay";
 import { threadSuggestsRemoval } from "@/lib/cleaningThreadHelpers";
-import { getLatestThreadAnalysisForContact } from "@/lib/inboxThreadAnalysisStore";
+import { getLatestThreadAnalysisForContact, loadLatestThreadAnalysesByContactIds } from "@/lib/inboxThreadAnalysisStore";
 import type { InboxThreadAnalysis } from "@/lib/inboxThreadAnalysisTypes";
 import type { ContactReadiness } from "@/lib/contactReadinessShared";
 import type { LinkedInActivityTier } from "@/lib/linkedinActivity";
+import { contactExcludedFromCleaningKpis } from "@/lib/cleaningKpiScope";
+import { chunkIds } from "@/lib/sqliteInChunks";
 import { resolveDataDirectory } from "@/lib/dataPaths";
 import type {
   AdviceConfidence,
@@ -32,9 +34,8 @@ import type {
   RemoveVerdict,
   ZombieLevel,
 } from "@/lib/networkHygieneTypes";
-import { NETWORK_HYGIENE_DEGREES } from "@/lib/networkHygieneTypes";
 import {
-  isKnownConnectionDegree,
+  isDisconnectedDegree,
   normalizeConnectionDegree,
 } from "@/lib/connectionDegree";
 
@@ -70,10 +71,6 @@ function daysSince(date: Date | null | undefined): number | null {
   return (Date.now() - date.getTime()) / (1000 * 60 * 60 * 24);
 }
 
-function isKnownDegree(degree: string | null | undefined): boolean {
-  return isKnownConnectionDegree(degree);
-}
-
 export function computeAdviceConfidence(input: HygieneAssessInput): AdviceConfidence {
   const hasLlm = Boolean(input.analysis);
   const hasDepth =
@@ -102,8 +99,7 @@ export function assessNetworkHygiene(
   | "canDisconnect"
   | "bucket"
 > {
-  const { row, readiness, analysis, threadAnalysis, activityTier, bucket } =
-    input;
+  const { row, analysis, threadAnalysis, activityTier, bucket } = input;
   const reasons: string[] = [];
   const degree =
     normalizeConnectionDegree(row.connectionDegree)?.trim() ?? "";
@@ -242,51 +238,57 @@ function loadCaptureFlagsMap(
     });
   }
   if (contactIds.length === 0) return map;
-  const placeholders = contactIds.map(() => "?").join(",");
+  const placeholdersChunks = chunkIds(contactIds);
   try {
-    const rows = getSqlite()
-      .prepare(
-        `SELECT contact_id AS contactId, page_type AS pageType, source_url AS sourceUrl
-         FROM capture_sessions
-         WHERE contact_id IN (${placeholders})`,
-      )
-      .all(...contactIds) as {
-      contactId: string | null;
-      pageType: string;
-      sourceUrl: string | null;
-    }[];
-    for (const r of rows) {
-      if (!r.contactId) continue;
-      const flags = map.get(r.contactId) ?? {
-        any: false,
-        profile: false,
-        posts: false,
-        messaging: false,
-        connections: false,
-      };
-      flags.any = true;
-      if (r.pageType === "profile") flags.profile = true;
-      if (r.pageType === "posts") flags.posts = true;
-      if (
-        r.pageType === "messaging" ||
-        (r.sourceUrl?.includes("/messaging/") ?? false)
-      ) {
-        flags.messaging = true;
+    for (const chunk of placeholdersChunks) {
+      const placeholders = chunk.map(() => "?").join(",");
+      const rows = getSqlite()
+        .prepare(
+          `SELECT contact_id AS contactId, page_type AS pageType, source_url AS sourceUrl
+           FROM capture_sessions
+           WHERE contact_id IN (${placeholders})`,
+        )
+        .all(...chunk) as {
+        contactId: string | null;
+        pageType: string;
+        sourceUrl: string | null;
+      }[];
+      for (const r of rows) {
+        if (!r.contactId) continue;
+        const flags = map.get(r.contactId) ?? {
+          any: false,
+          profile: false,
+          posts: false,
+          messaging: false,
+          connections: false,
+        };
+        flags.any = true;
+        if (r.pageType === "profile") flags.profile = true;
+        if (r.pageType === "posts") flags.posts = true;
+        if (
+          r.pageType === "messaging" ||
+          (r.sourceUrl?.includes("/messaging/") ?? false)
+        ) {
+          flags.messaging = true;
+        }
+        if (r.pageType === "connections") flags.connections = true;
+        map.set(r.contactId, flags);
       }
-      if (r.pageType === "connections") flags.connections = true;
-      map.set(r.contactId, flags);
     }
 
-    const threadRows = getSqlite()
-      .prepare(
-        `SELECT DISTINCT contact_id AS contactId
-         FROM inbox_thread_analysis
-         WHERE contact_id IN (${placeholders})`,
-      )
-      .all(...contactIds) as { contactId: string }[];
-    for (const r of threadRows) {
-      const flags = map.get(r.contactId);
-      if (flags) flags.messaging = true;
+    for (const chunk of placeholdersChunks) {
+      const placeholders = chunk.map(() => "?").join(",");
+      const threadRows = getSqlite()
+        .prepare(
+          `SELECT DISTINCT contact_id AS contactId
+           FROM inbox_thread_analysis
+           WHERE contact_id IN (${placeholders})`,
+        )
+        .all(...chunk) as { contactId: string }[];
+      for (const r of threadRows) {
+        const flags = map.get(r.contactId);
+        if (flags) flags.messaging = true;
+      }
     }
   } catch {
     /* ignore */
@@ -298,17 +300,42 @@ function countUnknownDegreeCaptured(): number {
   try {
     const rows = getSqlite()
       .prepare(
-        `SELECT c.connection_degree AS degree FROM contacts c
+        `SELECT c.connection_degree AS degree,
+                c.cleaning_dismissed_at AS dismissed
+         FROM contacts c
          WHERE EXISTS (SELECT 1 FROM capture_sessions s WHERE s.contact_id = c.id)`,
       )
-      .all() as { degree: string | null }[];
+      .all() as { degree: string | null; dismissed: number | null }[];
     let n = 0;
     for (const r of rows) {
+      if (
+        contactExcludedFromCleaningKpis({
+          connectionDegree: r.degree,
+          cleaningDismissedAt: r.dismissed,
+        })
+      ) {
+        continue;
+      }
       if (!normalizeConnectionDegree(r.degree)) n += 1;
     }
     return n;
   } catch {
-    return 0;
+    try {
+      const rows = getSqlite()
+        .prepare(
+          `SELECT c.connection_degree AS degree FROM contacts c
+           WHERE EXISTS (SELECT 1 FROM capture_sessions s WHERE s.contact_id = c.id)`,
+        )
+        .all() as { degree: string | null }[];
+      let n = 0;
+      for (const r of rows) {
+        if (isDisconnectedDegree(r.degree)) continue;
+        if (!normalizeConnectionDegree(r.degree)) n += 1;
+      }
+      return n;
+    } catch {
+      return 0;
+    }
   }
 }
 
@@ -370,13 +397,11 @@ export function isSnapshotStale(snapshot: NetworkHygieneSnapshot): boolean {
 }
 
 function isSnapshotOutOfSync(snapshot: NetworkHygieneSnapshot): boolean {
+  if (typeof snapshot.metrics.alreadyCleaned !== "number") return true;
+  if (typeof snapshot.metrics.capturedOpen !== "number") return true;
   const liveUnknown = countUnknownDegreeCaptured();
   if (liveUnknown !== snapshot.metrics.unknownDegree) return true;
-  const expectedScope = Math.max(
-    0,
-    snapshot.metrics.withAnyCapture - liveUnknown,
-  );
-  return snapshot.metrics.inPipelineScope !== expectedScope;
+  return snapshot.metrics.inPipelineScope !== snapshot.metrics.capturedOpen;
 }
 
 export async function runNetworkHygienePipeline(): Promise<NetworkHygieneSnapshot> {
@@ -394,22 +419,41 @@ export async function runNetworkHygienePipeline(): Promise<NetworkHygieneSnapsho
   const captureFlagsAll = loadCaptureFlagsMap(
     allContactRows.map((r) => r.id),
   );
+  const cleaningMapAll = listContactCleaningExtensionsMap(
+    allContactRows.map((r) => r.id),
+  );
 
   const scopeRowsFiltered: ContactRow[] = [];
   const scopeIds: string[] = [];
+  let alreadyCleaned = 0;
+  let capturedOpen = 0;
   for (const row of allContactRows) {
+    const cleaningExt = cleaningMapAll.get(row.id) ?? {
+      cleaningUserBucket: null,
+      cleaningDismissedAt: null,
+    };
+    if (
+      contactExcludedFromCleaningKpis({
+        connectionDegree: row.connectionDegree,
+        cleaningDismissedAt: cleaningExt.cleaningDismissedAt,
+      })
+    ) {
+      alreadyCleaned += 1;
+      continue;
+    }
     const flags = captureFlagsAll.get(row.id);
     if (!flags?.any) continue;
-    if (!isKnownDegree(row.connectionDegree)) continue;
+    capturedOpen += 1;
     scopeRowsFiltered.push(row);
     scopeIds.push(row.id);
   }
 
   const caps = await loadLatestProfileCapturesByContactId(scopeIds);
   const extMap = listContactLlmExtensionsMap(scopeIds);
-  const cleaningMap = listContactCleaningExtensionsMap(scopeIds);
+  const cleaningMap = cleaningMapAll;
   const activityMap = listContactActivityExtensionsMap(scopeIds);
-  const captureFlags = loadCaptureFlagsMap(scopeIds);
+  const captureFlags = captureFlagsAll;
+  const threadByContact = loadLatestThreadAnalysesByContactIds(scopeIds);
 
   const execPending = await db
     .select({ kind: cleaningExecQueue.kind })
@@ -429,6 +473,9 @@ export async function runNetworkHygienePipeline(): Promise<NetworkHygieneSnapsho
     withPostsCapture: 0,
     withMessagingCapture: 0,
     withLlmAnalysis: 0,
+    alreadyCleaned,
+    capturedOpen,
+    openContacts: totalContacts - alreadyCleaned,
     adviceConfidenceHigh: 0,
     adviceConfidenceMedium: 0,
     adviceConfidenceLow: 0,
@@ -485,10 +532,7 @@ export async function runNetworkHygienePipeline(): Promise<NetworkHygieneSnapsho
     const rawProv = parseEnvelope(ext?.llmProvisionalJson ?? null);
     const analysis = pickLatestAnalysisView(rawRefined, rawProv);
     const hasLlm = Boolean(analysis);
-    const threadStored = messaging
-      ? getLatestThreadAnalysisForContact(row.id)
-      : null;
-    const threadAnalysis = threadStored?.analysis ?? null;
+    const threadAnalysis = threadByContact.get(row.id) ?? null;
     const activityExt = activityMap.get(row.id);
     const activityTier = activityExt?.activityTier ?? null;
     const cleaningExt = cleaningMap.get(row.id) ?? {
@@ -525,7 +569,8 @@ export async function runNetworkHygienePipeline(): Promise<NetworkHygieneSnapsho
       company: row.company,
       linkedinUrl: row.linkedinUrlCanonical,
       connectionDegree:
-        normalizeConnectionDegree(row.connectionDegree) ?? row.connectionDegree!.trim(),
+        normalizeConnectionDegree(row.connectionDegree) ??
+        (row.connectionDegree?.trim() || "unknown"),
       segment: row.segment,
       relationshipScore: row.relationshipScore,
       cleanupScore: row.cleanupScore,
@@ -695,7 +740,18 @@ export async function assessContactNetworkHygiene(
   });
   if (!row) return null;
   const flags = loadCaptureFlagsMap([contactId]).get(contactId);
-  if (!flags?.any || !isKnownDegree(row.connectionDegree)) return null;
+  if (!flags?.any) return null;
+  const cleaningExtEarly = listContactCleaningExtensionsMap([contactId]).get(
+    contactId,
+  ) ?? { cleaningUserBucket: null, cleaningDismissedAt: null };
+  if (
+    contactExcludedFromCleaningKpis({
+      connectionDegree: row.connectionDegree,
+      cleaningDismissedAt: cleaningExtEarly.cleaningDismissedAt,
+    })
+  ) {
+    return null;
+  }
 
   const caps = await loadLatestProfileCapturesByContactId([contactId]);
   const ext = listContactLlmExtensionsMap([contactId]).get(contactId);
@@ -711,9 +767,7 @@ export async function assessContactNetworkHygiene(
   const activityTier =
     listContactActivityExtensionsMap([contactId]).get(contactId)?.activityTier ??
     null;
-  const cleaningExt = listContactCleaningExtensionsMap([contactId]).get(
-    contactId,
-  ) ?? { cleaningUserBucket: null, cleaningDismissedAt: null };
+  const cleaningExt = cleaningExtEarly;
   const bucket = resolveCleaningBucket({
     readiness,
     analysis,
@@ -742,7 +796,7 @@ export async function assessContactNetworkHygiene(
     linkedinUrl: row.linkedinUrlCanonical,
     connectionDegree:
       normalizeConnectionDegree(row.connectionDegree) ??
-      row.connectionDegree!.trim(),
+      (row.connectionDegree?.trim() || "unknown"),
     segment: row.segment,
     relationshipScore: row.relationshipScore,
     cleanupScore: row.cleanupScore,

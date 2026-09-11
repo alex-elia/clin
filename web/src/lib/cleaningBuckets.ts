@@ -9,6 +9,7 @@ import {
   threadSuggestsRemoval,
 } from "@/lib/cleaningThreadHelpers";
 import type { InboxThreadAnalysis } from "@/lib/inboxThreadAnalysisTypes";
+import { cleaningNeedsInvite } from "@/lib/cleaningNetwork";
 
 export const CLEANING_BUCKETS = [
   "enrich_first",
@@ -48,21 +49,21 @@ export const CLEANING_BUCKET_META: CleaningBucketMeta[] = [
     id: "review_remove",
     title: "Review removal",
     description:
-      "Stale, low-fit, or stewardship suggests pruning your connection list.",
+      "For 1st-degree connections only: stale or low-fit people you may disconnect. 2nd and 3rd cannot be disconnected from LinkedIn.",
     sort: 2,
   },
   {
     id: "reach_out_dm",
-    title: "Reach out (DM)",
+    title: "Reach out",
     description:
-      "Strong fit — prepare a personalized message or add to a campaign.",
+      "Strong fit. 1st degree: prepare a DM. 2nd or 3rd: Connect with an invite note via a campaign.",
     sort: 3,
   },
   {
     id: "engage_comment",
     title: "Engage (comment)",
     description:
-      "Light touch: comment on a post or react before a cold DM.",
+      "Light public comment or react. Next private step is a DM if they are 1st, or a connection invite if they are not.",
     sort: 4,
   },
   {
@@ -206,6 +207,7 @@ export function bucketSuggestedQueueText(
   bucket: CleaningBucket,
   analysis: LlmAnalysisView | null,
   threadAnalysis?: InboxThreadAnalysis | null,
+  connectionDegree?: string | null,
 ): string {
   const threadAdvice = cleaningAdviceFromThread(threadAnalysis);
   if (threadAdvice && bucket === "review_remove") return threadAdvice;
@@ -213,20 +215,31 @@ export function bucketSuggestedQueueText(
   const playbook = analysis?.cleaningPlan?.playbook?.trim();
   if (playbook) return playbook;
 
+  const invite = cleaningNeedsInvite(connectionDegree);
+
   switch (bucket) {
     case "enrich_first":
       return "Capture full profile on LinkedIn (extension Import & enrich).";
     case "review_remove":
       return (
         threadAdvice ||
-        "Review whether to disconnect on LinkedIn — Clin does not remove for you."
+        (invite
+          ? "Not a 1st-degree connection: you cannot disconnect them. Dismiss or keep monitoring."
+          : "Review whether to disconnect on LinkedIn. Clin does not remove for you.")
       );
     case "reach_out_dm":
+      if (invite) {
+        return analysis?.outreachFit?.rationale
+          ? `Invite via campaign (not a DM yet): ${analysis.outreachFit.rationale}`
+          : "Strong fit but not 1st degree. Add to a campaign and send a connection invite note.";
+      }
       return analysis?.outreachFit?.rationale
-        ? `Reach out: ${analysis.outreachFit.rationale}`
-        : "Strong fit — draft outreach or add to a campaign.";
+        ? `Reach out by DM: ${analysis.outreachFit.rationale}`
+        : "Strong fit. Draft a DM or add to a campaign.";
     case "engage_comment":
-      return "Engage lightly (comment or react) before a DM.";
+      return invite
+        ? "Comment or react publicly. Private next step is a connection invite, not a DM."
+        : "Engage lightly (comment or react) before a DM.";
     case "nurture_light":
       return "Nurture — no pitch now; revisit later.";
     case "keep_passive":

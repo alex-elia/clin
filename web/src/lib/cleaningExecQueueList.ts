@@ -28,6 +28,7 @@ export type CleaningExecListItem = {
   targetPostKind: ProfilePostKind | null;
   targetPostUserComment: string | null;
   createdAt: Date;
+  connectionDegree: string | null;
 };
 
 export function linkedinActivityUrl(
@@ -147,6 +148,7 @@ export async function listPendingCleaningExecItems(opts?: {
       targetPostKind: post.kind,
       targetPostUserComment: post.userComment,
       createdAt: row.createdAt,
+      connectionDegree: contact.connectionDegree ?? null,
     });
   }
 

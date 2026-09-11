@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { actionQueue, cleaningExecQueue, contacts } from "@/db/schema";
 import {
@@ -13,10 +13,11 @@ import {
 } from "@/lib/contactLlmDisplay";
 import { threadStageLabel } from "@/lib/cleaningThreadHelpers";
 import type { InboxThreadAnalysis } from "@/lib/inboxThreadAnalysisTypes";
-import { getLatestThreadAnalysisForContact } from "@/lib/inboxThreadAnalysisStore";
+import { loadLatestThreadAnalysesByContactIds } from "@/lib/inboxThreadAnalysisStore";
+import { contactExcludedFromCleaningKpis } from "@/lib/cleaningKpiScope";
 import {
   assessContactReadiness,
-  assessRecentContactsReadiness,
+  assessContactsReadinessForRows,
   loadMessagingCaptureFlags,
   type ContactReadiness,
 } from "@/lib/contactReadiness";
@@ -153,6 +154,7 @@ function buildCard(
     queueId,
     threadAnalysis,
     threadStageLabel: threadStageLabel(threadAnalysis?.thread_stage),
+    connectionDegree: row.connectionDegree ?? null,
   };
 }
 
@@ -161,36 +163,52 @@ export async function buildCleaningBoard(opts?: {
   perBucketLimit?: number;
   lowActivityOnly?: boolean;
 }): Promise<CleaningBoardData> {
-  const contactLimit = opts?.contactLimit ?? 400;
   const perBucketLimit = opts?.perBucketLimit ?? 40;
 
   const db = getDb();
-  const [rows, pendingLlm, needsProfile, totalRow, execRows] = await Promise.all([
-    db
-      .select()
-      .from(contacts)
-      .orderBy(desc(contacts.lastUpdatedAt))
-      .limit(contactLimit),
+  const [allRows, pendingLlm, needsProfile, execRows] = await Promise.all([
+    db.select().from(contacts),
     Promise.resolve(countContactsPendingLlmAnalysis()),
     countContactsNeedingProfileCapture(),
-    db.select({ id: contacts.id }).from(contacts),
     db
       .select({ kind: cleaningExecQueue.kind, status: cleaningExecQueue.status })
       .from(cleaningExecQueue)
       .where(eq(cleaningExecQueue.status, "pending")),
   ]);
 
-  const readinessMap = await assessRecentContactsReadiness(contactLimit);
+  const cleaningMapAll = listContactCleaningExtensionsMap(
+    allRows.map((r) => r.id),
+  );
+  const openRows = allRows.filter((row) => {
+    const cleaningExt = cleaningMapAll.get(row.id) ?? {
+      cleaningUserBucket: null,
+      cleaningDismissedAt: null,
+    };
+    return !contactExcludedFromCleaningKpis({
+      connectionDegree: row.connectionDegree,
+      cleaningDismissedAt: cleaningExt.cleaningDismissedAt,
+    });
+  });
+  const rows =
+    opts?.contactLimit != null
+      ? openRows
+          .slice()
+          .sort(
+            (a, b) =>
+              (b.lastUpdatedAt?.getTime() ?? 0) -
+              (a.lastUpdatedAt?.getTime() ?? 0),
+          )
+          .slice(0, opts.contactLimit)
+      : openRows;
+
+  const readinessMap = await assessContactsReadinessForRows(rows);
   const contactIds = rows.map((r) => r.id);
   const messagingIds = loadMessagingCaptureFlags(contactIds);
-  const threadAnalysisByContact = new Map<string, InboxThreadAnalysis | null>();
-  for (const id of contactIds) {
-    if (!messagingIds.has(id)) continue;
-    const stored = getLatestThreadAnalysisForContact(id);
-    threadAnalysisByContact.set(id, stored?.analysis ?? null);
-  }
+  const threadAnalysisByContact = loadLatestThreadAnalysesByContactIds(
+    [...messagingIds],
+  );
   const extMap = listContactLlmExtensionsMap(contactIds);
-  const cleaningMap = listContactCleaningExtensionsMap(contactIds);
+  const cleaningMap = cleaningMapAll;
   const activityMap = listContactActivityExtensionsMap(contactIds);
 
   const pendingQueues = await db.query.actionQueue.findMany({
@@ -282,12 +300,16 @@ export async function buildCleaningBoard(opts?: {
 
   return {
     summary: {
-      totalContacts: totalRow.length,
+      totalContacts: allRows.length,
+      openContacts: openRows.length,
+      excludedCleaned: allRows.length - openRows.length,
+      scannedContacts: rows.length,
       readyForAnalysis,
       readyForDecisions,
       pendingLlmAnalysis: pendingLlm,
       needsProfileCapture: needsProfile,
       analyzedInBoard,
+      cardsPerBucketCap: perBucketLimit,
       bucketCounts,
     },
     byBucket,

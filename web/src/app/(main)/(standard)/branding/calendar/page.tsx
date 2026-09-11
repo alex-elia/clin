@@ -20,7 +20,6 @@ import {
   type ContentPlanSearchParams,
 } from "@/lib/contentPlanFilters";
 import {
-  CONTENT_FORMAT_LABELS,
   CONTENT_STATUS_LABELS,
   type ContentPostFormat,
   type ContentPostStatus,

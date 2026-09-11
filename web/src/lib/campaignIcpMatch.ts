@@ -3,7 +3,7 @@ import { getDb } from "@/db";
 import { contacts, outreachCampaigns } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { extractJsonObjectFromModelText } from "@/lib/llmAnalysis";
-import { completeChat, getLlmConfig } from "@/lib/llm/completeChat";
+import { completeChat, getLlmConfigForFeature } from "@/lib/llm/completeChat";
 import {
   buildContactContextBundle,
   type ContactContextBundle,
@@ -121,9 +121,11 @@ export async function checkContactAgainstCampaignIcp(opts: {
     2,
   );
 
-  const llm = await getLlmConfig();
+  const routed = await getLlmConfigForFeature("campaign_icp_check", {
+    userChars: user.length,
+  });
   const raw = await completeChat({
-    config: llm,
+    config: routed.config,
     feature: "campaign_icp_check",
     system: `You judge whether a LinkedIn contact fits a campaign's ICP (ideal customer profile).
 Respond with JSON only:

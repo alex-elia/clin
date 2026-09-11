@@ -1,7 +1,7 @@
 import { eq, isNull, or, sql } from "drizzle-orm";
 import type { getDb } from "@/db";
 import { getSqlite } from "@/db";
-import { captureSessions, contacts } from "@/db/schema";
+import { contacts } from "@/db/schema";
 import {
   normalizeConnectionDegree,
   resolveDegreeFromCaptures,

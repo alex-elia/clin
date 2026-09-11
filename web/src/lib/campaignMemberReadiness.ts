@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
+import { chunkIds } from "@/lib/sqliteInChunks";
 import { getDb } from "@/db";
 import { captureSessions, contacts, outreachCampaignMembers } from "@/db/schema";
 import { readMemberIcpFromRow } from "@/lib/campaignMemberIcp";
@@ -7,8 +8,13 @@ import type {
   CampaignMemberIcpMatch,
   CampaignMemberIcpRecommendedAction,
 } from "@/lib/campaignMemberIcpShared";
+import { icpFitForOutreachDraft } from "@/lib/campaignMemberIcpShared";
 import { listContactActivityExtensionsMap } from "@/lib/contactActivitySqlExtras";
 import type { LinkedInActivityTier } from "@/lib/linkedinActivity";
+import {
+  isUsableOutreachCopy,
+  memberNeedsInviteBeforeDm,
+} from "@/lib/outreachInviteWorkflow";
 
 /** Same shape as `CampaignMemberRow` in outreachCampaigns (avoid import cycle). */
 export type CampaignMemberRowLite = {
@@ -90,27 +96,29 @@ export async function loadLatestProfileCapturesByContactId(
   if (unique.length === 0) return map;
 
   const db = getDb();
-  const rows = await db
-    .select()
-    .from(captureSessions)
-    .where(
-      and(
-        inArray(captureSessions.contactId, unique),
-        eq(captureSessions.pageType, "profile"),
-      ),
-    )
-    .orderBy(desc(captureSessions.capturedAt));
+  for (const chunk of chunkIds(unique)) {
+    const rows = await db
+      .select()
+      .from(captureSessions)
+      .where(
+        and(
+          inArray(captureSessions.contactId, chunk),
+          eq(captureSessions.pageType, "profile"),
+        ),
+      )
+      .orderBy(desc(captureSessions.capturedAt));
 
-  for (const r of rows) {
-    if (!r.contactId || map.has(r.contactId)) continue;
-    const ej = r.extractedJson;
-    map.set(r.contactId, {
-      capturedAt: r.capturedAt,
-      extractedJson:
-        ej && typeof ej === "object" && !Array.isArray(ej)
-          ? (ej as Record<string, unknown>)
-          : null,
-    });
+    for (const r of rows) {
+      if (!r.contactId || map.has(r.contactId)) continue;
+      const ej = r.extractedJson;
+      map.set(r.contactId, {
+        capturedAt: r.capturedAt,
+        extractedJson:
+          ej && typeof ej === "object" && !Array.isArray(ej)
+            ? (ej as Record<string, unknown>)
+            : null,
+      });
+    }
   }
   return map;
 }
@@ -171,6 +179,12 @@ export type MemberReadinessFilter =
   | "profile_ok"
   | "need_draft"
   | "review_draft"
+  | "need_invite"
+  | "review_invite"
+  | "invite_step"
+  | "invite_ready"
+  | "awaiting_connection"
+  | "followup_ready"
   | "extension_ready"
   | "engage_queued"
   | "done"
@@ -211,6 +225,12 @@ export function parseMemberReadinessFilter(
     "profile_ok",
     "need_draft",
     "review_draft",
+    "need_invite",
+    "review_invite",
+    "invite_step",
+    "invite_ready",
+    "awaiting_connection",
+    "followup_ready",
     "extension_ready",
     "engage_queued",
     "done",
@@ -239,7 +259,15 @@ export function enrichedMemberMatchesFilter(
 ): boolean {
   if (filter === "all") return true;
   const draft = (row.member.draftOutreach ?? "").trim();
-  const hasDraft = draft.length > 0;
+  const inviteNote = (row.member.draftInviteNote ?? "").trim();
+  const invite = memberNeedsInviteBeforeDm({
+    connectionDegree: row.contact.connectionDegree,
+    outreachStep: row.member.outreachStep,
+    connectionAcceptedAt: row.member.connectionAcceptedAt,
+  });
+  const hasFollowupDraft = isUsableOutreachCopy(draft);
+  const hasInviteDraft = isUsableOutreachCopy(inviteNote);
+  const hasDraft = invite ? hasInviteDraft : hasFollowupDraft;
   const st = row.member.status;
   const open = memberPipelineOpen(row);
 
@@ -251,11 +279,47 @@ export function enrichedMemberMatchesFilter(
     case "profile_ok":
       return open && row.profileDepth === "ok";
     case "need_draft":
-      return open && st === "draft" && !hasDraft;
+      return (
+        open &&
+        st === "draft" &&
+        !hasDraft &&
+        icpFitForOutreachDraft(row.icpMatch)
+      );
     case "review_draft":
-      return open && hasDraft && st !== "ready";
+      return (
+        open &&
+        (hasInviteDraft || hasFollowupDraft) &&
+        st !== "ready" &&
+        st !== "followup_ready"
+      );
+    case "need_invite":
+      return (
+        open &&
+        invite &&
+        st !== "invite_sent" &&
+        st !== "followup_ready" &&
+        !hasInviteDraft &&
+        icpFitForOutreachDraft(row.icpMatch)
+      );
+    case "review_invite":
+      return (
+        open &&
+        invite &&
+        hasInviteDraft &&
+        st !== "ready" &&
+        st !== "invite_sent" &&
+        st !== "followup_ready"
+      );
+    case "invite_step":
+      return invite || st === "invite_sent";
+    case "invite_ready":
+      return open && invite && hasInviteDraft && st === "ready";
+    case "awaiting_connection":
+      return st === "invite_sent";
+    case "followup_ready":
+      return st === "followup_ready";
     case "extension_ready":
-      return open && st === "ready";
+      return open && (st === "ready" || st === "followup_ready");
     case "engage_queued":
       return (
         st === "engage" ||
@@ -369,16 +433,49 @@ export function readinessFilterCounts(
       (m) =>
         memberPipelineOpen(m) &&
         m.member.status === "draft" &&
-        !(m.member.draftOutreach ?? "").trim().length,
+        icpFitForOutreachDraft(m.icpMatch) &&
+        (memberNeedsInviteBeforeDm({
+          connectionDegree: m.contact.connectionDegree,
+          outreachStep: m.member.outreachStep,
+          connectionAcceptedAt: m.member.connectionAcceptedAt,
+        })
+          ? !isUsableOutreachCopy(m.member.draftInviteNote)
+          : !isUsableOutreachCopy(m.member.draftOutreach)),
     ).length,
-    review_draft: rows.filter(
-      (m) =>
-        memberPipelineOpen(m) &&
-        (m.member.draftOutreach ?? "").trim().length > 0 &&
-        m.member.status !== "ready",
+    review_draft: rows.filter((m) => {
+      if (!memberPipelineOpen(m)) return false;
+      if (m.member.status === "ready" || m.member.status === "followup_ready") {
+        return false;
+      }
+      const invite =
+        m.member.outreachStep === "invite"
+          ? m.member.draftInviteNote
+          : "";
+      const dm = m.member.draftOutreach;
+      return isUsableOutreachCopy(invite) || isUsableOutreachCopy(dm);
+    }).length,
+    need_invite: rows.filter((m) =>
+      enrichedMemberMatchesFilter(m, "need_invite", ctx),
+    ).length,
+    review_invite: rows.filter((m) =>
+      enrichedMemberMatchesFilter(m, "review_invite", ctx),
+    ).length,
+    invite_step: rows.filter((m) =>
+      enrichedMemberMatchesFilter(m, "invite_step", ctx),
+    ).length,
+    invite_ready: rows.filter((m) =>
+      enrichedMemberMatchesFilter(m, "invite_ready", ctx),
+    ).length,
+    awaiting_connection: rows.filter((m) =>
+      enrichedMemberMatchesFilter(m, "awaiting_connection", ctx),
+    ).length,
+    followup_ready: rows.filter((m) =>
+      enrichedMemberMatchesFilter(m, "followup_ready", ctx),
     ).length,
     extension_ready: rows.filter(
-      (m) => memberPipelineOpen(m) && m.member.status === "ready",
+      (m) =>
+        memberPipelineOpen(m) &&
+        (m.member.status === "ready" || m.member.status === "followup_ready"),
     ).length,
     engage_queued: rows.filter((m) =>
       enrichedMemberMatchesFilter(m, "engage_queued", ctx),
