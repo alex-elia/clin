@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   clampInviteNote,
+  INVITE_NOTE_JSON_SCHEMA,
   INVITE_NOTE_MAX_CHARS,
+  INVITE_NOTE_MAX_TOKENS,
+  inviteNoteRewriteInstruction,
   isInviteNoteTooLong,
   isUsableOutreachCopy,
   memberHasSendableFollowup,
@@ -20,6 +23,15 @@ describe("invite note length", () => {
     assert.equal(clamped.length, INVITE_NOTE_MAX_CHARS);
     assert.equal(isInviteNoteTooLong(long), true);
     assert.equal(isInviteNoteTooLong("short note"), false);
+  });
+
+  it("constrains the invite JSON schema to 200 characters", () => {
+    const message = INVITE_NOTE_JSON_SCHEMA.schema.properties.message;
+    assert.equal(message.maxLength, INVITE_NOTE_MAX_CHARS);
+    assert.ok(INVITE_NOTE_MAX_TOKENS < 400);
+    const hint = inviteNoteRewriteInstruction("x".repeat(240));
+    assert.match(hint, /240 characters/);
+    assert.match(hint, /at most 200/);
   });
 
   it("treats ellipsis placeholders as empty", () => {

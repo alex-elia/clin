@@ -3,6 +3,33 @@
 import { normalizeConnectionDegree } from "@/lib/connectionDegree";
 
 export const INVITE_NOTE_MAX_CHARS = 200;
+/** Use most of the 200-char budget. Short notes read as generic. */
+export const INVITE_NOTE_TARGET_MIN_CHARS = 140;
+export const INVITE_NOTE_TARGET_MAX_CHARS = 195;
+/** Enough for `{"message":"..."}` plus a 200-char note, not an essay. */
+export const INVITE_NOTE_MAX_TOKENS = 280;
+
+export const INVITE_NOTE_JSON_SCHEMA = {
+  name: "linkedin_invite_note",
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    required: ["message"],
+    properties: {
+      message: {
+        type: "string",
+        minLength: 12,
+        maxLength: INVITE_NOTE_MAX_CHARS,
+        description: `Punchy LinkedIn connection note. One tight paragraph, ${INVITE_NOTE_TARGET_MIN_CHARS}-${INVITE_NOTE_TARGET_MAX_CHARS} characters, never over ${INVITE_NOTE_MAX_CHARS}. Specific hook, not a polite template.`,
+      },
+    },
+  },
+} as const;
+
+export function inviteNoteRewriteInstruction(previous: string): string {
+  const n = previous.trim().length;
+  return `Your previous JSON "message" was ${n} characters. LinkedIn rejects notes over ${INVITE_NOTE_MAX_CHARS}. Keep the same specific hook. Cut filler (happy to connect, exchange, looking forward). One paragraph, ${INVITE_NOTE_TARGET_MIN_CHARS}-${INVITE_NOTE_TARGET_MAX_CHARS} characters, at most ${INVITE_NOTE_MAX_CHARS}. Finish the sentence. Output JSON only: {"message":"the invite note"}. Never use an ellipsis. No reasoning.\n/no_think`;
+}
 
 export type OutreachAction = "invite" | "dm";
 export type OutreachStep = "invite" | "followup";

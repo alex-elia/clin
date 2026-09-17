@@ -35,7 +35,13 @@ import { POST_ORIGIN_LLM_RULE } from "@/lib/profilePostKinds";
 import { POST_RECENCY_LLM_RULE } from "@/lib/profilePostRecency";
 import {
   clampInviteNote,
+  INVITE_NOTE_JSON_SCHEMA,
   INVITE_NOTE_MAX_CHARS,
+  INVITE_NOTE_MAX_TOKENS,
+  INVITE_NOTE_TARGET_MAX_CHARS,
+  INVITE_NOTE_TARGET_MIN_CHARS,
+  inviteNoteRewriteInstruction,
+  isInviteNoteTooLong,
   memberNeedsInviteBeforeDm,
 } from "@/lib/outreachInviteWorkflow";
 
@@ -68,12 +74,21 @@ ${POST_RECENCY_LLM_RULE}
 
 ${POST_ORIGIN_LLM_RULE}`;
 
-const DEFAULT_INVITE_NOTE_SYSTEM = `You write personalized LinkedIn connection invitation notes. Hard cap ${INVITE_NOTE_MAX_CHARS} characters (LinkedIn rejects longer notes). Reply with strictly valid JSON only: {"message":"the invite note"} — no markdown, no code fences, no extra keys. The message value must be the real note, never an ellipsis.
+const DEFAULT_INVITE_NOTE_SYSTEM = `You write punchy LinkedIn connection notes. Recipients decide in two seconds. The JSON "message" is the note they see: ${INVITE_NOTE_TARGET_MIN_CHARS}-${INVITE_NOTE_TARGET_MAX_CHARS} characters, hard cap ${INVITE_NOTE_MAX_CHARS} (LinkedIn rejects longer). Count before you output. One complete paragraph that already fits. Never write long and expect truncation. Reply with strictly valid JSON only: {"message":"the invite note"} — no markdown, no code fences, no extra keys. Never an ellipsis.
 
-The user message includes who YOU are (sender) and who the recipient is. Write in the sender's voice.
+The user message includes who YOU are (sender) and who the recipient is. Write in the sender's voice, not a sales email.
 LinkedIn already shows the sender — NEVER append a name signature, full name, or letter sign-off. Never use bracket placeholders like [Your Name] or {{name}}.
 
-Follow the LANGUAGE section in the user message. Prefer 80-180 characters. One specific reason to connect. No pitch, no meeting ask, no links. Do not call tools. Do not write a chain of thought. Do not explain the task.
+Follow the LANGUAGE section. Shape:
+1) First name (optional) plus one concrete hook from THEIR world: role, company, a recent original post, a specific problem they own. Not "your profile" or "your experience".
+2) Who you are in a few words, only if it makes the hook land.
+3) Why connect, implied, not a meeting ask.
+
+Banned (too generic): I'd like to connect; I came across your profile; your experience resonated; happy to connect; looking forward to exchanging; synergies; network; don't hesitate. No pitch, no calendar ask, no links, no hashtags, no line breaks. Do not call tools. Do not write a chain of thought.
+
+Examples of the bar (do not copy, invent from this recipient):
+EN: "Marie, the way you talk about plant reliability vs capex at Arcelor is the real job. I help ops leaders on that same tension. Connecting here."
+FR: "Marie, votre angle fiabilité vs capex chez Arcelor est le vrai sujet. J'accompagne des ops sur cette tension. Utile de se connecter."
 
 ${POST_RECENCY_LLM_RULE}
 
@@ -92,11 +107,11 @@ const USER_LINKEDIN_NATIVE_BLOCK = `LinkedIn-native output (always applies, over
 - NEVER end with a personal name, full name, or letter sign-off (Cordialement / Best regards + Name). LinkedIn already shows who you are.
 `;
 
-const USER_INVITE_NOTE_BLOCK = `LinkedIn connection note (always applies):
-- Hard cap ${INVITE_NOTE_MAX_CHARS} characters. Shorter is better.
-- This is an invitation note, not a DM. One reason to connect. No meeting ask.
-- NEVER end with a personal name or letter sign-off.
-- The note itself must follow the LANGUAGE instruction, not the language of the campaign brief.
+const USER_INVITE_NOTE_BLOCK = `LinkedIn connection note (always applies; overrides campaign writer notes, global voice length, and DM formatting):
+- Punchy, specific, one paragraph. ${INVITE_NOTE_TARGET_MIN_CHARS}-${INVITE_NOTE_TARGET_MAX_CHARS} characters, never over ${INVITE_NOTE_MAX_CHARS}.
+- Spend the budget on a hook they would recognize as about THEM, not on politeness.
+- Invitation note, not a DM. No meeting ask, no blank lines, no signature.
+- LANGUAGE instruction wins over the campaign brief language.
 `;
 
 function logDraft(...args: unknown[]) {
@@ -233,7 +248,9 @@ export async function generateOutreachDraftForMember(
   }
   user = `${languageBlock}\n\n${user}`;
   user += `\n${languageBlock}\n\n`;
-  user += `${buildOutreachFormattingInstruction(writerNotes ?? null)}\n\n`;
+  if (kind !== "invite") {
+    user += `${buildOutreachFormattingInstruction(writerNotes ?? null)}\n\n`;
+  }
   if (profileBlock) {
     user += `\nProfile details (from the latest LinkedIn profile Capture in Clin — scroll About/Experience/Education on their profile, then Capture again to refresh):\n${profileBlock}\n`;
   }
@@ -275,23 +292,36 @@ export async function generateOutreachDraftForMember(
     draftLanguageSource: resolvedLanguage.source,
   });
 
-  let raw: string;
-  try {
-    raw = await completeChat({
+  const jsonSchema =
+    kind === "invite" ? INVITE_NOTE_JSON_SCHEMA : OUTREACH_JSON_SCHEMA;
+  const timeoutMs = kind === "invite" ? 45_000 : 90_000;
+  const maxTokens = kind === "invite" ? INVITE_NOTE_MAX_TOKENS : 700;
+
+  const requestDraft = async (
+    userPrompt: string,
+    routeReason: string,
+    extra?: { temperature?: number; maxTokens?: number },
+  ) =>
+    completeChat({
       config: llm,
       feature: "outreach_draft",
       system,
-      user,
+      user: userPrompt,
       jsonMode: true,
-      jsonSchema: OUTREACH_JSON_SCHEMA,
-      timeoutMs: kind === "invite" ? 45_000 : 90_000,
-      maxTokens: kind === "invite" ? 1024 : 700,
+      jsonSchema,
+      timeoutMs,
+      maxTokens: extra?.maxTokens ?? maxTokens,
+      temperature: extra?.temperature,
       meta: {
         kind,
         modelTier: routed.modelTier,
-        routeReason: routed.reason,
+        routeReason,
       },
     });
+
+  let raw: string;
+  try {
+    raw = await requestDraft(user, routed.reason);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     logDraft("ollama_http_error", msg);
@@ -308,25 +338,33 @@ export async function generateOutreachDraftForMember(
   if (!msg) {
     logDraft("parse_retry", raw.slice(0, 400));
     try {
-      raw = await completeChat({
-        config: llm,
-        feature: "outreach_draft",
-        system,
-        user:
-          user +
+      raw = await requestDraft(
+        user +
           `\n\nYour previous reply was not usable JSON. Output one JSON object only: {"message":"the actual ${kind === "invite" ? "invite note" : "DM"}"}. Fill message with the real text. Never use an ellipsis. No reasoning.\n/no_think`,
-        jsonMode: true,
-        jsonSchema: OUTREACH_JSON_SCHEMA,
-        timeoutMs: kind === "invite" ? 45_000 : 90_000,
-        maxTokens: 1024,
-        temperature: 0.2,
-        meta: {
-          kind,
-          modelTier: routed.modelTier,
-          routeReason: "json parse retry",
-        },
-      });
+        "json parse retry",
+        { temperature: 0.2 },
+      );
       msg = parseOutreachDraftMessage(raw);
+    } catch (e) {
+      const err = e instanceof Error ? e.message : String(e);
+      return {
+        ok: false,
+        error: `LLM request failed: ${err}. Check Settings → Inference.`,
+        stage: "ollama",
+      };
+    }
+  }
+
+  if (kind === "invite" && msg && isInviteNoteTooLong(msg)) {
+    logDraft("length_retry", { chars: msg.trim().length });
+    try {
+      raw = await requestDraft(
+        user + `\n\n${inviteNoteRewriteInstruction(msg)}`,
+        "invite length retry",
+        { temperature: 0.2, maxTokens: INVITE_NOTE_MAX_TOKENS },
+      );
+      const rewritten = parseOutreachDraftMessage(raw);
+      if (rewritten) msg = rewritten;
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
       return {
