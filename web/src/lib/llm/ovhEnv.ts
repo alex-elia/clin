@@ -1,7 +1,7 @@
 /**
  * OVH AI Endpoints env — aligned with Nemrut `ovh-chat.ts` / `supabase/functions/.env`.
  */
-import { resolveChatCompletionsUrl } from "@/lib/llm/adapters/openaiCompatible";
+import { resolveChatCompletionsUrl } from "@/lib/llm/chatCompletionsUrl";
 import { OVH_AI_DEFAULT_BASE_URL, OVH_AI_DEFAULT_MODEL } from "@/lib/llm/ovhDefaults";
 
 export type OvhProcessEnv = {
