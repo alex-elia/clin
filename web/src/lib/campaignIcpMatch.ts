@@ -9,6 +9,8 @@ import {
   type ContactContextBundle,
 } from "@/lib/contactContextBundle";
 import { formatLinkedInActivityForPrompt } from "@/lib/linkedinActivity";
+import { icpFitForOutreachDraft } from "@/lib/campaignMemberIcpShared";
+import { isFirstDegreeConnection } from "@/lib/outreachInviteWorkflow";
 import { getLatestProfileContextForOutreach } from "@/lib/profileCaptureContext";
 import { getUserContextForLlm, userContextHasLlmSignal } from "@/lib/userContext";
 
@@ -102,6 +104,7 @@ export async function checkContactAgainstCampaignIcp(opts: {
         company: contact.company,
         location: contact.location,
         segment: contact.segment,
+        connectionDegree: contact.connectionDegree,
         profile_context: profileCtx,
       },
       LINKEDIN_ACTIVITY: formatLinkedInActivityForPrompt(bundle.activity),
@@ -138,9 +141,10 @@ Respond with JSON only:
 - partial: plausible but missing data or timing; keep but maybe nurture.
 - weak: poor fit vs ICP; skip or review_remove if clearly wrong person.
 - unknown: not enough data — say what is missing in rationale.
-- keep_and_draft: strong fit with enough profile to draft a DM.
-- engage_comment: partial/nurture fit with a concrete recent-post hook — comment on their post first to warm the relationship; not ready for a cold DM.
-When LINKEDIN_ACTIVITY tier is lurker or dormant, cap icp_match at partial and avoid engage_comment or keep_and_draft unless headline is a strong ICP signal.
+- keep_and_draft: strong or partial fit with enough profile to draft outreach. For 1st-degree contacts this is a follow-up DM, not an invite note.
+- engage_comment: only if they are NOT 1st degree. Partial/nurture fit with a concrete recent-post hook — comment first to warm before a connection invite. Never use engage_comment for 1st degree: they can already receive a DM.
+When the contact connectionDegree is 1st, recommended_action must be keep_and_draft when icp_match is strong or partial.
+When LINKEDIN_ACTIVITY tier is lurker or dormant, cap icp_match at partial and avoid engage_comment or keep_and_draft unless headline is a strong ICP signal. Exception: 1st degree + strong or partial still keep_and_draft.
 When tier is unknown, do not penalize for missing posts capture.
 Do not invent facts.`,
     user,
@@ -154,5 +158,28 @@ Do not invent facts.`,
   if (!parsed.success) {
     throw new Error(`ICP check parse failed: ${parsed.error.message.slice(0, 200)}`);
   }
-  return applyActivityCapToIcpMatch(parsed.data, bundle, contact);
+  return applyConnectedFollowupPreference(
+    applyActivityCapToIcpMatch(parsed.data, bundle, contact),
+    contact,
+  );
+}
+
+function applyConnectedFollowupPreference(
+  match: CampaignIcpMatch,
+  contact: { connectionDegree?: string | null },
+): CampaignIcpMatch {
+  if (!isFirstDegreeConnection(contact.connectionDegree)) return match;
+  if (
+    match.recommended_action === "skip" ||
+    match.recommended_action === "review_remove"
+  ) {
+    return match;
+  }
+  if (!icpFitForOutreachDraft(match.icp_match)) return match;
+  if (match.recommended_action === "keep_and_draft") return match;
+  return {
+    ...match,
+    recommended_action: "keep_and_draft",
+    rationale: `${match.rationale} Already 1st degree: campaign next step is a follow-up DM, not a public comment.`,
+  };
 }

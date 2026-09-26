@@ -13,8 +13,10 @@ import {
   outreachCampaignMembers,
   outreachCampaigns,
 } from "@/db/schema";
-import { icpFitForOutreachDraft } from "@/lib/campaignMemberIcpShared";
+import { icpFitForOutreachDraft, campaignIcpActionForConnectedContact } from "@/lib/campaignMemberIcpShared";
+import { ensureContactDegreesFromCaptures } from "@/lib/connectionDegreeBackfill";
 import {
+  isFirstDegreeConnection,
   isUsableOutreachCopy,
   memberHasSendableFollowup,
   memberHasSendableInvite,
@@ -208,10 +210,62 @@ export async function listCampaignMembers(
     .where(eq(outreachCampaignMembers.campaignId, campaignId))
     .orderBy(asc(outreachCampaignMembers.createdAt));
 
-  return rows.map((r) => ({
+  const mapped = rows.map((r) => ({
     member: r.outreach_campaign_members,
     contact: r.contacts,
   }));
+  await healCampaignMembersFirstDegree(mapped);
+  return mapped;
+}
+
+async function healCampaignMembersFirstDegree(
+  rows: CampaignMemberRow[],
+): Promise<void> {
+  if (rows.length === 0) return;
+  const db = getDb();
+  const degrees = await ensureContactDegreesFromCaptures(
+    db,
+    rows.map((r) => r.contact.id),
+  );
+  for (const row of rows) {
+    const resolved = degrees.get(row.contact.id);
+    if (resolved && row.contact.connectionDegree !== resolved) {
+      row.contact.connectionDegree = resolved;
+    }
+    if (!isFirstDegreeConnection(row.contact.connectionDegree)) continue;
+    if (row.member.status === "invite_sent") continue;
+
+    if (row.member.outreachStep === "invite") {
+      await updateMemberOutreachStep(row.member.id, "followup");
+      row.member.outreachStep = "followup";
+    }
+
+    const remapped = campaignIcpActionForConnectedContact(
+      row.member.icpRecommendedAction,
+      row.member.icpMatch,
+      true,
+    );
+    if (
+      remapped === "keep_and_draft" &&
+      row.member.icpRecommendedAction !== "keep_and_draft"
+    ) {
+      await db
+        .update(outreachCampaignMembers)
+        .set({
+          icpRecommendedAction: "keep_and_draft",
+          updatedAt: new Date(),
+        })
+        .where(eq(outreachCampaignMembers.id, row.member.id));
+      row.member.icpRecommendedAction = "keep_and_draft";
+    }
+
+    if (row.member.status !== "engage") continue;
+    const nextStatus = isUsableOutreachCopy(row.member.draftOutreach)
+      ? "followup_ready"
+      : "draft";
+    await updateMemberStatus(row.member.id, nextStatus);
+    row.member.status = nextStatus;
+  }
 }
 
 /** Next items for extension: has a draft, not yet sent/skipped. */
@@ -256,6 +310,7 @@ export async function listCampaignMembersForExtension(
             outreachStep: m.outreachStep,
             draftInviteNote: m.draftInviteNote,
             connectionAcceptedAt: m.connectionAcceptedAt,
+            connectionDegree: r.contacts.connectionDegree,
           }) ||
           memberHasSendableFollowup({
             status: m.status,
@@ -367,12 +422,18 @@ export async function listMembersNeedingDraft(
     )
     .limit(lim * 8);
 
+  const degrees = await ensureContactDegreesFromCaptures(
+    db,
+    rows.map((r) => r.contacts.id),
+  );
+
   const emptyDraft = rows
     .filter((r) => {
       const m = r.outreach_campaign_members;
       if (!icpFitForOutreachDraft(m.icpMatch)) return false;
       const invite = memberNeedsInviteBeforeDm({
-        connectionDegree: r.contacts.connectionDegree,
+        connectionDegree:
+          degrees.get(r.contacts.id) ?? r.contacts.connectionDegree,
         outreachStep: m.outreachStep,
         connectionAcceptedAt: m.connectionAcceptedAt,
       });
@@ -418,6 +479,7 @@ export async function addContactsToCampaign(
   });
   const have = new Set(existing.map((e) => e.contactId));
   const now = new Date();
+  const degrees = await ensureContactDegreesFromCaptures(db, unique);
   let added = 0;
   let skipped = 0;
   for (const contactId of unique) {
@@ -432,13 +494,15 @@ export async function addContactsToCampaign(
       skipped += 1;
       continue;
     }
+    const degree =
+      degrees.get(contactId) ?? c.connectionDegree ?? null;
     await db.insert(outreachCampaignMembers).values({
       id: crypto.randomUUID(),
       campaignId,
       contactId,
       draftOutreach: null,
       draftInviteNote: null,
-      outreachStep: needsInviteStep(c.connectionDegree) ? "invite" : "followup",
+      outreachStep: needsInviteStep(degree) ? "invite" : "followup",
       status: "draft",
       createdAt: now,
       updatedAt: now,

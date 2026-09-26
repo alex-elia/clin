@@ -378,6 +378,7 @@ export async function getNextOutreachSendItem(): Promise<
             outreachStep: i.outreachStep,
             draftInviteNote: i.draftInviteNote,
             connectionAcceptedAt: i.connectionAcceptedAt,
+            connectionDegree: i.connectionDegree,
           }),
         )
       : undefined;

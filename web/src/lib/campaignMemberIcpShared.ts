@@ -49,14 +49,31 @@ export function icpFitForOutreachDraft(
 export function shouldAutoDraftOutreach(input: {
   icpMatch: string | null | undefined;
   recommendedAction?: string | null;
+  isFirstDegree?: boolean;
 }): boolean {
-  const action = input.recommendedAction;
-  if (
-    action === "skip" ||
-    action === "review_remove" ||
-    action === "engage_comment"
-  ) {
+  const action = campaignIcpActionForConnectedContact(
+    input.recommendedAction,
+    input.icpMatch,
+    Boolean(input.isFirstDegree),
+  );
+  if (action === "skip" || action === "review_remove" || action === "engage_comment") {
     return false;
   }
   return icpFitForOutreachDraft(input.icpMatch);
+}
+
+/**
+ * 1st-degree campaign members already have a DM channel. Public comment
+ * (engage_comment) is for warming 2nd/3rd before an invite.
+ */
+export function campaignIcpActionForConnectedContact(
+  recommendedAction: string | null | undefined,
+  icpMatch: string | null | undefined,
+  isFirstDegree: boolean,
+): CampaignMemberIcpRecommendedAction | string {
+  const action = recommendedAction?.trim() || "keep";
+  if (!isFirstDegree) return action;
+  if (action === "skip" || action === "review_remove") return action;
+  if (!icpFitForOutreachDraft(icpMatch)) return action;
+  return "keep_and_draft";
 }

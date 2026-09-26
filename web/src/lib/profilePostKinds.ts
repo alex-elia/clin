@@ -32,6 +32,30 @@ export function normalizeProfilePostKind(
   return undefined;
 }
 
+const ANALYSIS_POST_KINDS = [
+  "original",
+  "reshare",
+  "news_share",
+  "unknown",
+] as const;
+export type AnalysisPostKind = (typeof ANALYSIS_POST_KINDS)[number];
+
+/**
+ * Models often emit aliases (repost, article, quoted). Map those so analysis
+ * does not fail the whole JSON when one post_notes.kind is off-enum.
+ */
+export function normalizeAnalysisPostKind(raw: unknown): AnalysisPostKind {
+  if (typeof raw !== "string" || !raw.trim()) return "unknown";
+  const t = raw.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if ((ANALYSIS_POST_KINDS as readonly string[]).includes(t)) {
+    return t as AnalysisPostKind;
+  }
+  if (/news|article|publication|link/.test(t)) return "news_share";
+  if (/repost|reshare|quoted?|share/.test(t)) return "reshare";
+  if (/original|organic|native|own|authored/.test(t)) return "original";
+  return "unknown";
+}
+
 export function formatSinglePostForPrompt(
   post: ProfilePostCapture,
   index: number,

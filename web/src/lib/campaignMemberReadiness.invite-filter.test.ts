@@ -4,6 +4,10 @@ import {
   enrichedMemberMatchesFilter,
   type EnrichedCampaignMember,
 } from "./campaignMemberReadiness";
+import {
+  campaignIcpActionForConnectedContact,
+  shouldAutoDraftOutreach,
+} from "./campaignMemberIcpShared";
 
 function member(input: {
   status: string;
@@ -65,6 +69,18 @@ describe("invite workflow member filters", () => {
     assert.equal(enrichedMemberMatchesFilter(first, "invite_step"), false);
     assert.equal(enrichedMemberMatchesFilter(unknown, "need_invite"), true);
     assert.equal(enrichedMemberMatchesFilter(first, "need_invite"), false);
+  });
+
+  it("skips invite filters for 1st degree even with a leftover invite step", () => {
+    const first = member({
+      status: "draft",
+      outreachStep: "invite",
+      connectionDegree: "1st",
+      icpMatch: "strong",
+    });
+    assert.equal(enrichedMemberMatchesFilter(first, "need_invite"), false);
+    assert.equal(enrichedMemberMatchesFilter(first, "invite_step"), false);
+    assert.equal(enrichedMemberMatchesFilter(first, "need_draft"), true);
   });
 
   it("keeps Need invite note to strong or partial ICP only", () => {
@@ -133,5 +149,34 @@ describe("invite workflow member filters", () => {
     assert.equal(enrichedMemberMatchesFilter(drafted, "review_invite"), true);
     assert.equal(enrichedMemberMatchesFilter(drafted, "invite_ready"), false);
     assert.equal(enrichedMemberMatchesFilter(drafted, "review_draft"), true);
+  });
+});
+
+describe("1st-degree campaign ICP", () => {
+  it("turns engage_comment into keep_and_draft for connected contacts", () => {
+    assert.equal(
+      campaignIcpActionForConnectedContact("engage_comment", "partial", true),
+      "keep_and_draft",
+    );
+    assert.equal(
+      campaignIcpActionForConnectedContact("engage_comment", "partial", false),
+      "engage_comment",
+    );
+    assert.equal(
+      shouldAutoDraftOutreach({
+        icpMatch: "partial",
+        recommendedAction: "engage_comment",
+        isFirstDegree: true,
+      }),
+      true,
+    );
+    assert.equal(
+      shouldAutoDraftOutreach({
+        icpMatch: "partial",
+        recommendedAction: "engage_comment",
+        isFirstDegree: false,
+      }),
+      false,
+    );
   });
 });

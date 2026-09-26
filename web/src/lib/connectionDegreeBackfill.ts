@@ -1,4 +1,4 @@
-import { eq, isNull, or, sql } from "drizzle-orm";
+import { eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { getDb } from "@/db";
 import { getSqlite } from "@/db";
 import { contacts } from "@/db/schema";
@@ -126,4 +126,105 @@ export async function countContactsMissingNormalizedDegree(
     if (!normalizeConnectionDegree(row.connectionDegree)) missing += 1;
   }
   return missing;
+}
+
+/**
+ * Fill missing contact.connectionDegree from capture history (connections list
+ * and messaging threads count as 1st). Used when adding existing contacts to a campaign.
+ */
+export async function ensureContactDegreesFromCaptures(
+  db: Db,
+  contactIds: string[],
+): Promise<Map<string, string | null>> {
+  const unique = [...new Set(contactIds.filter(Boolean))];
+  const out = new Map<string, string | null>();
+  if (unique.length === 0) return out;
+
+  const people: { id: string; connectionDegree: string | null }[] = [];
+  for (let i = 0; i < unique.length; i += 400) {
+    const chunk = unique.slice(i, i + 400);
+    const rows = await db
+      .select({
+        id: contacts.id,
+        connectionDegree: contacts.connectionDegree,
+      })
+      .from(contacts)
+      .where(inArray(contacts.id, chunk));
+    people.push(...rows);
+  }
+
+  const needInfer = people.filter(
+    (c) =>
+      !isDisconnectedDegree(c.connectionDegree) &&
+      !normalizeConnectionDegree(c.connectionDegree),
+  );
+  const capturesByContact = new Map<
+    string,
+    { pageType: string; extractedJson: string | null }[]
+  >();
+
+  if (needInfer.length > 0) {
+    const sqlite = getSqlite();
+    for (let i = 0; i < needInfer.length; i += 400) {
+      const chunk = needInfer.slice(i, i + 400);
+      const placeholders = chunk.map(() => "?").join(",");
+      const captureRows = sqlite
+        .prepare(
+          `SELECT contact_id AS contactId, page_type AS pageType, extracted_json AS extractedJson
+           FROM capture_sessions
+           WHERE contact_id IN (${placeholders})
+           ORDER BY
+             CASE WHEN page_type = 'connections' THEN 0 ELSE 1 END,
+             captured_at DESC`,
+        )
+        .all(...chunk.map((c) => c.id)) as {
+        contactId: string;
+        pageType: string;
+        extractedJson: string | null;
+      }[];
+      for (const row of captureRows) {
+        const list = capturesByContact.get(row.contactId) ?? [];
+        list.push({
+          pageType: row.pageType,
+          extractedJson: row.extractedJson,
+        });
+        capturesByContact.set(row.contactId, list);
+      }
+    }
+  }
+
+  const now = new Date();
+  let updated = 0;
+  for (const contact of people) {
+    if (isDisconnectedDegree(contact.connectionDegree)) {
+      out.set(contact.id, contact.connectionDegree);
+      continue;
+    }
+    const current = normalizeConnectionDegree(contact.connectionDegree);
+    if (current) {
+      out.set(contact.id, current);
+      continue;
+    }
+    const resolved = resolveDegreeFromCaptures(
+      capturesByContact.get(contact.id) ?? [],
+    );
+    if (!resolved) {
+      out.set(contact.id, null);
+      continue;
+    }
+    await db
+      .update(contacts)
+      .set({
+        connectionDegree: resolved,
+        lastUpdatedAt: now,
+      })
+      .where(eq(contacts.id, contact.id));
+    out.set(contact.id, resolved);
+    updated += 1;
+  }
+
+  if (updated > 0) {
+    invalidateNetworkHygieneSnapshot();
+  }
+  return out;
 }

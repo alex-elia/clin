@@ -5,7 +5,7 @@ import { normalizeConnectionDegree } from "@/lib/connectionDegree";
 export const INVITE_NOTE_MAX_CHARS = 200;
 /** Use most of the 200-char budget. Short notes read as generic. */
 export const INVITE_NOTE_TARGET_MIN_CHARS = 140;
-export const INVITE_NOTE_TARGET_MAX_CHARS = 195;
+export const INVITE_NOTE_TARGET_MAX_CHARS = 185;
 /** Enough for `{"message":"..."}` plus a 200-char note, not an essay. */
 export const INVITE_NOTE_MAX_TOKENS = 280;
 
@@ -68,6 +68,7 @@ export function memberNeedsInviteBeforeDm(input: {
   connectionAcceptedAt?: Date | number | null;
 }): boolean {
   if (input.connectionAcceptedAt) return false;
+  if (isFirstDegreeConnection(input.connectionDegree)) return false;
   if (normalizeOutreachStep(input.outreachStep) === "invite") return true;
   return needsInviteStep(input.connectionDegree);
 }
@@ -110,7 +111,9 @@ export function memberHasSendableInvite(input: {
   outreachStep?: string | null;
   draftInviteNote?: string | null;
   connectionAcceptedAt?: Date | number | null;
+  connectionDegree?: string | null;
 }): boolean {
+  if (isFirstDegreeConnection(input.connectionDegree)) return false;
   if (input.status !== "ready") return false;
   if (normalizeOutreachStep(input.outreachStep) !== "invite") return false;
   if (input.connectionAcceptedAt) return false;

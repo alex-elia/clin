@@ -24,7 +24,8 @@ import {
 } from "@/lib/contactPlaybook";
 import { selectContactLlmExtension } from "@/lib/contactSqlExtras";
 import { getLatestProfileCaptureJson, getLatestProfileContextForOutreach, formatRichProfileForPrompt } from "@/lib/profileCaptureContext";
-import { updateMemberDraft, updateMemberInviteNote, updateMemberOutreachStep } from "@/lib/outreachCampaigns";
+import { ensureContactDegreesFromCaptures } from "@/lib/connectionDegreeBackfill";
+import { updateMemberDraft, updateMemberInviteNote, updateMemberOutreachStep, updateMemberStatus } from "@/lib/outreachCampaigns";
 import {
   applySenderNameToDraft,
   buildSenderIdentityPromptBlock,
@@ -34,13 +35,13 @@ import { getUserContextForLlm, userContextHasLlmSignal } from "@/lib/userContext
 import { POST_ORIGIN_LLM_RULE } from "@/lib/profilePostKinds";
 import { POST_RECENCY_LLM_RULE } from "@/lib/profilePostRecency";
 import {
-  clampInviteNote,
   INVITE_NOTE_JSON_SCHEMA,
   INVITE_NOTE_MAX_CHARS,
   INVITE_NOTE_MAX_TOKENS,
   INVITE_NOTE_TARGET_MAX_CHARS,
   INVITE_NOTE_TARGET_MIN_CHARS,
   inviteNoteRewriteInstruction,
+  isFirstDegreeConnection,
   isInviteNoteTooLong,
   memberNeedsInviteBeforeDm,
 } from "@/lib/outreachInviteWorkflow";
@@ -164,15 +165,29 @@ export async function generateOutreachDraftForMember(
     return { ok: false, error: "Missing campaign or contact", stage: "load" };
   }
 
-  const kind: OutreachDraftKind =
-    opts?.kind ??
-    (memberNeedsInviteBeforeDm({
-      connectionDegree: contact.connectionDegree,
-      outreachStep: member.outreachStep,
-      connectionAcceptedAt: member.connectionAcceptedAt,
-    })
-      ? "invite"
-      : "followup");
+  const degrees = await ensureContactDegreesFromCaptures(db, [contact.id]);
+  const resolvedDegree =
+    degrees.get(contact.id) ?? contact.connectionDegree ?? null;
+  contact.connectionDegree = resolvedDegree;
+  if (
+    isFirstDegreeConnection(resolvedDegree) &&
+    member.outreachStep === "invite" &&
+    member.status !== "invite_sent"
+  ) {
+    await updateMemberOutreachStep(memberId, "followup");
+    member.outreachStep = "followup";
+  }
+
+  const needsInvite = memberNeedsInviteBeforeDm({
+    connectionDegree: resolvedDegree,
+    outreachStep: member.outreachStep,
+    connectionAcceptedAt: member.connectionAcceptedAt,
+  });
+  const kind: OutreachDraftKind = needsInvite
+    ? opts?.kind === "followup"
+      ? "followup"
+      : "invite"
+    : "followup";
 
   const routed = await getLlmConfigForFeature("outreach_draft", { kind });
   const llm = routed.config;
@@ -357,21 +372,24 @@ export async function generateOutreachDraftForMember(
 
   if (kind === "invite" && msg && isInviteNoteTooLong(msg)) {
     logDraft("length_retry", { chars: msg.trim().length });
-    try {
-      raw = await requestDraft(
-        user + `\n\n${inviteNoteRewriteInstruction(msg)}`,
-        "invite length retry",
-        { temperature: 0.2, maxTokens: INVITE_NOTE_MAX_TOKENS },
-      );
-      const rewritten = parseOutreachDraftMessage(raw);
-      if (rewritten) msg = rewritten;
-    } catch (e) {
-      const err = e instanceof Error ? e.message : String(e);
-      return {
-        ok: false,
-        error: `LLM request failed: ${err}. Check Settings → Inference.`,
-        stage: "ollama",
-      };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        raw = await requestDraft(
+          user + `\n\n${inviteNoteRewriteInstruction(msg)}`,
+          attempt === 0 ? "invite length retry" : "invite length retry 2",
+          { temperature: 0.15, maxTokens: INVITE_NOTE_MAX_TOKENS },
+        );
+        const rewritten = parseOutreachDraftMessage(raw);
+        if (rewritten) msg = rewritten;
+        if (!isInviteNoteTooLong(msg)) break;
+      } catch (e) {
+        const err = e instanceof Error ? e.message : String(e);
+        return {
+          ok: false,
+          error: `LLM request failed: ${err}. Check Settings → Inference.`,
+          stage: "ollama",
+        };
+      }
     }
   }
 
@@ -391,8 +409,12 @@ export async function generateOutreachDraftForMember(
   }
 
   msg = applySenderNameToDraft(parsed.data.message.trim(), sender);
-  if (kind === "invite") {
-    msg = clampInviteNote(msg);
+  if (kind === "invite" && isInviteNoteTooLong(msg)) {
+    return {
+      ok: false,
+      error: `Invite note is still over ${INVITE_NOTE_MAX_CHARS} characters after rewrite. Generate again instead of truncating.`,
+      stage: "length",
+    };
   }
 
   if (kind === "invite") {
@@ -408,6 +430,9 @@ export async function generateOutreachDraftForMember(
       })
     ) {
       await updateMemberOutreachStep(memberId, "followup");
+      if (member.status === "draft" || member.status === "engage") {
+        await updateMemberStatus(memberId, "followup_ready");
+      }
     }
   }
   logDraft("saved", { memberId, kind, draftChars: msg.length });

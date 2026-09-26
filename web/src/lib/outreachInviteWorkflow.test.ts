@@ -73,6 +73,26 @@ describe("resolveOutreachAction", () => {
     );
   });
 
+  it("treats a 1st-degree contact as follow-up even if outreachStep is still invite", () => {
+    assert.equal(
+      resolveOutreachAction({
+        status: "ready",
+        outreachStep: "invite",
+        connectionDegree: "1st",
+      }),
+      "dm",
+    );
+    assert.equal(
+      memberHasSendableInvite({
+        status: "ready",
+        outreachStep: "invite",
+        draftInviteNote: "Hello",
+        connectionDegree: "1st",
+      }),
+      false,
+    );
+  });
+
   it("routes ready 1st-degree followup to dm", () => {
     assert.equal(
       resolveOutreachAction({
