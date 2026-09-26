@@ -97,13 +97,24 @@ export function mergePersonFields(
         clean(existing.location),
         incoming.location,
       ) ?? undefined,
-    connectionDegree:
-      normalizeConnectionDegree(
-        mergeScalar(
-          "connectionDegree",
-          clean(existing.connectionDegree),
-          incoming.connectionDegree,
-        ) ?? undefined,
-      ) ?? undefined,
+    connectionDegree: mergeConnectionDegree(
+      pageType,
+      clean(existing.connectionDegree),
+      incoming.connectionDegree,
+    ),
   };
+}
+
+/** The connections list is 1st-degree by definition. */
+function mergeConnectionDegree(
+  pageType: string,
+  existing: string | null,
+  incoming: string | undefined,
+): string | undefined {
+  const inc = normalizeConnectionDegree(clean(incoming) ?? undefined);
+  const ex = normalizeConnectionDegree(existing);
+  if (pageType === "connections") {
+    return inc ?? "1st";
+  }
+  return inc ?? ex ?? undefined;
 }

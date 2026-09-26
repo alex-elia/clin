@@ -4,6 +4,10 @@ import type { CampaignMemberIcpRecommendedAction } from "@/lib/campaignMemberIcp
 import { shouldAutoDraftOutreach } from "@/lib/campaignMemberIcpShared";
 import { generateOutreachDraftForMember } from "@/lib/outreachCampaignDraft";
 import { findMemberByCampaignAndContact } from "@/lib/outreachCampaigns";
+import { getDb } from "@/db";
+import { contacts } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { isFirstDegreeConnection } from "@/lib/outreachInviteWorkflow";
 
 export type CampaignPostCaptureWorkflowResult = {
   handled: boolean;
@@ -63,7 +67,13 @@ export async function runCampaignPostCaptureWorkflow(opts: {
     contactId: opts.contactId,
   });
 
-  if (check.recommended_action === "engage_comment") {
+  const db = getDb();
+  const contact = await db.query.contacts.findFirst({
+    where: eq(contacts.id, opts.contactId),
+  });
+  const first = isFirstDegreeConnection(contact?.connectionDegree);
+
+  if (check.recommended_action === "engage_comment" && !first) {
     let engaged = false;
     let skippedReason: string | null = null;
     if (member.status !== "engage") {
@@ -93,6 +103,7 @@ export async function runCampaignPostCaptureWorkflow(opts: {
   const shouldDraft = shouldAutoDraftOutreach({
     icpMatch: check.icp_match,
     recommendedAction: check.recommended_action,
+    isFirstDegree: first,
   });
 
   if (!shouldDraft) {

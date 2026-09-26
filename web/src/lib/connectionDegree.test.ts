@@ -55,4 +55,14 @@ describe("resolveDegreeFromCaptures", () => {
     ]);
     assert.equal(d, "1st");
   });
+
+  it("treats messaging captures as 1st degree", () => {
+    const d = resolveDegreeFromCaptures([
+      {
+        pageType: "messaging",
+        extractedJson: JSON.stringify({}),
+      },
+    ]);
+    assert.equal(d, "1st");
+  });
 });

@@ -17,7 +17,7 @@ import {
   type UserContextForLlm,
 } from "@/lib/userContext";
 import { POST_RECENCY_LLM_RULE } from "@/lib/profilePostRecency";
-import { POST_ORIGIN_LLM_RULE } from "@/lib/profilePostKinds";
+import { POST_ORIGIN_LLM_RULE, normalizeAnalysisPostKind } from "@/lib/profilePostKinds";
 
 type Db = BetterSQLite3Database<typeof schema>;
 
@@ -66,8 +66,14 @@ export const llmAnalysisOutputSchema = z.object({
       post_notes: z
         .array(
           z.object({
-            kind: z.enum(["original", "reshare", "news_share", "unknown"]),
-            summary: z.string(),
+            kind: z.preprocess(
+              (v) => normalizeAnalysisPostKind(v),
+              z.enum(["original", "reshare", "news_share", "unknown"]),
+            ),
+            summary: z.preprocess(
+              (v) => (typeof v === "string" ? v : String(v ?? "")),
+              z.string(),
+            ),
           }),
         )
         .nullish(),

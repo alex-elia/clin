@@ -108,6 +108,7 @@ export function resolveDegreeFromCaptures(
     );
     if (fromJson) return fromJson;
     if (cap.pageType === "connections") return "1st";
+    if (cap.pageType === "messaging") return "1st";
   }
   return null;
 }

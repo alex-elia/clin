@@ -30,7 +30,7 @@ import {
 import { enqueueCampaignEngage, loadPendingEngageExecByMemberId } from "@/lib/campaignEngageQueue";
 import { generateOutreachDraftForMember } from "@/lib/outreachCampaignDraft";
 import { runCampaignPostCaptureWorkflow } from "@/lib/campaignPostCaptureWorkflow";
-import { icpFitForOutreachDraft } from "@/lib/campaignMemberIcpShared";
+import { icpFitForOutreachDraft, campaignIcpActionForConnectedContact } from "@/lib/campaignMemberIcpShared";
 import {
   enrichCampaignMembers,
   memberPipelineOpen,
@@ -51,10 +51,11 @@ import {
   updateOutreachCampaign,
 } from "@/lib/outreachCampaigns";
 import {
+  isFirstDegreeConnection,
   isUsableOutreachCopy,
   memberNeedsInviteBeforeDm,
-  needsInviteStep,
 } from "@/lib/outreachInviteWorkflow";
+import { ensureContactDegreesFromCaptures } from "@/lib/connectionDegreeBackfill";
 import { markCampaignMemberConnected } from "@/lib/campaignInviteLifecycle";
 import { updateUserContext } from "@/lib/userContext";
 import {
@@ -462,15 +463,21 @@ export async function orchestrateCampaignWorkflowAction(
         : isUsableOutreachCopy(m.member.draftOutreach);
       const fit = icpFitForOutreachDraft(m.icpMatch);
       const needsIcp = !m.icpCheckedAt;
+      const first = isFirstDegreeConnection(m.contact.connectionDegree);
+      const action = campaignIcpActionForConnectedContact(
+        m.icpRecommendedAction,
+        m.icpMatch,
+        first,
+      );
       const hasPendingEngage = pendingEngageExecByMemberId.has(m.member.id);
       const needsEngage =
-        m.icpRecommendedAction === "engage_comment" &&
+        action === "engage_comment" &&
         m.member.status !== "engage" &&
         !hasPendingEngage;
       const needsDraft =
         fit &&
         !hasDraft &&
-        m.icpRecommendedAction !== "engage_comment";
+        action !== "engage_comment";
       if (needsEngage) return needsIcp || needsEngage;
       return m.profileDepth === "ok" && (needsIcp || needsDraft);
     })
@@ -606,11 +613,15 @@ export async function approveCampaignMemberReadyAction(formData: FormData) {
   const contact = await db.query.contacts.findFirst({
     where: eq(contacts.id, m.contactId),
   });
-  const accepted = Boolean(m.connectionAcceptedAt);
+  const degrees = await ensureContactDegreesFromCaptures(db, [m.contactId]);
+  const degree =
+    degrees.get(m.contactId) ?? contact?.connectionDegree ?? null;
   if (
-    !accepted &&
-    (m.outreachStep === "invite" ||
-      needsInviteStep(contact?.connectionDegree))
+    memberNeedsInviteBeforeDm({
+      connectionDegree: degree,
+      outreachStep: m.outreachStep,
+      connectionAcceptedAt: m.connectionAcceptedAt,
+    })
   ) {
     await updateMemberOutreachStep(memberId, "invite");
     await updateMemberStatus(memberId, "ready");

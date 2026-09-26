@@ -848,9 +848,7 @@ export async function ingestConnectionsPage(
         headline: normalized.headline,
         company: normalized.company,
         location: normalized.location,
-        ...(row.connectionDegree
-          ? { connectionDegree: row.connectionDegree }
-          : {}),
+        connectionDegree: row.connectionDegree?.trim() || "1st",
         ...(row.mutualConnectionsHint?.trim()
           ? { mutualConnectionsHint: row.mutualConnectionsHint.trim() }
           : {}),

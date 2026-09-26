@@ -5,6 +5,7 @@ import {
 } from "@/lib/contactAnalyzeRunner";
 import { runAndPersistMemberIcpCheck } from "@/lib/campaignMemberIcp";
 import { enqueueCampaignEngage } from "@/lib/campaignEngageQueue";
+import { isFirstDegreeConnection } from "@/lib/outreachInviteWorkflow";
 import { shouldAutoDraftOutreach } from "@/lib/campaignMemberIcpShared";
 import { generateOutreachDraftForMember } from "@/lib/outreachCampaignDraft";
 import { getAutopilotSettings } from "@/lib/autopilot";
@@ -176,7 +177,8 @@ export async function runPostCaptureAnalysis(opts: {
   }
 
   if (opts.campaignId && memberId && icpResult) {
-    if (icpResult.recommended_action === "engage_comment") {
+    const first = isFirstDegreeConnection(contact.connectionDegree);
+    if (icpResult.recommended_action === "engage_comment" && !first) {
       const engage = await enqueueCampaignEngage({
         campaignId: opts.campaignId,
         memberId,
@@ -187,6 +189,7 @@ export async function runPostCaptureAnalysis(opts: {
       const shouldDraft = shouldAutoDraftOutreach({
         icpMatch: icpResult.icp_match,
         recommendedAction: icpResult.recommended_action,
+        isFirstDegree: first,
       });
       if (shouldDraft) {
         const draftResult = await generateOutreachDraftForMember(memberId);

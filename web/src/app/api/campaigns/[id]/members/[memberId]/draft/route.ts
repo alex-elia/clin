@@ -11,7 +11,7 @@ import {
   updateMemberOutreachStep,
 } from "@/lib/outreachCampaigns";
 import {
-  clampInviteNote,
+  INVITE_NOTE_MAX_CHARS,
   isInviteNoteTooLong,
 } from "@/lib/outreachInviteWorkflow";
 
@@ -48,9 +48,16 @@ export async function PATCH(
   const kind =
     parsed.data.kind ??
     (member.outreachStep === "invite" ? "invite" : "followup");
-  let draft = parsed.data.draft.trim();
+  const draft = parsed.data.draft.trim();
   if (kind === "invite") {
-    if (isInviteNoteTooLong(draft)) draft = clampInviteNote(draft);
+    if (isInviteNoteTooLong(draft)) {
+      return NextResponse.json(
+        {
+          error: `Invite note must be ${INVITE_NOTE_MAX_CHARS} characters or fewer. Shorten the last sentence instead of cutting it off.`,
+        },
+        { status: 400 },
+      );
+    }
     await updateMemberInviteNote(memberId, draft || null);
     await updateMemberOutreachStep(memberId, "invite");
   } else {
